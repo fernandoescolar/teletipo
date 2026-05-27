@@ -1,100 +1,189 @@
+![Teletipo logo](docs/teletipo128x128.png)
+
 # Teletipo
 
-TeleTipo is a modern terminal emulator written in Rust, inspired by classic teletypes and retro computing aesthetics.
+A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with rich color support and a code-editor-like command input.
 
-It combines GPU-accelerated rendering, multi-tab workflows, rich color support, and a code-editor-like command input to create a terminal experience that feels fast, expressive, and playful.
+![Teletipo screenshot](docs/teletipo-screenshot.png)
 
-![Teletipo screenshot](docs/teletipo128x128.png)
+## Install
 
-## Current Stable Baseline (v0.1)
+### macOS (Apple Silicon + Intel universal binary)
 
-This first stable baseline focuses on a reliable terminal core and shell runtime:
+```bash
+curl -Lo teletipo.tar.gz https://github.com/fernandoescolar/teletipo/releases/latest/download/teletipo-macos-universal.tar.gz
+tar -xzf teletipo.tar.gz
+sudo mv teletipo /usr/local/bin/
+```
 
-- Real PTY integration via portable-pty
-- Stateful ANSI/VT parser with key CSI/DEC sequences
+### Linux (x86-64)
+
+```bash
+curl -Lo teletipo.tar.gz https://github.com/fernandoescolar/teletipo/releases/latest/download/teletipo-linux-x86_64.tar.gz
+tar -xzf teletipo.tar.gz
+sudo mv teletipo /usr/local/bin/
+```
+
+### Windows (x86-64)
+
+Download `teletipo-windows-x86_64.zip` from the [latest release](https://github.com/fernandoescolar/teletipo/releases/latest), extract it, and place `teletipo.exe` somewhere on your `PATH`.
+
+### Build from source
+
+```bash
+git clone https://github.com/fernandoescolar/teletipo.git
+cd teletipo
+cargo build --release
+# binary at target/release/teletipo
+```
+
+## Auto-update
+
+Teletipo updates itself automatically. Every time it launches, a background thread checks GitHub Releases for a newer version. If one is found the new binary is downloaded and replaces the current one silently — no prompts, no flags. When the update is complete a brief overlay appears in the terminal window:
+
+```
+Updated to vX.Y.Z — restart to apply
+```
+
+Simply close and reopen Teletipo to start using the new version.
+
+> The update check is non-blocking: the terminal is fully usable while the download happens in the background. If the check fails (no network, GitHub unreachable, etc.) the app starts normally with no error.
+
+## Usage
+
+```bash
+# Open a shell in the current directory
+teletipo
+
+# Run a specific command on startup
+teletipo --exec "htop"
+```
+
+## Features
+
+- GPU-accelerated rendering via `wgpu`
+- Multi-tab workflow
+- Stateful ANSI/VT100 parser (CSI, DEC sequences, SGR, alternate screen, scrollback)
 - Primary and alternate screen buffers
-- Scrollback support
-- Cell styles with basic SGR handling
-- Screen snapshots and damage tracking
-- Command execution mode and shell mode from CLI
-- GPU window runtime as the default execution path
-- Cross-crate tests passing in the workspace
+- Code-editor-style command input
+- Themeable (YAML theme files, ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night)
+- Automatic silent self-update from GitHub Releases
+
+## Keyboard Shortcuts
+
+> `Cmd` on macOS · `Super`/`Win` on Linux/Windows
+
+### Tabs
+
+| Shortcut | Action |
+|---|---|
+| `Cmd + T` | New tab |
+| `Cmd + W` | Close current tab |
+| `Cmd + [` | Previous tab |
+| `Cmd + ]` | Next tab |
+| `Cmd + 1 – 9` | Jump to tab N |
+
+### Command input (editor)
+
+| Shortcut | Action |
+|---|---|
+| `Enter` | Submit command |
+| `Shift + Enter` | Insert newline (multi-line input) |
+| `↑` / `↓` | Navigate command history (when cursor is on first/last line) |
+| `↑` / `↓` | Move cursor up/down in multi-line input |
+| `←` / `→` | Move cursor left/right |
+| `Shift + ← / →` | Extend selection |
+| `Home` | Jump to start of input |
+| `End` | Jump to end of input |
+| `Backspace` | Delete character before cursor |
+| `Delete` | Delete character after cursor |
+
+### Copy & paste
+
+| Shortcut | Action |
+|---|---|
+| `Cmd + C` | Copy terminal selection or editor selection |
+| `Cmd + V` | Paste from clipboard |
+
+### Terminal scrollback
+
+| Shortcut | Action |
+|---|---|
+| `Page Up` | Scroll up 5 lines |
+| `Page Down` | Scroll down 5 lines |
+
+### Settings
+
+| Shortcut | Action |
+|---|---|
+| `Cmd + ,` | Open settings panel |
+| `Ctrl + ,` | Open settings panel |
+
+### Terminal control sequences
+
+| Shortcut | Sends |
+|---|---|
+| `Ctrl + A – Z` | `^A` – `^Z` (control characters) |
+| `Ctrl + [` | `ESC` |
+| `Escape` | `ESC` |
+| `Tab` | Tab (with current editor content forwarded for shell completion) |
+
+### Mouse
+
+| Action | Effect |
+|---|---|
+| Click + drag in terminal | Select text |
+| `Cmd + C` after selection | Copy selection |
+| Drag the split divider | Resize terminal / editor pane |
+| Drag the scrollbar | Scroll terminal or editor |
+| Right-click in terminal | Context menu |
 
 ## Workspace Layout
 
-- `crates/terminal-ansi`: ANSI/VT parser and action model
-- `crates/terminal-screen`: Screen/grid model, styles, scrollback, damage tracking
-- `crates/terminal-core`: Applies parser actions over screen state
-- `crates/terminal-pty`: PTY abstractions and portable-pty session
-- `crates/editor-core`: Basic editor buffer and undo/redo
-- `crates/app-orchestrator`: Wires terminal/editor and PTY pump loop
-- `crates/app-cli`: Application runtime library and CLI surface
-- `src/main.rs`: Workspace binary entrypoint (`cargo run`)
+| Crate | Purpose |
+|---|---|
+| `crates/terminal-ansi` | ANSI/VT parser and action model |
+| `crates/terminal-screen` | Screen/grid model, styles, scrollback, damage tracking |
+| `crates/terminal-core` | Applies parser actions over screen state |
+| `crates/terminal-pty` | PTY abstractions and session management |
+| `crates/editor-core` | Editor buffer and undo/redo |
+| `crates/app-orchestrator` | Wires terminal, editor, and PTY pump loop |
+| `crates/app-cli` | Application runtime library (GPU window, tabs, themes, updater) |
+| `src/main.rs` | Binary entry point |
 
-## Build and Test
+## Development
 
 ```bash
+# Run tests
 cargo test --workspace
-```
 
-Benchmark suites:
-
-```bash
+# Run benchmarks
 cargo bench -p terminal-ansi
 cargo bench -p terminal-screen
-```
 
-## Run
-
-Run the app (root entrypoint):
-
-```bash
+# Run from source
 cargo run
+cargo run -- --exec "printf 'hello\\n'"
 ```
-
-Run with a startup command:
-
-```bash
-cargo run -- --exec "printf 'hello from teletipo\\n'"
-```
-
-Run the app crate directly (equivalent to root run):
-
-```bash
-cargo run -p app-cli
-```
-
-Note: GPU mode is always enabled now. The `--gpu` flag was removed.
 
 ## Release Builds
 
-A top-level [Makefile](Makefile) is available to build release artifacts for macOS, Linux, and Windows.
-
-Prerequisites:
-
-- Rust targets for macOS are installed automatically by the Makefile.
-- `cross` is required for Linux/Windows cross-compilation (`cargo install cross`).
-- Docker is required by `cross`.
-
-Commands:
+A [Makefile](Makefile) builds release artifacts for all platforms. Linux and Windows require [`cross`](https://github.com/cross-rs/cross) and Docker.
 
 ```bash
-# Build all release artifacts
-make release
+cargo install cross          # one-time setup
 
-# Platform-specific builds
-make release-macos
-make release-linux
-make release-windows
-
-# Remove release artifacts
+make release                 # all platforms
+make release-macos           # macOS universal binary
+make release-linux           # Linux x86-64
+make release-windows         # Windows x86-64
 make clean
 ```
 
-## Notes
+Artifacts land in `dist/`:
 
-This is a stable core milestone, not the final product. Next major milestones are GPU rendering (winit + wgpu), richer TUI compatibility, and integrated editor UX parity.
-
-Detailed stable architecture is documented in `docs/STABLE_V1_ARCHITECTURE.md`.
-
-Execution backlog for the next milestones is documented in `docs/ROADMAP_V1_1_TO_V1_5.md`.
+| File | Platform |
+|---|---|
+| `teletipo-macos-universal.tar.gz` | macOS (arm64 + x86-64 lipo'd) |
+| `teletipo-linux-x86_64.tar.gz` | Linux x86-64 |
+| `teletipo-windows-x86_64.zip` | Windows x86-64 |
