@@ -1,6 +1,16 @@
 use app_orchestrator::App;
 use terminal_pty::PortablePtySession;
 
+/// Per-command frecency tracking data persisted across sessions.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub(crate) struct HistoryEntry {
+    pub(crate) cmd: String,
+    /// Number of times this command has been executed.
+    pub(crate) count: u32,
+    /// Unix timestamp (seconds) of the most recent execution.
+    pub(crate) last_used_secs: u64,
+}
+
 /// All state that belongs to a single terminal+editor tab.
 pub(crate) struct TabState {
     pub(crate) app: App,
@@ -28,6 +38,15 @@ pub(crate) struct TabState {
     pub(crate) term_row_count: usize,
     /// Cached working directory label shown in the tab bar.
     pub(crate) cwd: String,
+    /// The editor text that was active when Tab-cycling began; `None` when not
+    /// cycling. Preserved across multiple Tab presses so cycling always searches
+    /// from the original typed prefix.
+    pub(crate) suggestion_prefix: Option<String>,
+    /// Index into the cycling suggestion list corresponding to `suggestion_prefix`.
+    /// `None` means "show the top match as ghost text but do not fill the editor".
+    pub(crate) suggestion_index: Option<usize>,
+    /// Per-command frecency metadata (parallel lookup table, not ordered).
+    pub(crate) history_entries: Vec<HistoryEntry>,
 }
 
 /// Persistent state for a single tab.
@@ -42,6 +61,9 @@ pub(crate) struct TabSession {
     /// Last known working directory for this tab. Empty string means unknown.
     #[serde(default)]
     pub(crate) cwd: String,
+    /// Frecency data for history entries (empty in old session files — seeded on load).
+    #[serde(default)]
+    pub(crate) history_entries: Vec<HistoryEntry>,
 }
 
 /// Session data persisted to disk across program runs.
@@ -51,6 +73,11 @@ pub(crate) struct PersistentSession {
     pub(crate) window_width: u32,
     #[serde(default = "default_window_height")]
     pub(crate) window_height: u32,
+    /// Last known window position in physical pixels. `None` = not yet recorded.
+    #[serde(default)]
+    pub(crate) window_x: Option<i32>,
+    #[serde(default)]
+    pub(crate) window_y: Option<i32>,
     /// Per-tab sessions. Empty in old single-tab session files.
     #[serde(default)]
     pub(crate) tabs: Vec<TabSession>,
@@ -80,6 +107,8 @@ impl Default for PersistentSession {
         Self {
             window_width: default_window_width(),
             window_height: default_window_height(),
+            window_x: None,
+            window_y: None,
             tabs: Vec::new(),
             split_ratio: default_split_ratio(),
             history: Vec::new(),

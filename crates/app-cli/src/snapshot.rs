@@ -2,7 +2,18 @@ use crate::coords::{read_child_cwd, shorten_cwd_label};
 use crate::settings::build_settings_overlay;
 use crate::theme;
 use crate::GpuRuntimeState;
-use render_wgpu::{ColorTheme, RenderSnapshot, TabContextMenu};
+use render_wgpu::{ColorTheme, RenderSnapshot, SuggestionDropdown, TabContextMenu};
+
+/// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
+/// if the string is longer.  Used to keep dropdown entries and ghost text
+/// from overflowing the visible area.
+fn truncate_display(s: &str, max_chars: usize) -> String {
+    let mut char_indices = s.char_indices();
+    match char_indices.nth(max_chars) {
+        None => s.to_owned(),
+        Some((byte_pos, _)) => format!("{}…", &s[..byte_pos]),
+    }
+}
 
 /// Convert the active `ThemeFile` (if any) to a `ColorTheme` for the renderer.
 /// Falls back to `ColorTheme::default()` when no theme is selected.
@@ -70,6 +81,30 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let editor_text = state.tabs[active].app.editor_snapshot();
     let editor_line_count = editor_text.lines().count().max(1);
     let editor_cursor_offset = state.tabs[active].app.editor_cursor_offset();
+
+    // Ghost-text suggestion: the suffix of the most-recently-used history
+    // entry (case-insensitive prefix match) that extends the current editor
+    // text.  Not shown while Tab-cycling is active — the editor content
+    // already shows the selected match in that case.
+    let editor_suggestion = if state.tabs[active].suggestion_index.is_some() {
+        // Cycling in progress: the editor holds the full selected match, so
+        // there is nothing to add as a ghost-text suffix.
+        String::new()
+    } else if !editor_text.is_empty() && editor_cursor_offset == editor_text.len() {
+        crate::suggestion_matches_frecency(
+            &state.tabs[active].history,
+            &state.tabs[active].history_entries,
+            &editor_text,
+            &state.tabs[active].cwd,
+        )
+        .into_iter()
+        .next()
+        .map(|full| truncate_display(&full[editor_text.len()..], 80))
+        .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     let scrollback_lines = state.tabs[active].app.scrollback_len();
     let editor_scroll_offset = state.tabs[active].editor_scroll_offset;
     let editor_selection = state.tabs[active].app.editor_selection();
@@ -139,7 +174,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         terminal_text,
         terminal_fg_colors,
         terminal_bg_colors,
-        editor_text,
+        editor_text: editor_text.clone(),
         editor_cursor_offset,
         scroll_offset,
         scrollback_lines,
@@ -170,6 +205,35 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 format!("~{}", &cwd[home.len()..])
             } else {
                 cwd.clone()
+            }
+        },
+        editor_suggestion,
+        suggestion_dropdown: {
+            if let Some(idx) = state.tabs[active].suggestion_index {
+                let prefix = state.tabs[active]
+                    .suggestion_prefix
+                    .as_deref()
+                    .unwrap_or(editor_text.as_str());
+                let items = crate::suggestion_matches_frecency(
+                    &state.tabs[active].history,
+                    &state.tabs[active].history_entries,
+                    prefix,
+                    &state.tabs[active].cwd,
+                );
+                if items.len() >= 2 {
+                    let display: Vec<String> =
+                        items.into_iter().map(|s| truncate_display(&s, 50)).collect();
+                    // Keep the selected item inside the visible window.
+                    const MAX_VISIBLE: usize = 8;
+                    let scroll_offset = idx
+                        .saturating_sub(MAX_VISIBLE - 1)
+                        .min(display.len().saturating_sub(MAX_VISIBLE));
+                    Some(SuggestionDropdown { items: display, selected: idx, scroll_offset })
+                } else {
+                    None
+                }
+            } else {
+                None
             }
         },
     }

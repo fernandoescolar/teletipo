@@ -41,6 +41,27 @@ pub struct RenderSnapshot {
     /// Active tab's working directory formatted for the window title (home dir
     /// replaced with `~`; never truncated).
     pub title_cwd: String,
+    /// Ghost-text suffix shown after the cursor when a history entry starts
+    /// with the current editor text. Empty when there is no suggestion or the
+    /// cursor is not at the end of the input.
+    pub editor_suggestion: String,
+    /// When `Some`, render a suggestion dropdown panel above the editor line.
+    /// Only populated while Tab/Shift+Tab cycling is active and there are at
+    /// least two candidates.
+    pub suggestion_dropdown: Option<SuggestionDropdown>,
+}
+
+/// Visual state for the suggestion cycling dropdown shown above the editor.
+#[derive(Debug, Clone)]
+pub struct SuggestionDropdown {
+    /// All candidate entries in display (possibly truncated) form.
+    pub items: Vec<String>,
+    /// Absolute index (0..items.len()) of the currently highlighted item.
+    pub selected: usize,
+    /// Index of the first visible item.  The renderer shows
+    /// `items[scroll_offset .. scroll_offset + MAX_VISIBLE]`.  Computed by
+    /// the application layer so the selected item is always in the window.
+    pub scroll_offset: usize,
 }
 
 /// State passed to the renderer to draw the tab context menu.
@@ -84,6 +105,8 @@ pub struct SettingsItem {
 #[derive(Debug, Clone)]
 pub enum AppWindowEvent {
     CloseRequested,
+    /// New top-left position of the window in physical pixels.
+    WindowMoved { x: i32, y: i32 },
     /// Physical pixel dimensions of the window plus the actual cell size (physical px)
     /// as measured from the loaded font. Use `cell_w`/`cell_h` to compute col/row counts.
     Resized { width: u32, height: u32, scale_factor: f64, cell_w: f32, cell_h: f32 },
@@ -212,8 +235,10 @@ pub struct RenderConfig {
     pub glyph_atlas_size: (u32, u32),
     pub font: FontConfig,
     pub theme: ColorTheme,
-    /// If set, the window opens at this physical-pixel size instead of the default 1280×720.
+    /// If set, the window opens at this logical-pixel size instead of the default 1280×720.
     pub initial_size: Option<(u32, u32)>,
+    /// If `Some`, position the window at these physical-pixel screen coordinates on startup.
+    pub initial_position: Option<(i32, i32)>,
 }
 
 impl Default for RenderConfig {
@@ -225,6 +250,7 @@ impl Default for RenderConfig {
             font: FontConfig::default(),
             theme: ColorTheme::default(),
             initial_size: None,
+            initial_position: None,
         }
     }
 }

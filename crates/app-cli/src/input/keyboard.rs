@@ -25,15 +25,82 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         return;
     }
 
+    // Any key other than Tab/Shift+Tab ends the suggestion-cycling session so
+    // that subsequent ghost-text lookups start fresh from the new editor text.
+    // Exception: Up/Down and Esc are allowed to handle the dropdown themselves.
+    let is_tab = matches!(&key_event.logical_key, Key::Named(NamedKey::Tab));
+    let is_nav = matches!(&key_event.logical_key,
+        Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown));
+    let is_esc = matches!(&key_event.logical_key, Key::Named(NamedKey::Escape));
+    let cycling = state.tabs[state.active_tab].suggestion_index.is_some();
+    if !is_tab && !(is_nav && cycling) && !(is_esc && cycling) {
+        let active = state.active_tab;
+        state.tabs[active].suggestion_prefix = None;
+        state.tabs[active].suggestion_index = None;
+    }
+
     match &key_event.logical_key {
-        Key::Named(NamedKey::Escape) => state.send_terminal_input(b"\x1b"),
+        Key::Named(NamedKey::Escape) => {
+            if cycling {
+                // Dismiss the dropdown and restore the original prefix text.
+                let prefix = state.tabs[state.active_tab].suggestion_prefix.take().unwrap_or_default();
+                state.tabs[state.active_tab].suggestion_index = None;
+                state.tab_mut().app.editor_clear();
+                state.tab_mut().app.insert_editor_input(&prefix);
+            } else {
+                state.send_terminal_input(b"\x1b");
+            }
+        }
         Key::Named(NamedKey::Tab) => {
             let editor_text = state.tab().app.editor_snapshot();
-            state.send_terminal_input(b"\x15");
-            if !editor_text.is_empty() {
-                state.send_terminal_input(editor_text.as_bytes());
+            let cursor = state.tab().app.editor_cursor_offset();
+            // Only engage when the cursor is at the very end of the input.
+            if cursor != editor_text.len() || editor_text.is_empty() {
+                return;
             }
-            state.send_terminal_input(b"\t");
+            // The prefix we cycle through — either the saved cycling prefix
+            // (on subsequent Tab/Shift+Tab presses) or the current editor text
+            // (on the very first Tab press).
+            let prefix = state.tabs[state.active_tab]
+                .suggestion_prefix
+                .clone()
+                .unwrap_or_else(|| editor_text.clone());
+
+            let matches = crate::suggestion_matches_frecency(
+                &state.tabs[state.active_tab].history,
+                &state.tabs[state.active_tab].history_entries,
+                &prefix,
+                &state.tabs[state.active_tab].cwd,
+            );
+            if matches.is_empty() {
+                return;
+            }
+
+            let n = matches.len();
+            let current_idx = state.tabs[state.active_tab].suggestion_index;
+            let new_idx = if state.shift_down {
+                // Shift+Tab: cycle backward
+                match current_idx {
+                    None | Some(0) => n - 1,
+                    Some(i) => i - 1,
+                }
+            } else {
+                // Tab: cycle forward
+                match current_idx {
+                    None => 0,
+                    Some(i) => (i + 1) % n,
+                }
+            };
+
+            // Save the original prefix on first Tab press.
+            state.tabs[state.active_tab].suggestion_prefix = Some(prefix);
+            state.tabs[state.active_tab].suggestion_index = Some(new_idx);
+
+            // Fill the editor with the selected match so the user can submit it
+            // with Enter directly or keep cycling with Tab/Shift+Tab.
+            let full = matches[new_idx].clone();
+            state.tab_mut().app.editor_clear();
+            state.tab_mut().app.insert_editor_input(&full);
         }
 
         Key::Named(NamedKey::PageUp) => {
@@ -153,28 +220,70 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             state.tab_mut().app.editor_move_cursor_right(extend);
         }
         Key::Named(NamedKey::ArrowUp) => {
-            let text = state.tab().app.editor_snapshot();
-            let offset = state.tab().app.editor_cursor_offset();
-            let (row, col) = editor_cursor_row_col(&text, offset);
-            if row == 0 && !state.shift_down {
-                state.history_prev();
-            } else if row > 0 {
-                let new_offset = editor_row_col_to_offset(&text, row - 1, col);
-                let extend = state.shift_down;
-                state.tab_mut().app.set_editor_cursor(new_offset, extend);
+            if cycling {
+                // Navigate dropdown: move to the previous item (Shift+Tab direction).
+                let prefix = state.tabs[state.active_tab]
+                    .suggestion_prefix.clone().unwrap_or_default();
+                let matches = crate::suggestion_matches_frecency(
+                    &state.tabs[state.active_tab].history,
+                    &state.tabs[state.active_tab].history_entries,
+                    &prefix,
+                    &state.tabs[state.active_tab].cwd,
+                );
+                let n = matches.len();
+                if n > 0 {
+                    let idx = state.tabs[state.active_tab].suggestion_index.unwrap_or(0);
+                    let new_idx = if idx == 0 { n - 1 } else { idx - 1 };
+                    state.tabs[state.active_tab].suggestion_index = Some(new_idx);
+                    let full = matches[new_idx].clone();
+                    state.tab_mut().app.editor_clear();
+                    state.tab_mut().app.insert_editor_input(&full);
+                }
+            } else {
+                let text = state.tab().app.editor_snapshot();
+                let offset = state.tab().app.editor_cursor_offset();
+                let (row, col) = editor_cursor_row_col(&text, offset);
+                if row == 0 && !state.shift_down {
+                    state.history_prev();
+                } else if row > 0 {
+                    let new_offset = editor_row_col_to_offset(&text, row - 1, col);
+                    let extend = state.shift_down;
+                    state.tab_mut().app.set_editor_cursor(new_offset, extend);
+                }
             }
         }
         Key::Named(NamedKey::ArrowDown) => {
-            let text = state.tab().app.editor_snapshot();
-            let offset = state.tab().app.editor_cursor_offset();
-            let (row, col) = editor_cursor_row_col(&text, offset);
-            let last_row = text.lines().count().saturating_sub(1);
-            if row >= last_row && !state.shift_down {
-                state.history_next();
-            } else if row < last_row {
-                let new_offset = editor_row_col_to_offset(&text, row + 1, col);
-                let extend = state.shift_down;
-                state.tab_mut().app.set_editor_cursor(new_offset, extend);
+            if cycling {
+                // Navigate dropdown: move to the next item (Tab direction).
+                let prefix = state.tabs[state.active_tab]
+                    .suggestion_prefix.clone().unwrap_or_default();
+                let matches = crate::suggestion_matches_frecency(
+                    &state.tabs[state.active_tab].history,
+                    &state.tabs[state.active_tab].history_entries,
+                    &prefix,
+                    &state.tabs[state.active_tab].cwd,
+                );
+                let n = matches.len();
+                if n > 0 {
+                    let idx = state.tabs[state.active_tab].suggestion_index.unwrap_or(0);
+                    let new_idx = (idx + 1) % n;
+                    state.tabs[state.active_tab].suggestion_index = Some(new_idx);
+                    let full = matches[new_idx].clone();
+                    state.tab_mut().app.editor_clear();
+                    state.tab_mut().app.insert_editor_input(&full);
+                }
+            } else {
+                let text = state.tab().app.editor_snapshot();
+                let offset = state.tab().app.editor_cursor_offset();
+                let (row, col) = editor_cursor_row_col(&text, offset);
+                let last_row = text.lines().count().saturating_sub(1);
+                if row >= last_row && !state.shift_down {
+                    state.history_next();
+                } else if row < last_row {
+                    let new_offset = editor_row_col_to_offset(&text, row + 1, col);
+                    let extend = state.shift_down;
+                    state.tab_mut().app.set_editor_cursor(new_offset, extend);
+                }
             }
         }
         Key::Named(NamedKey::Home) => {

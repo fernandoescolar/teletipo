@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{Event, Ime, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Icon, Window, WindowBuilder};
@@ -134,6 +134,9 @@ where
                 config.initial_size.map_or(1280, |(w, _)| w) as f64,
                 config.initial_size.map_or(720, |(_, h)| h) as f64,
             ));
+        if let Some((px, py)) = config.initial_position {
+            builder = builder.with_position(PhysicalPosition::new(px, py));
+        }
         #[cfg(target_os = "macos")]
         {
             use winit::platform::macos::WindowBuilderExtMacOS;
@@ -178,6 +181,9 @@ where
                 WindowEvent::CloseRequested => {
                     on_event(AppWindowEvent::CloseRequested);
                     target.exit();
+                }
+                WindowEvent::Moved(pos) => {
+                    on_event(AppWindowEvent::WindowMoved { x: pos.x, y: pos.y });
                 }
                 WindowEvent::Resized(size) => {
                     state.resize(size);

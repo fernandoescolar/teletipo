@@ -1,5 +1,5 @@
 use crate::config::load_config;
-use crate::tab::{PersistentSession, TabSession, TabState};
+use crate::tab::{HistoryEntry, PersistentSession, TabSession, TabState};
 use crate::theme;
 use crate::GpuRuntimeState;
 use app_orchestrator::App;
@@ -141,12 +141,19 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
         history: tab.history.clone(),
         split_ratio: tab.split_ratio,
         cwd: tab.cwd.clone(),
+        history_entries: tab.history_entries.clone(),
     }).collect();
 
     let active = &state.tabs[state.active_tab];
+    // Store logical pixels (physical ÷ scale_factor) so window.rs can restore the
+    // size correctly with LogicalSize::new(…) on the next launch.
+    let logical_w = (state.window_width  as f64 / state.scale_factor).round() as u32;
+    let logical_h = (state.window_height as f64 / state.scale_factor).round() as u32;
     let session = PersistentSession {
-        window_width: state.window_width,
-        window_height: state.window_height,
+        window_width:  logical_w,
+        window_height: logical_h,
+        window_x: Some(state.window_x),
+        window_y: Some(state.window_y),
         tabs: tab_sessions,
         split_ratio: active.split_ratio,
         history: active.history.clone(),
@@ -165,8 +172,10 @@ pub(crate) fn build_initial_state(
     session: PersistentSession,
     update_rx: std::sync::mpsc::Receiver<Option<String>>,
 ) -> GpuRuntimeState {
-    let window_width = session.window_width;
+    let window_width  = session.window_width;
     let window_height = session.window_height;
+    let window_x = session.window_x.unwrap_or(0);
+    let window_y = session.window_y.unwrap_or(0);
 
     let saved_tabs: Vec<TabSession> = if !session.tabs.is_empty() {
         session.tabs
@@ -176,6 +185,7 @@ pub(crate) fn build_initial_state(
             history: session.history,
             split_ratio: session.split_ratio,
             cwd: String::new(),
+            history_entries: vec![],
         }]
     };
 
@@ -214,7 +224,7 @@ pub(crate) fn build_initial_state(
             pty,
             scroll_offset: 0,
             editor_scroll_offset: 0,
-            history: saved.history,
+            history: saved.history.clone(),
             history_index: None,
             saved_input: String::new(),
             split_ratio: saved.split_ratio,
@@ -225,6 +235,19 @@ pub(crate) fn build_initial_state(
             last_terminal_text: String::new(),
             term_row_count: rows,
             cwd: initial_cwd,
+            suggestion_prefix: None,
+            suggestion_index: None,
+            // Backward compat: if no frecency data is stored, seed each history
+            // entry with count=1 and an artificial age so older entries rank lower.
+            history_entries: if saved.history_entries.is_empty() {
+                saved.history.iter().enumerate().map(|(i, cmd)| HistoryEntry {
+                    cmd: cmd.clone(),
+                    count: 1,
+                    last_used_secs: i as u64,
+                }).collect()
+            } else {
+                saved.history_entries.clone()
+            },
         });
     }
 
@@ -236,6 +259,8 @@ pub(crate) fn build_initial_state(
         super_down: false,
         window_width,
         window_height,
+        window_x,
+        window_y,
         scale_factor: 1.0,
         cursor_x: 0.0,
         cursor_y: 0.0,

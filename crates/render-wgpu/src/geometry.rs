@@ -493,6 +493,80 @@ pub(crate) fn build_settings_overlay_bg_verts(
     verts
 }
 
+/// Returns background geometry for the suggestion-cycling dropdown that floats
+/// just above the editor line.  Each candidate is rendered as one row; the
+/// selected item is highlighted.  Returns an empty `Vec` when there is no
+/// active dropdown.
+pub(crate) fn build_suggestion_dropdown_bg_verts(
+    size: PhysicalSize<u32>,
+    snapshot: &RenderSnapshot,
+    cell_w_px: f32,
+    cell_h_px: f32,
+    pad_h: f32,
+) -> Vec<f32> {
+    let Some(ref dd) = snapshot.suggestion_dropdown else { return Vec::new() };
+    if dd.items.is_empty() || size.width == 0 || size.height == 0 { return Vec::new(); }
+
+    let theme       = &snapshot.theme;
+    let add_c = |a: [f32; 4], d: f32| -> [f32; 4] {
+        [(a[0]+d).clamp(0.0,1.0), (a[1]+d).clamp(0.0,1.0), (a[2]+d).clamp(0.0,1.0), a[3]]
+    };
+    let mix_c = |a: [f32; 4], b: [f32; 4], t: f32| -> [f32; 4] {
+        [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t, 1.0]
+    };
+    let dd_bg      = add_c(theme.terminal_bg, 0.06);
+    let dd_border  = theme.separator_focused;
+    let dd_select  = mix_c(add_c(theme.terminal_bg, 0.10), theme.separator_focused, 0.25);
+
+    let px_x = 2.0 / size.width  as f32;
+    let px_y = 2.0 / size.height as f32;
+    let win_h = size.height as f32;
+
+    let tab_bar_h    = if !snapshot.tab_labels.is_empty() { cell_h_px } else { 0.0 };
+    let available_h  = win_h - tab_bar_h;
+    let edit_top_px  = (tab_bar_h + snapshot.split_ratio * available_h + 2.0).round();
+
+    let row_h      = cell_h_px * 1.2;
+    let n_visible  = dd.items.len().saturating_sub(dd.scroll_offset).min(8);
+    let visible_end = dd.scroll_offset + n_visible;
+    let visible_selected = dd.selected.saturating_sub(dd.scroll_offset);
+    let max_chars  = dd.items[dd.scroll_offset..visible_end].iter().map(|s| s.chars().count()).max().unwrap_or(10);
+    let panel_w    = (max_chars as f32 + 4.0) * cell_w_px;
+    let panel_h    = n_visible as f32 * row_h;
+
+    // Anchor the panel's left edge at the text-grid start and its bottom edge
+    // flush with the top of the editor area.
+    let panel_x0_px = pad_h;
+    let panel_y_bot_px = edit_top_px;            // bottom of dropdown = top of editor
+    let panel_y_top_px = edit_top_px - panel_h;  // top of dropdown (above editor)
+
+    let x0    = panel_x0_px * px_x - 1.0;
+    let x1    = (panel_x0_px + panel_w) * px_x - 1.0;
+    let y_bot = 1.0 - panel_y_bot_px * px_y;
+    let y_top = 1.0 - panel_y_top_px * px_y;
+
+    let mut verts = Vec::new();
+
+    // 1-pixel border.
+    verts.extend_from_slice(&quad_verts(
+        x0 - px_x, y_bot - px_y, x1 + px_x, y_top + px_y, dd_border,
+    ));
+    // Background.
+    verts.extend_from_slice(&quad_verts(x0, y_bot, x1, y_top, dd_bg));
+
+    // Per-row highlight for the selected item.
+    for i in 0..n_visible {
+        let row_px_top = panel_y_top_px + i as f32 * row_h;
+        let ry_top = 1.0 - row_px_top * px_y;
+        let ry_bot = 1.0 - (row_px_top + row_h) * px_y;
+        if i == visible_selected {
+            verts.extend_from_slice(&quad_verts(x0, ry_bot, x1, ry_top, dd_select));
+        }
+    }
+
+    verts
+}
+
 pub(crate) fn editor_caret_verts(
     editor_text: &str,
     cursor_offset: usize,

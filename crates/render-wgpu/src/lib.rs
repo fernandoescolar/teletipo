@@ -15,7 +15,7 @@ pub use geometry::{
 pub use renderer::{NullRenderer, Renderer, WgpuRenderer};
 pub use types::{
     AppWindowEvent, ColorTheme, DamageRegion, FontConfig, PaneKind, PaneLayout, PipelineStage,
-    RenderConfig, RenderSnapshot, RenderStats, SettingsItem, SettingsOverlay, TabContextMenu,
-    VsyncMode, default_ansi_palette,
+    RenderConfig, RenderSnapshot, RenderStats, SettingsItem, SettingsOverlay, SuggestionDropdown,
+    TabContextMenu, VsyncMode, default_ansi_palette,
 };
 pub use window::{run_gpu_window, run_gpu_window_live, run_gpu_window_live_with_events};

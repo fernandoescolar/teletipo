@@ -6,6 +6,11 @@ use std::time::Instant;
 use winit::event::{ElementState, MouseButton};
 
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) -> bool {
+    if let AppWindowEvent::WindowMoved { x, y } = event {
+        state.window_x = *x;
+        state.window_y = *y;
+        return true;
+    }
     if let AppWindowEvent::Resized { width, height, scale_factor, cell_w, cell_h } = event {
         state.window_width = *width;
         state.window_height = *height;

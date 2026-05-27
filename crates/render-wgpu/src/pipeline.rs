@@ -7,7 +7,8 @@ use winit::window::Window;
 
 use crate::atlas::{load_font_bytes, pack_glyph, CachedGlyph, TEXT_ATLAS_SIZE};
 use crate::geometry::{
-    add_text_verts, build_panel_vertices, build_settings_overlay_bg_verts, floats_as_bytes,
+    add_text_verts, build_panel_vertices, build_settings_overlay_bg_verts,
+    build_suggestion_dropdown_bg_verts, floats_as_bytes,
     SHADER_WGSL, TEXT_SHADER_WGSL, TEXT_VERTEX_BUF_CAPACITY, VERTEX_BUF_CAPACITY,
 };
 use crate::types::{ColorTheme, RenderConfig, RenderSnapshot, VsyncMode};
@@ -383,12 +384,16 @@ impl<'a> GpuState<'a> {
 
         let panel_verts = build_panel_vertices(self.size, snapshot, term_top_offset_px, self.cell_w_px, self.cell_h_px, pad_h, pad_v);
         let panel_vertex_count = (panel_verts.len() / 6) as u32;
+        let dropdown_bg_verts = build_suggestion_dropdown_bg_verts(self.size, snapshot, self.cell_w_px, self.cell_h_px, pad_h);
+        let dropdown_bg_start = panel_vertex_count;
+        let dropdown_bg_count = (dropdown_bg_verts.len() / 6) as u32;
         let overlay_bg_verts = build_settings_overlay_bg_verts(self.size, snapshot, self.cell_w_px, self.cell_h_px);
-        let overlay_bg_start  = panel_vertex_count;
+        let overlay_bg_start  = dropdown_bg_start + dropdown_bg_count;
         let overlay_bg_count  = (overlay_bg_verts.len() / 6) as u32;
         {
-            // Upload main bg + settings overlay bg into the same buffer, main first.
+            // Upload main bg + dropdown bg + settings overlay bg, in draw order.
             let mut all_bg = panel_verts;
+            all_bg.extend_from_slice(&dropdown_bg_verts);
             all_bg.extend_from_slice(&overlay_bg_verts);
             if !all_bg.is_empty() {
                 let bytes = floats_as_bytes(&all_bg);
@@ -399,7 +404,10 @@ impl<'a> GpuState<'a> {
 
         self.ensure_glyph('\u{276f}');
         self.ensure_glyph('\u{d7}'); // × close-button character
-        for ch in snapshot.terminal_text.chars().chain(snapshot.editor_text.chars()) {
+        for ch in snapshot.terminal_text.chars()
+            .chain(snapshot.editor_text.chars())
+            .chain(snapshot.editor_suggestion.chars())
+        {
             if ch != '\n' && ch != '\r' && ch != '\t' && ch != ' ' {
                 self.ensure_glyph(ch);
             }
@@ -419,6 +427,14 @@ impl<'a> GpuState<'a> {
         // loop in `new`, but ensure_glyph is idempotent so this is safe).
         if let Some(ref menu) = snapshot.tab_context_menu {
             let _ = menu; // characters are ASCII — already in cache
+        }
+        // Pre-cache suggestion dropdown characters.
+        if let Some(ref dd) = snapshot.suggestion_dropdown {
+            for item in &dd.items {
+                for ch in item.chars() {
+                    if ch != ' ' { self.ensure_glyph(ch); }
+                }
+            }
         }
 
         // Pixel coordinates for the terminal and editor pane boundaries.
@@ -454,7 +470,16 @@ impl<'a> GpuState<'a> {
         let editor_hl = highlight_shell(&snapshot.editor_text);
         let mut padded_hl: Vec<Option<[f32; 3]>> = vec![None, None];
         padded_hl.extend(editor_hl);
-        let padded_editor = format!("  {}", snapshot.editor_text);
+        // Append ghost-text suggestion in dim grey when present.
+        let padded_editor = if snapshot.editor_suggestion.is_empty() {
+            format!("  {}", snapshot.editor_text)
+        } else {
+            let ghost_color: [f32; 3] = [0.50, 0.50, 0.50];
+            for _ in snapshot.editor_suggestion.chars() {
+                padded_hl.push(Some(ghost_color));
+            }
+            format!("  {}{}", snapshot.editor_text, snapshot.editor_suggestion)
+        };
         add_text_verts(&padded_editor, edit_top_px + pad_v, pad_h, self.theme.text,
             &padded_hl, &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, editor_skip);
 
@@ -528,6 +553,29 @@ impl<'a> GpuState<'a> {
         }
 
         // Settings overlay text — rendered last, no scissor.
+        let dropdown_text_vert_start = (text_verts.len() / 8) as u32;
+        if let Some(ref dd) = snapshot.suggestion_dropdown {
+            let th = &snapshot.theme;
+            let n_visible  = dd.items.len().saturating_sub(dd.scroll_offset).min(8);
+            let visible_end = dd.scroll_offset + n_visible;
+            let visible_selected = dd.selected.saturating_sub(dd.scroll_offset);
+            let row_h      = self.cell_h_px * 1.2;
+            let panel_h    = n_visible as f32 * row_h;
+            let edit_top_px = (tab_bar_h + snapshot.split_ratio * available_h + 2.0).round();
+            let panel_y_top_px = edit_top_px - panel_h;
+            for (i, item) in dd.items[dd.scroll_offset..visible_end].iter().enumerate() {
+                let row_y = panel_y_top_px + i as f32 * row_h + (row_h - self.cell_h_px) * 0.5;
+                let color = if i == visible_selected {
+                    th.text
+                } else {
+                    let [r, g, b, _] = th.text;
+                    [r * 0.72, g * 0.72, b * 0.72, 0.9]
+                };
+                add_text_verts(item, row_y, pad_h + self.cell_w_px, color,
+                    &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                    &mut text_verts, 0);
+            }
+        }
         let settings_text_vert_start = (text_verts.len() / 8) as u32;
         if let Some(ref overlay) = snapshot.settings_overlay {
             if self.size.width > 0 && self.size.height > 0 && self.cell_w_px > 0.0 && self.cell_h_px > 0.0 {
@@ -681,7 +729,26 @@ impl<'a> GpuState<'a> {
                 // Context menu text: no scissor clipping (menu floats above all panes).
                 if total_capped > context_text_vert_start {
                     pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
-                    pass.draw(context_text_vert_start.min(total_capped)..settings_text_vert_start.min(total_capped), 0..1);
+                    pass.draw(context_text_vert_start.min(total_capped)..dropdown_text_vert_start.min(total_capped), 0..1);
+                }
+
+                // Suggestion dropdown background — drawn after main panel bg so it
+                // sits on top of the terminal/editor backgrounds.
+                if dropdown_bg_count > 0 {
+                    pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
+                    pass.set_pipeline(&self.pipeline);
+                    pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
+                    pass.draw(dropdown_bg_start..dropdown_bg_start + dropdown_bg_count, 0..1);
+                    // Restore text pipeline for dropdown text below.
+                    pass.set_pipeline(&self.text_pipeline);
+                    pass.set_bind_group(0, &self.atlas_bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.text_vertex_buf.slice(..));
+                }
+
+                // Suggestion dropdown text: no scissor.
+                if total_capped > dropdown_text_vert_start {
+                    pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
+                    pass.draw(dropdown_text_vert_start.min(total_capped)..settings_text_vert_start.min(total_capped), 0..1);
                 }
 
                 // Settings overlay: draw its background (full-screen dim + panel) AFTER all
