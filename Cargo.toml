@@ -1,0 +1,11 @@
+[package]
+name = "teletipo"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[dependencies]
+app-cli = { path = "crates/app-cli" }

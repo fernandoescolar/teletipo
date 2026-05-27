@@ -1,0 +1,9 @@
+[package]
+name = "app-orchestrator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+editor-core = { path = "../editor-core" }
+terminal-core = { path = "../terminal-core" }
+terminal-pty = { path = "../terminal-pty" }

@@ -1,0 +1,15 @@
+[package]
+name = "render-wgpu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+fontdue = "0.7"
+pollster = "0.3"
+wgpu = "0.19"
+winit = "0.29"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.4"
