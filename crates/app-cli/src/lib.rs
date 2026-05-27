@@ -6,6 +6,7 @@ mod settings;
 mod snapshot;
 mod tab;
 mod theme;
+pub mod updater;
 use config::UserConfig;
 use launch::{build_initial_state, FontFile, load_session, save_session, spawn_pty};
 use app_orchestrator::App;
@@ -88,6 +89,11 @@ struct GpuRuntimeState {
     /// Index into `available_fonts` of the currently selected font.
     /// 0 means "(default)", i.e. no font path override.
     active_font_idx: usize,
+    /// Receiver for the background update-check result (consumed once after the
+    /// check completes; set to `None` afterwards).
+    update_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
+    /// Set to `Some(version)` once a newer release is detected on GitHub.
+    pending_update: Option<String>,
     /// Settings overlay interaction state.
     settings: SettingsUiState,
 }
@@ -281,7 +287,7 @@ impl GpuRuntimeState {
 }
 
 
-pub fn run() {
+pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) {
     let cli = Cli::parse();
     let shell = cli.shell.unwrap_or_else(default_shell);
 
@@ -295,6 +301,7 @@ pub fn run() {
         cli.exec.as_deref(),
         &shell,
         session,
+        update_rx,
     )));
     let (initial_font_path, initial_font_size) = {
         let s = state.borrow();

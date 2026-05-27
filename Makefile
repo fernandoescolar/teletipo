@@ -58,7 +58,9 @@ release-macos:
 		'  <key>NSHighResolutionCapable</key><true/>' \
 		'</dict>' \
 		'</plist>' > $(DIST)/$(MAC_BUNDLE)/Contents/Info.plist
-	tar -czf $(DIST)/$(APP)-macos-universal.tar.gz -C $(DIST) $(APP)-macos-universal
+	cp $(DIST)/$(APP)-macos-universal $(DIST)/$(APP)
+	tar -czf $(DIST)/$(APP)-macos-universal.tar.gz -C $(DIST) $(APP)
+	rm -f $(DIST)/$(APP)
 	tar -czf $(DIST)/$(APP)-macos-app.tar.gz -C $(DIST) $(MAC_BUNDLE)
 
 release-linux:

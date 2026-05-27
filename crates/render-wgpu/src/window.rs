@@ -30,7 +30,7 @@ fn apply_app_icon() {
         }
         let data: *mut AnyObject = msg_send![
             class!(NSData),
-            dataWithBytes: APP_ICON_PNG.as_ptr()
+            dataWithBytes: APP_ICON_PNG.as_ptr() as *const core::ffi::c_void
             length: APP_ICON_PNG.len()
         ];
         if data.is_null() {

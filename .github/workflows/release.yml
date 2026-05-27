@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+
+  # ── macOS (universal arm64 + x86_64) ───────────────────────────────────────
+  build-macos:
+    name: Build macOS (universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build arm64 + x86_64
+        run: |
+          cargo build --release -p teletipo --target aarch64-apple-darwin
+          cargo build --release -p teletipo --target x86_64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          mkdir -p dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/teletipo \
+            target/x86_64-apple-darwin/release/teletipo \
+            -output dist/teletipo-macos-universal
+
+      - name: Build icons
+        run: |
+          mkdir -p dist/Teletipo.iconset
+          sips -z 16   16   docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_16x16.png      >/dev/null
+          sips -z 32   32   docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_16x16@2x.png   >/dev/null
+          sips -z 32   32   docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_32x32.png      >/dev/null
+          sips -z 64   64   docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_32x32@2x.png   >/dev/null
+          sips -z 128  128  docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_128x128.png    >/dev/null
+          sips -z 256  256  docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_128x128@2x.png >/dev/null
+          sips -z 256  256  docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_256x256.png    >/dev/null
+          sips -z 512  512  docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_256x256@2x.png >/dev/null
+          sips -z 512  512  docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_512x512.png    >/dev/null
+          sips -z 1024 1024 docs/teletipo128x128.png --out dist/Teletipo.iconset/icon_512x512@2x.png >/dev/null
+          iconutil -c icns dist/Teletipo.iconset -o dist/Teletipo.icns
+
+      - name: Build .app bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/Teletipo.app/Contents/MacOS
+          mkdir -p dist/Teletipo.app/Contents/Resources
+          cp dist/teletipo-macos-universal dist/Teletipo.app/Contents/MacOS/teletipo
+          chmod +x dist/Teletipo.app/Contents/MacOS/teletipo
+          cp dist/Teletipo.icns dist/Teletipo.app/Contents/Resources/Teletipo.icns
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0">' \
+            '<dict>' \
+            '  <key>CFBundleDevelopmentRegion</key><string>en</string>' \
+            '  <key>CFBundleDisplayName</key><string>Teletipo</string>' \
+            '  <key>CFBundleExecutable</key><string>teletipo</string>' \
+            '  <key>CFBundleIconFile</key><string>Teletipo</string>' \
+            '  <key>CFBundleIdentifier</key><string>dev.teletipo.app</string>' \
+            '  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>' \
+            '  <key>CFBundleName</key><string>Teletipo</string>' \
+            '  <key>CFBundlePackageType</key><string>APPL</string>' \
+            "  <key>CFBundleShortVersionString</key><string>${VERSION}</string>" \
+            "  <key>CFBundleVersion</key><string>${VERSION}</string>" \
+            '  <key>LSMinimumSystemVersion</key><string>11.0</string>' \
+            '  <key>NSHighResolutionCapable</key><true/>' \
+            '</dict>' \
+            '</plist>' > dist/Teletipo.app/Contents/Info.plist
+
+      - name: Package archives
+        run: |
+          cp dist/teletipo-macos-universal dist/teletipo
+          tar -czf dist/teletipo-macos-universal.tar.gz -C dist teletipo
+          rm dist/teletipo
+          tar -czf dist/teletipo-macos-app.tar.gz -C dist Teletipo.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/teletipo-macos-universal.tar.gz
+            dist/teletipo-macos-app.tar.gz
+
+  # ── Linux x86_64 (cross-compiled for glibc compatibility) ──────────────────
+  build-linux:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build
+        run: cross build --release -p teletipo --target x86_64-unknown-linux-gnu
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          tar -czf dist/teletipo-linux-x86_64.tar.gz \
+            -C target/x86_64-unknown-linux-gnu/release teletipo
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/teletipo-linux-x86_64.tar.gz
+
+  # ── Windows x86_64 (cross-compiled via MinGW) ──────────────────────────────
+  build-windows:
+    name: Build Windows x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build
+        run: cross build --release -p teletipo --target x86_64-pc-windows-gnu
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cd target/x86_64-pc-windows-gnu/release
+          zip -9 "$GITHUB_WORKSPACE/dist/teletipo-windows-x86_64.zip" teletipo.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/teletipo-windows-x86_64.zip
+
+  # ── GitHub Release ─────────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/teletipo-macos-universal.tar.gz
+            dist/teletipo-macos-app.tar.gz
+            dist/teletipo-linux-x86_64.tar.gz
+            dist/teletipo-windows-x86_64.zip

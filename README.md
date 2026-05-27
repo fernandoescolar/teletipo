@@ -1,6 +1,8 @@
 # Teletipo
 
-Teletipo is a modern terminal/editor prototype in Rust with a modular architecture.
+TeleTipo is a modern terminal emulator written in Rust, inspired by classic teletypes and retro computing aesthetics.
+
+It combines GPU-accelerated rendering, multi-tab workflows, rich color support, and a code-editor-like command input to create a terminal experience that feels fast, expressive, and playful.
 
 ![Teletipo screenshot](docs/teletipo128x128.png)
 

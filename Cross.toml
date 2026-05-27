@@ -1,0 +1,6 @@
+[target.x86_64-unknown-linux-gnu]
+# Install X11/XCB headers needed by winit and arboard when cross-compiling for Linux.
+pre-build = [
+    "apt-get update",
+    "apt-get install -y libx11-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev",
+]

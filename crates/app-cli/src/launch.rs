@@ -163,6 +163,7 @@ pub(crate) fn build_initial_state(
     exec: Option<&str>,
     shell: &str,
     session: PersistentSession,
+    update_rx: std::sync::mpsc::Receiver<Option<String>>,
 ) -> GpuRuntimeState {
     let window_width = session.window_width;
     let window_height = session.window_height;
@@ -257,6 +258,8 @@ pub(crate) fn build_initial_state(
         active_theme_idx: None,
         available_fonts: enumerate_fonts(),
         active_font_idx: 0,
+        update_rx: Some(update_rx),
+        pending_update: None,
         settings: crate::SettingsUiState::default(),
     };
 

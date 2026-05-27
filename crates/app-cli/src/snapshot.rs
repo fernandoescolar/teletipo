@@ -30,6 +30,22 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     if state.settings.just_saved {
         state.settings.just_saved = false;
     }
+
+    // Poll the background update-check thread (once; then drop the receiver).
+    if let Some(ref rx) = state.update_rx {
+        match rx.try_recv() {
+            Ok(result) => {
+                state.pending_update = result;
+                state.update_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // Thread exited without finding an update (rate-gate or error).
+                state.update_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
     let had_data = state.pump_all_ptys();
     if had_data {
         let active = state.active_tab;
@@ -61,7 +77,9 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let selection_anchor = state.tabs[active].selection_anchor;
     let selection_end = state.tabs[active].selection_end;
 
-    let resize_overlay = if let Some((ref t, cols, rows)) = state.last_resize {
+    let resize_overlay = if let Some(ref v) = state.pending_update {
+        Some(format!("Updated to v{v} \u{2014} restart to apply"))
+    } else if let Some((ref t, cols, rows)) = state.last_resize {
         if t.elapsed().as_secs_f32() < 1.0 {
             Some(format!("{cols}\u{d7}{rows}"))
         } else {
