@@ -8,6 +8,7 @@ app-orchestrator = { path = "../app-orchestrator" }
 platform-abstraction = { path = "../platform-abstraction" }
 terminal-pty = { path = "../terminal-pty" }
 render-wgpu = { path = "../render-wgpu" }
+ui = { path = "../ui" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 winit = "0.29"

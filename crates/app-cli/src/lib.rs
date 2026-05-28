@@ -17,6 +17,25 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 use tab::TabState;
+use ui::{InputRouter, UiConfig, UiState};
+
+struct UiComponentBridge {
+    state: UiState,
+}
+
+impl UiComponentBridge {
+    fn new(shell: String, config: UiConfig) -> Self {
+        let state = UiState::new(shell, config).expect("valid ui bridge state");
+        Self { state }
+    }
+
+    fn handle_event(&mut self, event: &render_wgpu::AppWindowEvent) {
+        let actions = InputRouter::process(&self.state, event);
+        for action in actions {
+            self.state.apply_action(action);
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "teletipo", version, about = "Modern terminal/editor prototype")]
@@ -457,12 +476,25 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) {
         session,
         update_rx,
     )));
+    let ui_bridge = Rc::new(RefCell::new({
+        let s = state.borrow();
+        UiComponentBridge::new(
+            shell.clone(),
+            UiConfig {
+                padding_horizontal: s.user_config.padding.horizontal as f32,
+                padding_vertical: s.user_config.padding.vertical as f32,
+                active_theme_idx: s.active_theme_idx,
+                active_font_idx: s.active_font_idx,
+            },
+        )
+    }));
     let (initial_font_family, initial_font_size) = {
         let s = state.borrow();
         (s.user_config.font.family.clone(), s.user_config.font.size)
     };
     let state_for_frames = Rc::clone(&state);
     let state_for_events = Rc::clone(&state);
+    let bridge_for_events = Rc::clone(&ui_bridge);
 
     if let Err(err) = run_gpu_window_live_with_events(
         move || {
@@ -470,6 +502,7 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) {
             snapshot::build_snapshot(&mut state)
         },
         move |event| {
+            bridge_for_events.borrow_mut().handle_event(&event);
             let mut state = state_for_events.borrow_mut();
             input::handle_event(&mut state, event);
         },
