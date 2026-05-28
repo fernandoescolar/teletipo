@@ -176,6 +176,8 @@ name = "app-orchestrator"
 version = "0.1.0"
 dependencies = [
  "editor-core",
+ "serde",
+ "serde_json",
  "terminal-core",
  "terminal-pty",
 ]

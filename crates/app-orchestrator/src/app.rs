@@ -1,14 +1,23 @@
 use std::io;
 use std::thread;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use editor_core::EditorBuffer;
 use terminal_core::{TerminalError, TerminalSession, StyledChars};
 use terminal_pty::PtyBackend;
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub cmd: String,
+    pub count: u32,
+    pub last_used_secs: u64,
+}
+
 pub struct App {
     terminal: TerminalSession,
     editor: EditorBuffer,
+    history_entries: Vec<HistoryEntry>,
 }
 
 impl App {
@@ -16,7 +25,79 @@ impl App {
         Ok(Self {
             terminal: TerminalSession::new(rows, cols)?,
             editor: EditorBuffer::new(),
+            history_entries: Vec::new(),
         })
+    }
+
+    pub fn record_history(&mut self, cmd: &str) {
+        let trimmed = cmd.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        if let Some(entry) = self
+            .history_entries
+            .iter_mut()
+            .find(|entry| entry.cmd.trim() == trimmed)
+        {
+            entry.count = entry.count.saturating_add(1);
+            entry.last_used_secs = now_secs;
+            return;
+        }
+
+        self.history_entries.push(HistoryEntry {
+            cmd: trimmed.to_owned(),
+            count: 1,
+            last_used_secs: now_secs,
+        });
+    }
+
+    pub fn frecency_suggestions(&self, prefix: &str, limit: usize) -> Vec<String> {
+        let p = prefix.trim().to_lowercase();
+        if p.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+
+        let mut matches: Vec<&HistoryEntry> = self
+            .history_entries
+            .iter()
+            .filter(|entry| entry.cmd.to_lowercase().starts_with(&p))
+            .collect();
+
+        matches.sort_by(|a, b| {
+            let a_score = (a.count as u64)
+                .saturating_mul(1_000_000)
+                .saturating_add(a.last_used_secs);
+            let b_score = (b.count as u64)
+                .saturating_mul(1_000_000)
+                .saturating_add(b.last_used_secs);
+            b_score
+                .cmp(&a_score)
+                .then_with(|| a.cmd.cmp(&b.cmd))
+        });
+
+        matches
+            .into_iter()
+            .take(limit)
+            .map(|entry| entry.cmd.clone())
+            .collect()
+    }
+
+    pub fn history_at(&self, idx: usize) -> Option<&str> {
+        self.history_entries.get(idx).map(|entry| entry.cmd.as_str())
+    }
+
+    pub fn history_len(&self) -> usize {
+        self.history_entries.len()
+    }
+
+    pub fn history_entries(&self) -> &[HistoryEntry] {
+        &self.history_entries
     }
 
     pub fn feed_terminal(&mut self, bytes: &[u8]) {
@@ -325,5 +406,18 @@ mod tests {
 
         tx.send(AppEvent::Shutdown).expect("send");
         assert!(!rt.step(&mut app));
+    }
+
+    #[test]
+    fn records_and_suggests_history_by_frecency() {
+        let mut app = App::new(4, 16).expect("app");
+
+        app.record_history("cargo test");
+        app.record_history("cargo build");
+        app.record_history("cargo test");
+
+        assert_eq!(app.history_len(), 2);
+        let suggestions = app.frecency_suggestions("cargo", 5);
+        assert_eq!(suggestions.first().map(String::as_str), Some("cargo test"));
     }
 }
