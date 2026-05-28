@@ -216,6 +216,11 @@ impl App {
     pub fn is_alternate_screen(&self) -> bool {
         self.terminal.is_alternate_screen()
     }
+
+    /// Returns whether application cursor keys mode (DECCKM) is active.
+    pub fn application_cursor_keys(&self) -> bool {
+        self.terminal.application_cursor_keys()
+    }
 }
 
 #[cfg(test)]

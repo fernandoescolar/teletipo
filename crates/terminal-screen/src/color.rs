@@ -35,11 +35,17 @@ pub fn ansi_cell_tuple_with_palette(
     cell: &Cell,
     palette: Option<&[[f32; 3]; 16]>,
 ) -> (char, Option<[f32; 3]>, Option<[f32; 3]>) {
-    (
-        cell.ch,
-        ansi_color_to_rgb_with_palette(cell.style.fg, palette),
-        ansi_color_to_rgb_with_palette(cell.style.bg, palette),
-    )
+    let (fg_color, bg_color) = if cell.style.reverse {
+        (cell.style.bg, cell.style.fg)
+    } else {
+        (cell.style.fg, cell.style.bg)
+    };
+    let mut fg = ansi_color_to_rgb_with_palette(fg_color, palette);
+    let bg = ansi_color_to_rgb_with_palette(bg_color, palette);
+    if cell.style.dim {
+        fg = fg.map(|[r, g, b]| [r * 0.55, g * 0.55, b * 0.55]);
+    }
+    (cell.ch, fg, bg)
 }
 
 /// * 0–15: the 16 standard ANSI/xterm colors

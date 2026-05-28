@@ -349,11 +349,16 @@ impl Screen {
             match params[i] {
                 0 => self.current_style = CellStyle::default(),
                 1 => self.current_style.bold = true,
+                2 => self.current_style.dim = true,
                 3 => self.current_style.italic = true,
                 4 => self.current_style.underline = true,
-                22 => self.current_style.bold = false,
+                7 => self.current_style.reverse = true,
+                9 => self.current_style.strikethrough = true,
+                22 => { self.current_style.bold = false; self.current_style.dim = false; }
                 23 => self.current_style.italic = false,
                 24 => self.current_style.underline = false,
+                27 => self.current_style.reverse = false,
+                29 => self.current_style.strikethrough = false,
                 30..=37 => self.current_style.fg = AnsiColor::Indexed((params[i] - 30) as u8),
                 38 => match (params.get(i + 1), params.get(i + 2)) {
                     (Some(&5), Some(&n)) => {

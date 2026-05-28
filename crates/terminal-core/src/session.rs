@@ -14,6 +14,7 @@ pub struct TerminalSession {
     cursor_shape: u16,
     window_title: Option<String>,
     bell_pending: bool,
+    application_cursor_keys: bool,
 }
 
 impl TerminalSession {
@@ -32,6 +33,7 @@ impl TerminalSession {
             cursor_shape: 0,
             window_title: None,
             bell_pending: false,
+            application_cursor_keys: false,
         })
     }
 
@@ -61,6 +63,7 @@ impl TerminalSession {
                 Action::SetGraphicsRendition(params) => self.screen.set_sgr(&params),
                 Action::DecPrivateModeSet(mode) => {
                     match mode {
+                        1 => self.application_cursor_keys = true,
                         1049 => self.screen.set_alternate_screen(true),
                         1000 | 1002 | 1003 | 1006 => self.mouse_mode = mode,
                         2004 => self.bracketed_paste = true,
@@ -69,6 +72,7 @@ impl TerminalSession {
                 }
                 Action::DecPrivateModeReset(mode) => {
                     match mode {
+                        1 => self.application_cursor_keys = false,
                         1049 => self.screen.set_alternate_screen(false),
                         1000 | 1002 | 1003 | 1006 if self.mouse_mode == mode => {
                             self.mouse_mode = 0;
@@ -195,6 +199,11 @@ impl TerminalSession {
     /// Returns whether the terminal is currently using the alternate screen.
     pub fn is_alternate_screen(&self) -> bool {
         self.screen.is_alternate_screen()
+    }
+
+    /// Returns whether application cursor keys mode (DECCKM, DEC private mode 1) is active.
+    pub fn application_cursor_keys(&self) -> bool {
+        self.application_cursor_keys
     }
 }
 

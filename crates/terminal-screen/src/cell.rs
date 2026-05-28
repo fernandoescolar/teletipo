@@ -5,8 +5,11 @@ pub struct CellStyle {
     pub fg: AnsiColor,
     pub bg: AnsiColor,
     pub bold: bool,
+    pub dim: bool,
     pub italic: bool,
     pub underline: bool,
+    pub reverse: bool,
+    pub strikethrough: bool,
 }
 
 impl Default for CellStyle {
@@ -15,8 +18,11 @@ impl Default for CellStyle {
             fg: AnsiColor::Default,
             bg: AnsiColor::Default,
             bold: false,
+            dim: false,
             italic: false,
             underline: false,
+            reverse: false,
+            strikethrough: false,
         }
     }
 }

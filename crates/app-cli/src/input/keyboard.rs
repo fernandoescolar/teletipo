@@ -31,6 +31,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     // In alternate-screen fullscreen mode (vim/less/htop), route typing and
     // navigation keys directly to the terminal PTY instead of the command editor.
     if state.tab().app.is_alternate_screen() && !state.super_down {
+        let app_cursor = state.tab().app.application_cursor_keys();
         match &key_event.logical_key {
             // Keep settings shortcut available even in fullscreen mode.
             Key::Character(ch) if state.ctrl_down && ch.as_str() == "," => {}
@@ -55,19 +56,19 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 return;
             }
             Key::Named(NamedKey::ArrowUp) => {
-                state.send_terminal_input(b"\x1b[A");
+                state.send_terminal_input(if app_cursor { b"\x1bOA" } else { b"\x1b[A" });
                 return;
             }
             Key::Named(NamedKey::ArrowDown) => {
-                state.send_terminal_input(b"\x1b[B");
+                state.send_terminal_input(if app_cursor { b"\x1bOB" } else { b"\x1b[B" });
                 return;
             }
             Key::Named(NamedKey::ArrowRight) => {
-                state.send_terminal_input(b"\x1b[C");
+                state.send_terminal_input(if app_cursor { b"\x1bOC" } else { b"\x1b[C" });
                 return;
             }
             Key::Named(NamedKey::ArrowLeft) => {
-                state.send_terminal_input(b"\x1b[D");
+                state.send_terminal_input(if app_cursor { b"\x1bOD" } else { b"\x1b[D" });
                 return;
             }
             Key::Named(NamedKey::Home) => {
@@ -82,6 +83,18 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 state.send_terminal_input(b" ");
                 return;
             }
+            Key::Named(NamedKey::F1) => { state.send_terminal_input(b"\x1bOP"); return; }
+            Key::Named(NamedKey::F2) => { state.send_terminal_input(b"\x1bOQ"); return; }
+            Key::Named(NamedKey::F3) => { state.send_terminal_input(b"\x1bOR"); return; }
+            Key::Named(NamedKey::F4) => { state.send_terminal_input(b"\x1bOS"); return; }
+            Key::Named(NamedKey::F5) => { state.send_terminal_input(b"\x1b[15~"); return; }
+            Key::Named(NamedKey::F6) => { state.send_terminal_input(b"\x1b[17~"); return; }
+            Key::Named(NamedKey::F7) => { state.send_terminal_input(b"\x1b[18~"); return; }
+            Key::Named(NamedKey::F8) => { state.send_terminal_input(b"\x1b[19~"); return; }
+            Key::Named(NamedKey::F9) => { state.send_terminal_input(b"\x1b[20~"); return; }
+            Key::Named(NamedKey::F10) => { state.send_terminal_input(b"\x1b[21~"); return; }
+            Key::Named(NamedKey::F11) => { state.send_terminal_input(b"\x1b[23~"); return; }
+            Key::Named(NamedKey::F12) => { state.send_terminal_input(b"\x1b[24~"); return; }
             Key::Character(ch) if state.ctrl_down => {
                 if let Some(c) = ch.as_str().chars().next() {
                     let lo = c.to_ascii_lowercase();
@@ -288,11 +301,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                         && let Ok(text) = cb.get_text() {
                             let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
                             if !normalized.is_empty() {
-                                if state.tab().app.bracketed_paste() {
-                                    let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
-                                    let Some(mut pty) = state.tab_mut().pty.take() else { return };
-                                    let _ = state.tab_mut().app.send_pty_input(&mut pty, bracketed.as_bytes());
-                                    state.tab_mut().pty = Some(pty);
+                                if state.tab().app.is_alternate_screen() {
+                                    if state.tab().app.bracketed_paste() {
+                                        let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
+                                        state.send_terminal_input(bracketed.as_bytes());
+                                    } else {
+                                        state.send_terminal_input(normalized.as_bytes());
+                                    }
                                 } else {
                                     state.tab_mut().app.insert_editor_input(&normalized);
                                 }
