@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::cell::{Cell, CellStyle};
 use crate::color::{ansi_cell_tuple_with_palette, AnsiColor};
 use crate::grid::{reflow_grid, Grid};
+use crate::StyledChars;
 
 #[derive(Debug, Clone)]
 pub struct Screen {
@@ -138,32 +139,18 @@ impl Screen {
     pub fn put_char(&mut self, ch: char) {
         let style = self.current_style;
         if self.use_alternate {
-            let (dirty_row, scrolled) = {
-                let grid = &mut self.alternate;
-                if grid.pending_wrap {
-                    grid.pending_wrap = false;
-                    grid.cursor_col = 0;
-                    grid.cursor_row += 1;
-                }
-                if grid.cursor_row >= grid.rows {
-                    let _ = grid.scroll_up_one();
-                    grid.cursor_row = grid.rows.saturating_sub(1);
-                }
-
-                grid.put_char(ch, style);
-                let row = grid.cursor_row.min(grid.rows.saturating_sub(1));
-                let mut did_scroll = false;
-                if grid.cursor_row >= grid.rows {
-                    let _ = grid.scroll_up_one();
-                    grid.cursor_row = grid.rows.saturating_sub(1);
-                    did_scroll = true;
-                }
-                (row, did_scroll)
-            };
-            self.mark_dirty_row(dirty_row);
-            if scrolled {
-                self.mark_full_redraw();
+            if self.alternate.pending_wrap {
+                self.alternate.pending_wrap = false;
+                self.alternate.cursor_col = 0;
+                self.alternate.cursor_row += 1;
             }
+            if self.alternate.cursor_row >= self.alternate.rows {
+                let _ = self.alternate.scroll_up_one();
+                self.alternate.cursor_row = self.alternate.rows.saturating_sub(1);
+            }
+            let row = self.alternate.cursor_row;
+            self.alternate.put_char(ch, style);
+            self.mark_dirty_row(row);
         } else {
             if self.primary.pending_wrap {
                 let wrap_row = self.primary.cursor_row;
@@ -174,34 +161,14 @@ impl Screen {
                 self.primary.cursor_col = 0;
                 self.primary.cursor_row += 1;
             }
-
             if self.primary.cursor_row >= self.primary.rows {
-                let (popped, wrapped) = {
-                    let grid = &mut self.primary;
-                    let result = grid.scroll_up_one();
-                    grid.cursor_row = grid.rows.saturating_sub(1);
-                    result
-                };
+                let (popped, wrapped) = self.primary.scroll_up_one();
+                self.primary.cursor_row = self.primary.rows.saturating_sub(1);
                 self.push_scrollback(popped, wrapped);
             }
-
-            {
-                let grid = &mut self.primary;
-                let row = grid.cursor_row.min(grid.rows.saturating_sub(1));
-                grid.put_char(ch, style);
-                self.mark_dirty_row(row);
-            }
-
-            if self.primary.cursor_row >= self.primary.rows {
-                let (popped, wrapped) = {
-                    let grid = &mut self.primary;
-                    let result = grid.scroll_up_one();
-                    grid.cursor_row = grid.rows.saturating_sub(1);
-                    result
-                };
-                self.push_scrollback(popped, wrapped);
-                self.mark_full_redraw();
-            }
+            let row = self.primary.cursor_row;
+            self.primary.put_char(ch, style);
+            self.mark_dirty_row(row);
         }
         self.bump_version();
     }
@@ -662,14 +629,14 @@ impl Screen {
         out
     }
 
-    pub fn dump_styled(&self) -> Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>)> {
+    pub fn dump_styled(&self) -> StyledChars {
         self.dump_styled_at_offset_with_palette(0, None)
     }
 
     pub fn dump_styled_at_offset(
         &self,
         scroll_offset: usize,
-    ) -> Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>)> {
+    ) -> StyledChars {
         self.dump_styled_at_offset_with_palette(scroll_offset, None)
     }
 
@@ -679,7 +646,7 @@ impl Screen {
         &self,
         scroll_offset: usize,
         palette: Option<&[[f32; 3]; 16]>,
-    ) -> Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>)> {
+    ) -> StyledChars {
         let grid = self.active_grid();
         let rows = grid.rows;
         let cols = grid.cols;

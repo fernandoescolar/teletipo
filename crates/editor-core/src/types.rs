@@ -1,14 +1,9 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BufferEngineKind {
+    #[default]
     GapBuffer,
     Rope,
     PieceTable,
-}
-
-impl Default for BufferEngineKind {
-    fn default() -> Self {
-        Self::GapBuffer
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

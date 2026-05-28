@@ -406,7 +406,7 @@ pub(crate) fn suggestion_matches_frecency(
             let lower_token = last_token.to_lowercase();
             // Multi-level: if 2+ tokens already typed (e.g. "git remote "),
             // prefer sub-subcommands over top-level subcommands.
-            let cmd_tokens: Vec<&str> = cmd_fixed.trim().split_whitespace().collect();
+            let cmd_tokens: Vec<&str> = cmd_fixed.split_whitespace().collect();
             let source_subs: Vec<String> = if cmd_tokens.len() >= 2 {
                 let nested = nested_subcommands(&cmd_tokens.join(" "));
                 if !nested.is_empty() { nested } else { man_subcommands(base_cmd) }
@@ -554,16 +554,16 @@ fn path_completions(editor_text: &str, cwd: &str) -> Vec<String> {
     }
 
     let home = std::env::var("HOME").unwrap_or_default();
-    let expanded: String = if raw_frag.starts_with('~') {
-        format!("{}{}", home, &raw_frag[1..])
-    } else if raw_frag.starts_with("./") {
-        format!("{}/{}", cwd.trim_end_matches('/'), &raw_frag[2..])
-    } else if raw_frag.starts_with("../") {
+    let expanded: String = if let Some(rest) = raw_frag.strip_prefix('~') {
+        format!("{}{}", home, rest)
+    } else if let Some(rest) = raw_frag.strip_prefix("./") {
+        format!("{}/{}", cwd.trim_end_matches('/'), rest)
+    } else if let Some(rest) = raw_frag.strip_prefix("../") {
         let parent = std::path::Path::new(cwd)
             .parent()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "/".to_string());
-        format!("{}/{}", parent.trim_end_matches('/'), &raw_frag[3..])
+        format!("{}/{}", parent.trim_end_matches('/'), rest)
     } else if raw_frag.starts_with('/') {
         raw_frag.to_string()
     } else {
@@ -603,11 +603,11 @@ fn path_completions(editor_text: &str, cwd: &str) -> Vec<String> {
         .filter(|entry| {
             !dirs_only || entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
         })
-        .filter_map(|entry| {
+        .map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             let trailer = if is_dir { "/" } else { "" };
-            Some(format!("{}{}{}{}", cmd_part, display_dir, name, trailer))
+            format!("{}{}{}{}", cmd_part, display_dir, name, trailer)
         })
         .collect();
 

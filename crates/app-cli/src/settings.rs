@@ -135,30 +135,27 @@ pub(crate) fn handle_settings_key(
                 buf.pop();
             }
         }
-        Key::Character(ch) if state.super_down => {
-            if ch.as_str() == "s" {
+        Key::Character(ch) if state.super_down
+            && ch.as_str() == "s" => {
                 if let Some(buf) = state.settings.edit_buf.take() {
                     let field = &SETTINGS_FIELDS[state.settings.cursor];
                     let is_select = field.key == "theme"
                         || (field.section == "font" && field.key == "path");
-                    if !is_select {
-                        if state.user_config.set_field(field.section, field.key, &buf) {
+                    if !is_select
+                        && state.user_config.set_field(field.section, field.key, &buf) {
                             state.settings.dirty = true;
                         }
-                    }
                 }
                 save_config(&state.user_config);
                 state.settings.dirty = false;
                 state.settings.just_saved = true;
                 state.settings.open = false;
             }
-        }
         Key::Character(_) | Key::Named(NamedKey::Space) => {
-            if let Some(ref mut buf) = state.settings.edit_buf {
-                if let Some(text) = key_event.text.as_ref() {
+            if let Some(ref mut buf) = state.settings.edit_buf
+                && let Some(text) = key_event.text.as_ref() {
                     buf.push_str(text.as_str());
                 }
-            }
         }
         _ => {}
     }

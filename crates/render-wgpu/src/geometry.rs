@@ -181,8 +181,8 @@ pub(crate) fn build_panel_vertices(
     }
 
     // Context menu overlay — always rendered last so it paints over everything.
-    if let Some(ref menu) = snapshot.tab_context_menu {
-        if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
+    if let Some(ref menu) = snapshot.tab_context_menu
+        && size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
             const MENU_BG:     [f32; 4] = [0.12, 0.15, 0.20, 0.97];
             const MENU_BORDER: [f32; 4] = [0.25, 0.32, 0.42, 1.0];
             const MENU_HOVER:  [f32; 4] = [0.20, 0.28, 0.44, 1.0];
@@ -215,7 +215,6 @@ pub(crate) fn build_panel_vertices(
                     verts.extend_from_slice(&quad_verts(x0_ndc, iy_bot, x1_ndc, iy_top, MENU_HOVER));
                 }
             }
-        }
     }
 
     if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
@@ -244,8 +243,8 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
-    if let Some((raw_sr, raw_sc, raw_er, raw_ec)) = snapshot.selection {
-        if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
+    if let Some((raw_sr, raw_sc, raw_er, raw_ec)) = snapshot.selection
+        && size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
             let (sel_sr, sel_sc, sel_er, sel_ec) =
                 if (raw_sr, raw_sc) <= (raw_er, raw_ec) {
                     (raw_sr, raw_sc, raw_er, raw_ec)
@@ -267,7 +266,6 @@ pub(crate) fn build_panel_vertices(
                 let y0 = 1.0 - (pane_top_px + pad_v + (row + 1) as f32 * cell_h_px) * px_y;
                 verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, sel_color));
             }
-        }
     }
 
     if size.width > 0 && snapshot.scrollback_lines > 0 {
@@ -321,8 +319,8 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
-    if let Some(ref overlay_text) = snapshot.resize_overlay {
-        if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
+    if let Some(ref overlay_text) = snapshot.resize_overlay
+        && size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
             let n_chars = overlay_text.chars().count() as f32;
             let padding_px = cell_w_px * 2.0;
             let box_w_px = n_chars * cell_w_px + padding_px * 2.0;
@@ -338,15 +336,14 @@ pub(crate) fn build_panel_vertices(
             let y0 = 1.0 - (cy_px + box_h_px / 2.0) * px_y;
             let y1 = 1.0 - (cy_px - box_h_px / 2.0) * px_y;
             verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, [0.05, 0.08, 0.12, 0.90]));
-        }
     }
 
     let edit_top_px = (1.0 - edit_top_ndc) / 2.0 * size.height as f32 + 2.0;
     let editor_scroll = snapshot.editor_scroll_offset;
 
     // Editor selection highlight.
-    if let Some((sel_start, sel_end)) = snapshot.editor_selection {
-        if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
+    if let Some((sel_start, sel_end)) = snapshot.editor_selection
+        && size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
             let (s_start, s_end) = if sel_start <= sel_end { (sel_start, sel_end) } else { (sel_end, sel_start) };
             let px_x = 2.0 / size.width as f32;
             let px_y = 2.0 / size.height as f32;
@@ -378,7 +375,6 @@ pub(crate) fn build_panel_vertices(
                 let y0 = 1.0 - (y_top_px + cell_h_px) * px_y;
                 verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, sel_color));
             }
-        }
     }
 
     verts.extend_from_slice(&editor_caret_verts(
@@ -646,8 +642,8 @@ pub(crate) fn add_text_verts(
             Some([cr, cg, cb]) => [cr, cg, cb, default_color[3]],
             None => default_color,
         };
-        if let Some(glyph) = glyph_cache.get(&ch) {
-            if glyph.width_px > 0.0 && glyph.height_px > 0.0 {
+        if let Some(glyph) = glyph_cache.get(&ch)
+            && glyph.width_px > 0.0 && glyph.height_px > 0.0 {
                 let gx0 = x_start_px + col as f32 * cell_w_px + glyph.offset_x_px;
                 let gy0 = pane_top_px + visible_row as f32 * cell_h_px + glyph.offset_y_px;
                 let x0 = gx0 * px_x - 1.0;
@@ -662,7 +658,6 @@ pub(crate) fn add_text_verts(
                 verts.extend_from_slice(&[x1, y0, u1, v1, r, g, b, a]);
                 verts.extend_from_slice(&[x0, y0, u0, v1, r, g, b, a]);
             }
-        }
         col += 1;
     }
 }

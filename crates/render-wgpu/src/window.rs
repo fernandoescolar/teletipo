@@ -155,7 +155,7 @@ where
     let mut config = config;
     config.font.font_size *= window.scale_factor() as f32;
 
-    let mut state = pollster::block_on(GpuState::new(&window, &config))?;
+    let mut state = pollster::block_on(GpuState::new(window, &config))?;
     #[cfg(target_os = "macos")]
     let mut last_titlebar_bg = initial.theme.terminal_bg;
     let mut last_title: String = format!("\u{1F4C2} {}", initial.title_cwd);

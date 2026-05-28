@@ -140,11 +140,10 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     // Refresh cwd labels from child process (best-effort; silent on failure).
     let n_tabs = state.tabs.len();
     for i in 0..n_tabs {
-        if let Some(pid) = state.tabs[i].pty.as_ref().and_then(|p| p.child_pid()) {
-            if let Some(new_cwd) = read_child_cwd(pid) {
+        if let Some(pid) = state.tabs[i].pty.as_ref().and_then(|p| p.child_pid())
+            && let Some(new_cwd) = read_child_cwd(pid) {
                 state.tabs[i].cwd = new_cwd;
             }
-        }
     }
     let tab_labels: Vec<String> = state.tabs.iter()
         .map(|t| shorten_cwd_label(&t.cwd, 16))

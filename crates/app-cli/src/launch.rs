@@ -54,7 +54,7 @@ pub(crate) fn enumerate_fonts() -> Vec<FontFile> {
     for dir in &dirs {
         scan_font_dir(dir, &mut fonts);
     }
-    fonts.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    fonts.sort_by_key(|a| a.name.to_lowercase());
     fonts.insert(0, FontFile { name: "(default)".to_owned(), path: String::new() });
     fonts
 }

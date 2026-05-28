@@ -19,19 +19,13 @@ impl Default for FontCfg {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PaddingCfg {
     /// Horizontal padding in physical pixels (left + right inset of the text grid).
     pub horizontal: u32,
     /// Vertical padding in physical pixels (top + bottom inset of the text grid).
     pub vertical: u32,
-}
-
-impl Default for PaddingCfg {
-    fn default() -> Self {
-        Self { horizontal: 0, vertical: 0 }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -83,9 +77,8 @@ impl UserConfig {
         let value = value.trim();
         match (section, key) {
             ("font", "size") => {
-                if let Ok(v) = value.parse::<f32>() {
-                    if v > 4.0 && v < 80.0 { self.font.size = v; return true; }
-                }
+                if let Ok(v) = value.parse::<f32>()
+                    && v > 4.0 && v < 80.0 { self.font.size = v; return true; }
                 false
             }
             ("font", "path") => {
@@ -97,15 +90,13 @@ impl UserConfig {
                 true
             }
             ("padding", "horizontal") => {
-                if let Ok(v) = value.parse::<u32>() {
-                    if v <= 100 { self.padding.horizontal = v; return true; }
-                }
+                if let Ok(v) = value.parse::<u32>()
+                    && v <= 100 { self.padding.horizontal = v; return true; }
                 false
             }
             ("padding", "vertical") => {
-                if let Ok(v) = value.parse::<u32>() {
-                    if v <= 100 { self.padding.vertical = v; return true; }
-                }
+                if let Ok(v) = value.parse::<u32>()
+                    && v <= 100 { self.padding.vertical = v; return true; }
                 false
             }
             _ => false,
@@ -141,11 +132,10 @@ pub fn load_config() -> UserConfig {
 }
 
 pub fn save_config(cfg: &UserConfig) {
-    if let Some(path) = config_path() {
-        if let Ok(s) = toml::to_string_pretty(cfg) {
+    if let Some(path) = config_path()
+        && let Ok(s) = toml::to_string_pretty(cfg) {
             let _ = fs::write(path, s);
         }
-    }
 }
 
 /// Write a richly commented default config file.

@@ -113,14 +113,13 @@ impl EditorBuffer {
     }
 
     pub fn command_payload(&self, prefer_selection: bool) -> Option<String> {
-        if prefer_selection {
-            if let Some(sel) = self.selected_text() {
+        if prefer_selection
+            && let Some(sel) = self.selected_text() {
                 let trimmed = sel.trim().to_string();
                 if !trimmed.is_empty() {
                     return Some(trimmed);
                 }
             }
-        }
 
         let trimmed = self.text.trim().to_string();
         if trimmed.is_empty() {

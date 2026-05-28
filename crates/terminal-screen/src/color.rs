@@ -66,8 +66,8 @@ pub fn ansi_indexed_to_rgb(idx: u8) -> [f32; 3] {
         16..=231 => {
             let i = idx - 16;
             let r = if i / 36 == 0 { 0.0 } else { (i / 36) as f32 / 5.0 };
-            let g = if (i / 6) % 6 == 0 { 0.0 } else { ((i / 6) % 6) as f32 / 5.0 };
-            let b = if i % 6 == 0 { 0.0 } else { (i % 6) as f32 / 5.0 };
+            let g = if (i / 6).is_multiple_of(6) { 0.0 } else { ((i / 6) % 6) as f32 / 5.0 };
+            let b = if i.is_multiple_of(6) { 0.0 } else { (i % 6) as f32 / 5.0 };
             [r, g, b]
         }
         232..=255 => {

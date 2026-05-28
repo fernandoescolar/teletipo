@@ -577,8 +577,8 @@ impl<'a> GpuState<'a> {
             }
         }
         let settings_text_vert_start = (text_verts.len() / 8) as u32;
-        if let Some(ref overlay) = snapshot.settings_overlay {
-            if self.size.width > 0 && self.size.height > 0 && self.cell_w_px > 0.0 && self.cell_h_px > 0.0 {
+        if let Some(ref overlay) = snapshot.settings_overlay
+            && self.size.width > 0 && self.size.height > 0 && self.cell_w_px > 0.0 && self.cell_h_px > 0.0 {
                 let th = &snapshot.theme;
                 let win_w = self.size.width as f32;
                 let win_h = self.size.height as f32;
@@ -657,7 +657,6 @@ impl<'a> GpuState<'a> {
                     { let [r,g,b,_]=th.text; [r*0.55,g*0.55,b*0.55,0.90_f32] },
                     &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
                     &mut text_verts, 0);
-            }
         }
 
         let total_vert_count = (text_verts.len() / 8) as u32;
@@ -861,9 +860,7 @@ fn highlight_shell(text: &str) -> Vec<Option<[f32; 3]>> {
                         i += 1;
                     }
                 }
-                for j in start..i {
-                    out[j] = Some(VAR);
-                }
+                for item in out[start..i].iter_mut() { *item = Some(VAR); }
             }
             ';' => {
                 i += 1;
@@ -899,9 +896,7 @@ fn highlight_shell(text: &str) -> Vec<Option<[f32; 3]>> {
                 } else {
                     None
                 };
-                for j in word_start..i {
-                    out[j] = color;
-                }
+                for item in out[word_start..i].iter_mut() { *item = color; }
                 first_word = false;
             }
             _ => {

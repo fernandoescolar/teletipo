@@ -62,19 +62,13 @@ impl LanguageHighlighter for ShellLikeHighlighter {
     }
 }
 
+#[allow(clippy::single_range_in_vec_init)]
 pub(crate) fn compute_changed_ranges(
     text: &str,
-    previous: Option<&IncrementalSnapshot>,
+    _previous: Option<&IncrementalSnapshot>,
 ) -> Vec<Range<usize>> {
-    match previous {
-        None => vec![0..text.len()],
-        Some(prev) => {
-            if prev.highlights.is_empty() {
-                return vec![0..text.len()];
-            }
-            vec![0..text.len()]
-        }
-    }
+    // Full re-highlight until incremental diffing is implemented.
+    vec![0..text.len()]
 }
 
 #[cfg(test)]

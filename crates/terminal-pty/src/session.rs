@@ -41,11 +41,10 @@ impl PortablePtySession {
         for arg in args {
             cmd.arg(*arg);
         }
-        if let Some(dir) = cwd {
-            if !dir.is_empty() {
+        if let Some(dir) = cwd
+            && !dir.is_empty() {
                 cmd.cwd(dir);
             }
-        }
 
         let child = pair.slave.spawn_command(cmd).context("spawn command")?;
         drop(pair.slave);

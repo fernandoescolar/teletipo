@@ -1,5 +1,5 @@
 use terminal_ansi::{Action, Parser};
-use terminal_screen::{DamageRegion, Screen, ScreenSnapshot};
+use terminal_screen::{DamageRegion, Screen, ScreenSnapshot, StyledChars};
 
 use crate::error::TerminalError;
 
@@ -70,7 +70,7 @@ impl TerminalSession {
     /// Returns per-character styled data for the visible grid.
     /// `None` fg/bg means the cell uses the renderer's default color.
     /// Matches the character layout of `snapshot_text()`.
-    pub fn snapshot_styled(&self) -> Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>)> {
+    pub fn snapshot_styled(&self) -> StyledChars {
         self.screen.dump_styled()
     }
 
@@ -78,7 +78,7 @@ impl TerminalSession {
     pub fn snapshot_styled_at_offset(
         &self,
         scroll_offset: usize,
-    ) -> Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>)> {
+    ) -> StyledChars {
         self.screen.dump_styled_at_offset(scroll_offset)
     }
 
@@ -88,7 +88,7 @@ impl TerminalSession {
         &self,
         scroll_offset: usize,
         palette: Option<&[[f32; 3]; 16]>,
-    ) -> Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>)> {
+    ) -> StyledChars {
         self.screen.dump_styled_at_offset_with_palette(scroll_offset, palette)
     }
 

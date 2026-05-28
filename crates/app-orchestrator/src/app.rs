@@ -3,7 +3,7 @@ use std::thread;
 use std::time::Duration;
 
 use editor_core::EditorBuffer;
-use terminal_core::{TerminalError, TerminalSession};
+use terminal_core::{TerminalError, TerminalSession, StyledChars};
 use terminal_pty::PtyBackend;
 
 pub struct App {
@@ -142,14 +142,14 @@ impl App {
         self.terminal.snapshot_ansi()
     }
 
-    pub fn terminal_styled_snapshot(&self) -> Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>)> {
+    pub fn terminal_styled_snapshot(&self) -> StyledChars {
         self.terminal.snapshot_styled()
     }
 
     pub fn terminal_styled_snapshot_at_offset(
         &self,
         scroll_offset: usize,
-    ) -> Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>)> {
+    ) -> StyledChars {
         self.terminal.snapshot_styled_at_offset(scroll_offset)
     }
 
@@ -159,7 +159,7 @@ impl App {
         &self,
         scroll_offset: usize,
         palette: Option<&[[f32; 3]; 16]>,
-    ) -> Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>)> {
+    ) -> StyledChars {
         self.terminal.snapshot_styled_at_offset_with_palette(scroll_offset, palette)
     }
 

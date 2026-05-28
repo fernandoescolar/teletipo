@@ -64,7 +64,7 @@ impl Parser {
                 0x09 => actions.push(Action::HorizontalTab),
                 0x20..=0x7e => actions.push(Action::Print(byte as char)),
                 // Multi-byte UTF-8 lead byte: start a new sequence.
-                0xc0..=0xdf | 0xe0..=0xef | 0xf0..=0xf7 => {
+                0xc0..=0xf7 => {
                     self.utf8_buf[0] = byte;
                     self.utf8_len = 1;
                 }
@@ -77,11 +77,10 @@ impl Parser {
                         let expected = utf8_seq_len(self.utf8_buf[0]);
                         if self.utf8_len == expected {
                             let slice = &self.utf8_buf[..expected as usize];
-                            if let Ok(s) = std::str::from_utf8(slice) {
-                                if let Some(ch) = s.chars().next() {
+                            if let Ok(s) = std::str::from_utf8(slice)
+                                && let Some(ch) = s.chars().next() {
                                     actions.push(Action::Print(ch));
                                 }
-                            }
                             self.utf8_len = 0;
                         }
                     } else {
@@ -121,10 +120,7 @@ impl Parser {
                 }
             }
             ParserState::Osc => {
-                if byte == 0x07 {
-                    self.state = ParserState::Ground;
-                    self.osc_esc_seen = false;
-                } else if self.osc_esc_seen && byte == b'\\' {
+                if byte == 0x07 || (self.osc_esc_seen && byte == b'\\') {
                     self.state = ParserState::Ground;
                     self.osc_esc_seen = false;
                 } else {

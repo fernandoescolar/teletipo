@@ -8,11 +8,10 @@ use winit::keyboard::{Key, NamedKey};
 
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     let AppWindowEvent::KeyboardInput(key_event) = &event else {
-        if let AppWindowEvent::ImeCommit(text) = event {
-            if !text.is_empty() && text != "\r" && text != "\n" {
+        if let AppWindowEvent::ImeCommit(text) = event
+            && !text.is_empty() && text != "\r" && text != "\n" {
                 state.tab_mut().app.insert_editor_input(text.as_str());
             }
-        }
         return;
     };
 
@@ -33,7 +32,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown));
     let is_esc = matches!(&key_event.logical_key, Key::Named(NamedKey::Escape));
     let cycling = state.tabs[state.active_tab].suggestion_index.is_some();
-    if !is_tab && !(is_nav && cycling) && !(is_esc && cycling) {
+    if !(is_tab || (is_nav && cycling) || (is_esc && cycling)) {
         let active = state.active_tab;
         state.tabs[active].suggestion_prefix = None;
         state.tabs[active].suggestion_index = None;
@@ -125,34 +124,31 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                     if let Some((start, end)) = state.tab().app.editor_selection() {
                         let editor_text = state.tab().app.editor_snapshot();
                         let selected = editor_text[start..end].to_string();
-                        if !selected.is_empty() {
-                            if let Ok(mut cb) = Clipboard::new() {
+                        if !selected.is_empty()
+                            && let Ok(mut cb) = Clipboard::new() {
                                 let _ = cb.set_text(selected);
                             }
-                        }
                     } else {
                         let anchor = state.tab().selection_anchor;
                         let sel_end = state.tab().selection_end;
                         if let (Some(anchor), Some(sel_end)) = (anchor, sel_end) {
                             let last_text = state.tab().last_terminal_text.clone();
                             let text = extract_selection(&last_text, anchor, sel_end);
-                            if !text.is_empty() {
-                                if let Ok(mut cb) = Clipboard::new() {
+                            if !text.is_empty()
+                                && let Ok(mut cb) = Clipboard::new() {
                                     let _ = cb.set_text(text);
                                 }
-                            }
                         }
                     }
                 }
                 "v" => {
-                    if let Ok(mut cb) = Clipboard::new() {
-                        if let Ok(text) = cb.get_text() {
+                    if let Ok(mut cb) = Clipboard::new()
+                        && let Ok(text) = cb.get_text() {
                             let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
                             if !normalized.is_empty() {
                                 state.tab_mut().app.insert_editor_input(&normalized);
                             }
                         }
-                    }
                 }
                 "t" => state.add_new_tab(),
                 "w" => {
@@ -185,7 +181,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         Key::Character(ch) if state.ctrl_down => {
             if let Some(c) = ch.as_str().chars().next() {
                 let lo = c.to_ascii_lowercase();
-                if ('a'..='z').contains(&lo) {
+                if lo.is_ascii_lowercase() {
                     state.send_terminal_input(&[lo as u8 - b'a' + 1]);
                 } else if c == '[' {
                     state.send_terminal_input(b"\x1b");
@@ -297,11 +293,10 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             state.tab_mut().app.insert_editor_input(" ");
         }
         Key::Character(_) => {
-            if let Some(text) = key_event.text.as_ref() {
-                if text != "\n" && text != "\r" && text != "\r\n" {
+            if let Some(text) = key_event.text.as_ref()
+                && text != "\n" && text != "\r" && text != "\r\n" {
                     state.tab_mut().app.insert_editor_input(text.as_str());
                 }
-            }
         }
         _ => {}
     }
