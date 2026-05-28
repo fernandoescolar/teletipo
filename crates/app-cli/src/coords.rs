@@ -7,6 +7,7 @@ pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
     let tab_bar_h = state.tab_bar_h();
     let window_height = state.window_height;
     let cell_h = state.cell_h;
+    let pad_v = state.user_config.padding.vertical as f32;
     let active = state.active_tab;
     let tab = &mut state.tabs[active];
     let text = tab.app.editor_snapshot();
@@ -16,8 +17,9 @@ pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
         .filter(|&c| c == '\n')
         .count();
     let editor_h_px = (1.0 - tab.split_ratio) * (window_height as f32 - tab_bar_h);
+    // Text starts pad_v pixels below the pane top, so the usable row area is smaller.
     let visible_rows = if cell_h > 0.0 {
-        (editor_h_px / cell_h).floor().max(1.0) as usize
+        ((editor_h_px - pad_v) / cell_h).floor().max(1.0) as usize
     } else {
         1
     };
@@ -64,7 +66,9 @@ pub(crate) fn editor_cursor_row_col(text: &str, offset: usize) -> (usize, usize)
 /// Converts a cursor physical-pixel position to a terminal grid (row, col).
 /// Returns `None` if the cursor is outside the terminal pane or in the scrollbar area.
 /// Uses `term_row_count` to compute the bottom-alignment offset so the mapping
-/// matches what the renderer draws.
+/// matches what the renderer draws.  `pad_h` and `pad_v` are the horizontal and
+/// vertical padding (pixels) applied to the terminal content area; clicks inside
+/// the padding region are clamped to the first row/column.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cursor_to_terminal_cell(
     cx: f64,
@@ -76,20 +80,29 @@ pub(crate) fn cursor_to_terminal_cell(
     cell_h_px: f32,
     term_row_count: usize,
     tab_bar_h: f32,
+    pad_h: f32,
+    pad_v: f32,
 ) -> Option<(usize, usize)> {
     let cell_w = cell_w_px as f64;
     let cell_h = cell_h_px as f64;
     let tbh = tab_bar_h as f64;
     let available_h = window_height as f64 - tbh;
     let terminal_h = available_h * split_ratio as f64;
-    let content_h = (term_row_count as f64 * cell_h).min(terminal_h);
-    let term_top_y = tbh + (terminal_h - content_h).max(0.0);
+    // Mirror the renderer: pad_v is reserved at both the top and bottom, so
+    // the usable content area is narrower.  Text for row r starts at:
+    //   term_top_offset_px + pad_v + r * cell_h
+    // where term_top_offset_px = tbh + (effective_term_h - content_h).
+    let effective_term_h = (terminal_h - 2.0 * pad_v as f64).max(0.0);
+    let content_h = (term_row_count as f64 * cell_h).min(effective_term_h);
+    let term_top_y = tbh + (effective_term_h - content_h).max(0.0) + pad_v as f64;
     let term_bottom_y = tbh + terminal_h;
     let scrollbar_x = window_width as f64 - SCROLLBAR_W_PX as f64;
     if cy < term_top_y || cy >= term_bottom_y || cx < 0.0 || cx >= scrollbar_x {
         return None;
     }
-    Some((((cy - term_top_y) / cell_h) as usize, (cx / cell_w) as usize))
+    let col = ((cx - pad_h as f64) / cell_w).max(0.0) as usize;
+    let row = ((cy - term_top_y) / cell_h).max(0.0) as usize;
+    Some((row, col))
 }
 
 /// Read the current working directory of an OS process.
@@ -213,6 +226,212 @@ pub(crate) fn current_line_prefix(text: &str, cursor: usize) -> &str {
 /// byte is `'\n'` or `cursor` is at the very end of `text`.
 pub(crate) fn cursor_at_line_end(text: &str, cursor: usize) -> bool {
     cursor == text.len() || text.as_bytes().get(cursor) == Some(&b'\n')
+}
+
+// ── Terminal link detection ───────────────────────────────────────────────────
+
+/// Scans `terminal_text` (rows separated by `\n`) and returns all link-like
+/// spans as `(row, col_start, col_end, target)` where the column indices are
+/// char-based (consistent with the rest of the selection system).
+///
+/// Detected patterns: `https://`, `http://`, `ftp://` URLs; `~/…` tilde paths;
+/// `./…` and `../…` relative paths; `/absolute/…` paths at a word boundary.
+pub(crate) fn detect_terminal_links(text: &str) -> Vec<(usize, usize, usize, String)> {
+    let mut result = Vec::new();
+    for (row, line) in text.split('\n').enumerate() {
+        scan_links_in_line(line, row, &mut result);
+    }
+    result
+}
+
+/// Strips a trailing `:line` or `:line:col` suffix so the bare file path can
+/// be passed to `open` / `xdg-open`.  Returns a sub-slice of `path`.
+pub(crate) fn strip_line_col(path: &str) -> &str {
+    let bytes = path.as_bytes();
+    let mut end = bytes.len();
+    for _ in 0..2 {
+        let mut i = end;
+        while i > 0 && bytes[i - 1].is_ascii_digit() {
+            i -= 1;
+        }
+        if i < end && i > 0 && bytes[i - 1] == b':' {
+            end = i - 1;
+        } else {
+            break;
+        }
+    }
+    &path[..end]
+}
+
+/// Expands a leading `~/` to `$HOME/` so `std::process::Command` (which does
+/// not run through a shell) can handle tilde paths.
+pub(crate) fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        let home = std::env::var("HOME").unwrap_or_default();
+        if home.is_empty() {
+            return path.to_owned();
+        }
+        format!("{}/{}", home.trim_end_matches('/'), rest)
+    } else {
+        path.to_owned()
+    }
+}
+
+fn scan_links_in_line(line: &str, row: usize, out: &mut Vec<(usize, usize, usize, String)>) {
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        if let Some((len, target)) = try_link_at(&chars, i) {
+            out.push((row, i, i + len, target));
+            i += len;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Returns `(length_in_chars, target_string)` if a link begins at `chars[i]`.
+fn try_link_at(chars: &[char], i: usize) -> Option<(usize, String)> {
+    let n = chars.len();
+
+    // URL: https:// http:// ftp://
+    for scheme in &["https://", "http://", "ftp://"] {
+        let sc: Vec<char> = scheme.chars().collect();
+        if char_starts_with(chars, i, &sc) && i + sc.len() < n {
+            let end = scan_url_end(chars, i + sc.len());
+            if end > i + sc.len() {
+                return Some((end - i, chars[i..end].iter().collect()));
+            }
+        }
+    }
+
+    // ~/path
+    if i + 1 < n && chars[i] == '~' && chars[i + 1] == '/' {
+        let path_end = scan_path_end(chars, i + 2);
+        let end = scan_line_col_suffix(chars, path_end);
+        if end > i + 2 {
+            return Some((end - i, chars[i..end].iter().collect()));
+        }
+    }
+
+    // ../path
+    if i + 2 < n && chars[i] == '.' && chars[i + 1] == '.' && chars[i + 2] == '/' {
+        let path_end = scan_path_end(chars, i + 3);
+        let end = scan_line_col_suffix(chars, path_end);
+        if end > i + 3 {
+            return Some((end - i, chars[i..end].iter().collect()));
+        }
+    }
+
+    // ./path
+    if i + 1 < n && chars[i] == '.' && chars[i + 1] == '/' {
+        let path_end = scan_path_end(chars, i + 2);
+        let end = scan_line_col_suffix(chars, path_end);
+        if end > i + 2 {
+            return Some((end - i, chars[i..end].iter().collect()));
+        }
+    }
+
+    // /absolute/path — only at a word boundary and followed by alnum or '_'
+    if chars[i] == '/' {
+        let at_boundary = i == 0 || is_link_boundary(chars[i - 1]);
+        if at_boundary && i + 1 < n {
+            let next = chars[i + 1];
+            if next.is_alphanumeric() || next == '_' {
+                let path_end = scan_path_end(chars, i + 1);
+                let end = scan_line_col_suffix(chars, path_end);
+                if end > i + 1 {
+                    return Some((end - i, chars[i..end].iter().collect()));
+                }
+            }
+        }
+    }
+
+    // bare/relative/path — e.g. "crates/src/lib.rs" or "src/main.rs:42:5"
+    // Must be at a word boundary, start with alnum/'_', and have content after a '/'.
+    if chars[i].is_alphanumeric() || chars[i] == '_' {
+        let at_boundary = i == 0 || is_link_boundary(chars[i - 1]);
+        if at_boundary {
+            // Find the end of the first segment (no '/' yet).
+            let mut j = i;
+            while j < n && (chars[j].is_alphanumeric() || matches!(chars[j], '_' | '-' | '.')) {
+                j += 1;
+            }
+            // Require: first segment followed by '/', with content after it.
+            if j < n && chars[j] == '/' && j > i {
+                let path_end = scan_path_end(chars, i);
+                let end = scan_line_col_suffix(chars, path_end);
+                if end > j + 1 {
+                    return Some((end - i, chars[i..end].iter().collect()));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn char_starts_with(chars: &[char], pos: usize, prefix: &[char]) -> bool {
+    let end = pos + prefix.len();
+    end <= chars.len() && chars[pos..end] == *prefix
+}
+
+fn is_link_boundary(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '(' | '[' | '<' | ':' | '=' | '"' | '\'' | ',' | ';' | '{' | '}')
+}
+
+fn is_path_char(c: char) -> bool {
+    c.is_alphanumeric()
+        || matches!(c, '/' | '.' | '_' | '-' | '+' | '~' | '@' | '%' | '&' | '=' | '?' | '#')
+}
+
+fn scan_url_end(chars: &[char], start: usize) -> usize {
+    let mut end = start;
+    while end < chars.len() && !chars[end].is_whitespace() && chars[end] >= ' ' {
+        end += 1;
+    }
+    // Trim trailing punctuation that typically trails the URL in prose.
+    while end > start
+        && matches!(chars[end - 1], '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '>' | '\'' | '"')
+    {
+        end -= 1;
+    }
+    end
+}
+
+fn scan_path_end(chars: &[char], start: usize) -> usize {
+    let mut end = start;
+    while end < chars.len() && is_path_char(chars[end]) {
+        end += 1;
+    }
+    // Trim trailing punctuation.
+    while end > start && matches!(chars[end - 1], '.' | ',' | ':' | ';' | ')' | ']' | '\'' | '"') {
+        end -= 1;
+    }
+    end
+}
+
+/// After a path, consume an optional `:line` or `:line:col` suffix (e.g. `42` in `file.rs:42:5`).
+fn scan_line_col_suffix(chars: &[char], start: usize) -> usize {
+    let mut end = start;
+    for _ in 0..2 {
+        if end < chars.len() && chars[end] == ':' {
+            let d_start = end + 1;
+            let mut d_end = d_start;
+            while d_end < chars.len() && chars[d_end].is_ascii_digit() {
+                d_end += 1;
+            }
+            if d_end > d_start {
+                end = d_end;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    end
 }
 
 /// Replaces the content of the line containing `cursor` with `new_line`.

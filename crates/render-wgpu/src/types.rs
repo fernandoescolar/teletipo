@@ -3,6 +3,19 @@ use std::time::Duration;
 use winit::event::{ElementState, KeyEvent, MouseButton};
 use winit::keyboard::ModifiersState;
 
+/// A detected link span in the terminal output (file path or URL).
+#[derive(Debug, Clone)]
+pub struct TerminalLink {
+    /// Row index in the terminal grid (0-based).
+    pub row: usize,
+    /// First character column (inclusive).
+    pub col_start: usize,
+    /// Character column past the end (exclusive).
+    pub col_end: usize,
+    /// The raw string to pass to `open` / `xdg-open`.
+    pub target: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderSnapshot {
     pub terminal_text: String,
@@ -49,6 +62,9 @@ pub struct RenderSnapshot {
     /// Only populated while Tab/Shift+Tab cycling is active and there are at
     /// least two candidates.
     pub suggestion_dropdown: Option<SuggestionDropdown>,
+    /// File paths and URLs detected in the terminal output.  Populated only
+    /// when the Cmd key is held so the renderer can draw link underlines.
+    pub terminal_links: Vec<TerminalLink>,
 }
 
 /// Visual state for the suggestion cycling dropdown shown above the editor.

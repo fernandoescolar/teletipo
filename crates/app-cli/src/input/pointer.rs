@@ -1,4 +1,4 @@
-use crate::coords::{clamp_editor_scroll, cursor_to_terminal_cell, editor_row_col_to_offset};
+use crate::coords::{clamp_editor_scroll, cursor_to_terminal_cell, detect_terminal_links, editor_row_col_to_offset, expand_tilde, strip_line_col};
 use crate::launch::execute_context_menu_item;
 use crate::GpuRuntimeState;
 use render_wgpu::{AppWindowEvent, SCROLLBAR_W_PX};
@@ -76,8 +76,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 let frac = ((*y - term_bottom) / edit_h_px).clamp(0.0, 1.0);
                 let editor_text = state.tab().app.editor_snapshot();
                 let total_lines = editor_text.lines().count().max(1);
+                let pad_v = state.user_config.padding.vertical as f32;
                 let visible_rows = if state.cell_h > 0.0 {
-                    (edit_h_px as f32 / state.cell_h).floor().max(1.0) as usize
+                    ((edit_h_px as f32 - pad_v) / state.cell_h).floor().max(1.0) as usize
                 } else {
                     1
                 };
@@ -87,22 +88,28 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             }
         } else if state.tab().is_selecting {
             let term_row_count = state.tab().term_row_count;
+            let pad_h = state.user_config.padding.horizontal as f32;
+            let pad_v = state.user_config.padding.vertical as f32;
             if let Some(cell) = cursor_to_terminal_cell(
                 *x, *y,
                 state.window_width, state.window_height,
                 split_ratio, state.cell_w, state.cell_h,
                 term_row_count, tab_bar_h as f32,
+                pad_h, pad_v,
             ) {
                 state.tab_mut().selection_end = Some(cell);
+                state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
             }
         } else if state.tab().is_selecting_editor {
             let available_h = state.window_height as f64 - tab_bar_h;
             let edit_top_px = tab_bar_h + split_ratio as f64 * available_h + 2.0;
             let editor_scroll_offset = state.tab().editor_scroll_offset;
-            let row = ((*y - edit_top_px) / state.cell_h as f64)
+            let pad_h = state.user_config.padding.horizontal as f64;
+            let pad_v = state.user_config.padding.vertical as f64;
+            let row = ((*y - edit_top_px - pad_v) / state.cell_h as f64)
                 .max(0.0).floor() as usize + editor_scroll_offset;
             let prefix_cols = if row == 0 { 2.0_f64 } else { 0.0 };
-            let col = (*x / state.cell_w as f64 - prefix_cols)
+            let col = ((*x - pad_h) / state.cell_w as f64 - prefix_cols)
                 .max(0.0).floor() as usize;
             let text = state.tab().app.editor_snapshot();
             let offset = editor_row_col_to_offset(&text, row, col);
@@ -201,8 +208,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     let frac = (state.cursor_y - term_bottom) / edit_h_px;
                     let editor_text = state.tab().app.editor_snapshot();
                     let total_lines = editor_text.lines().count().max(1);
+                    let pad_v = state.user_config.padding.vertical as f32;
                     let visible_rows = if state.cell_h > 0.0 {
-                        (edit_h_px as f32 / state.cell_h).floor().max(1.0) as usize
+                        ((edit_h_px as f32 - pad_v) / state.cell_h).floor().max(1.0) as usize
                     } else {
                         1
                     };
@@ -214,24 +222,59 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 return true;
             }
 
+            // Cmd+click: open a detected terminal link without starting selection.
+            if state.super_down {
+                let pad_h = state.user_config.padding.horizontal as f32;
+                let pad_v = state.user_config.padding.vertical as f32;
+                let term_row_count = state.tab().term_row_count;
+                if let Some((row, col)) = cursor_to_terminal_cell(
+                    state.cursor_x, state.cursor_y,
+                    state.window_width, state.window_height,
+                    split_ratio, state.cell_w, state.cell_h,
+                    term_row_count, tab_bar_h as f32,
+                    pad_h, pad_v,
+                ) {
+                    let last_text = state.tab().last_terminal_text.clone();
+                    let links = detect_terminal_links(&last_text);
+                    if let Some((_, _, _, target)) = links.iter()
+                        .find(|(r, cs, ce, _)| *r == row && col >= *cs && col < *ce)
+                    {
+                        let cwd = state.tab().cwd.clone();
+                        open_link(target, &cwd);
+                        return true;
+                    }
+                }
+            }
+
             let term_row_count = state.tab().term_row_count;
+            let pad_h = state.user_config.padding.horizontal as f32;
+            let pad_v = state.user_config.padding.vertical as f32;
             if let Some(cell) = cursor_to_terminal_cell(
                 state.cursor_x, state.cursor_y,
                 state.window_width, state.window_height,
                 split_ratio, state.cell_w, state.cell_h,
                 term_row_count, tab_bar_h as f32,
+                pad_h, pad_v,
             ) {
                 state.tab_mut().selection_anchor = Some(cell);
+                state.tab_mut().selection_anchor_scroll = state.tab().scroll_offset;
                 state.tab_mut().selection_end = Some(cell);
+                state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
                 state.tab_mut().is_selecting = true;
             } else if state.cursor_y > term_bottom {
                 let edit_top_px = term_bottom + 2.0;
                 let editor_scroll_offset = state.tab().editor_scroll_offset;
-                let row = ((state.cursor_y - edit_top_px) / state.cell_h as f64)
+                let pad_h_f = state.user_config.padding.horizontal as f64;
+                let pad_v_f = state.user_config.padding.vertical as f64;
+                let row = ((state.cursor_y - edit_top_px - pad_v_f) / state.cell_h as f64)
                     .max(0.0).floor() as usize + editor_scroll_offset;
                 let prefix_cols = if row == 0 { 2.0_f64 } else { 0.0 };
-                let col = (state.cursor_x / state.cell_w as f64 - prefix_cols)
+                let col = ((state.cursor_x - pad_h_f) / state.cell_w as f64 - prefix_cols)
                     .max(0.0).floor() as usize;
+                // Clicking in the editor clears any terminal text selection.
+                state.tab_mut().selection_anchor = None;
+                state.tab_mut().selection_end = None;
+                state.tab_mut().is_selecting = false;
                 let text = state.tab().app.editor_snapshot();
                 let offset = editor_row_col_to_offset(&text, row, col);
                 let extend = state.shift_down;
@@ -281,8 +324,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             let editor_text = state.tab().app.editor_snapshot();
             let total_lines = editor_text.lines().count().max(1);
             let edit_h_px = state.window_height as f64 - term_bottom;
+            let pad_v = state.user_config.padding.vertical as f32;
             let visible_rows = if state.cell_h > 0.0 {
-                (edit_h_px as f32 / state.cell_h).floor().max(1.0) as usize
+                ((edit_h_px as f32 - pad_v) / state.cell_h).floor().max(1.0) as usize
             } else {
                 1
             };
@@ -314,4 +358,59 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     false
+}
+
+/// Open a terminal link (URL or file path), stripping any `:line:col` suffix,
+/// resolving relative paths against `cwd`, and showing an alert on failure.
+fn open_link(raw_target: &str, cwd: &str) {
+    let is_url = raw_target.starts_with("http://")
+        || raw_target.starts_with("https://")
+        || raw_target.starts_with("ftp://");
+
+    if is_url {
+        #[cfg(target_os = "macos")]
+        let status = std::process::Command::new("open").arg(raw_target).spawn();
+        #[cfg(not(target_os = "macos"))]
+        let status = std::process::Command::new("xdg-open").arg(raw_target).spawn();
+        if status.is_err() {
+            show_alert(&format!("Could not open URL:\n{raw_target}"));
+        }
+        return;
+    }
+
+    // File path: strip :line:col, expand ~, resolve relative paths.
+    let bare = strip_line_col(raw_target);
+    let expanded = expand_tilde(bare);
+    let path = if std::path::Path::new(&expanded).is_absolute() {
+        std::path::PathBuf::from(&expanded)
+    } else {
+        std::path::Path::new(cwd).join(&expanded)
+    };
+
+    if !path.exists() {
+        show_alert(&format!("File not found:\n{}", bare));
+        return;
+    }
+
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(&path).spawn();
+    #[cfg(not(target_os = "macos"))]
+    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+}
+
+/// Show a modal alert dialog (macOS) or print to stderr (other platforms).
+fn show_alert(message: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "display alert \"Teletipo\" message \"{}\" buttons {{\"OK\"}} default button \"OK\"",
+            escaped
+        );
+        let _ = std::process::Command::new("osascript").args(["-e", &script]).spawn();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        eprintln!("teletipo: {message}");
+    }
 }

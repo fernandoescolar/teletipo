@@ -42,7 +42,12 @@ impl EditorBuffer {
     }
 
     pub fn set_cursor(&mut self, offset: usize, extend_selection: bool) {
-        let clamped = offset.min(self.text.len());
+        let mut clamped = offset.min(self.text.len());
+        // Snap to the nearest char boundary so callers never need to worry
+        // about multi-byte character alignment.
+        while clamped > 0 && !self.text.is_char_boundary(clamped) {
+            clamped -= 1;
+        }
         self.cursor.offset = clamped;
         if extend_selection {
             self.selection.active = clamped;
@@ -151,11 +156,17 @@ impl EditorBuffer {
             return;
         }
 
-        let at = self.cursor.offset - 1;
+        // Walk backward from the cursor to find the previous char boundary;
+        // this is necessary for multi-byte characters (e.g. accented letters,
+        // CJK, emoji) where a single character occupies more than 1 byte.
+        let mut at = self.cursor.offset - 1;
+        while at > 0 && !self.text.is_char_boundary(at) {
+            at -= 1;
+        }
         let removed = self.text.remove(at);
-        self.cursor.offset -= 1;
-        self.selection.anchor = self.cursor.offset;
-        self.selection.active = self.cursor.offset;
+        self.cursor.offset = at;
+        self.selection.anchor = at;
+        self.selection.active = at;
         self.history.push_undo(Edit::Delete {
             at,
             text: removed.to_string(),

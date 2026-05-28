@@ -268,6 +268,26 @@ pub(crate) fn build_panel_vertices(
             }
     }
 
+    // Link underlines: drawn only when Cmd is held (terminal_links is non-empty).
+    if !snapshot.terminal_links.is_empty()
+        && size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0
+    {
+        let px_x = 2.0 / size.width as f32;
+        let px_y = 2.0 / size.height as f32;
+        let pane_top_px = term_top_offset_px;
+        let underline_color = [0.35_f32, 0.72, 1.0, 0.95];
+        for link in &snapshot.terminal_links {
+            let x0 = (pad_h + link.col_start as f32 * cell_w_px) * px_x - 1.0;
+            let x1 = (pad_h + link.col_end   as f32 * cell_w_px) * px_x - 1.0;
+            // 2-pixel underline just at the bottom of the cell.
+            let y_bot_px = pane_top_px + pad_v + (link.row as f32 + 1.0) * cell_h_px;
+            let y_top_px = y_bot_px - 2.0_f32;
+            let y_bot_ndc = 1.0 - y_bot_px * px_y;
+            let y_top_ndc = 1.0 - y_top_px * px_y;
+            verts.extend_from_slice(&quad_verts(x0, y_bot_ndc, x1, y_top_ndc, underline_color));
+        }
+    }
+
     if size.width > 0 && snapshot.scrollback_lines > 0 {
         let sb_w_ndc = 2.0 * SCROLLBAR_W_PX / size.width as f32;
         let sb_left = 1.0 - sb_w_ndc;
@@ -295,7 +315,8 @@ pub(crate) fn build_panel_vertices(
 
     if size.width > 0 && size.height > 0 && cell_h_px > 0.0 {
         let edit_pane_h_px = (1.0 - snapshot.split_ratio) * size.height as f32;
-        let visible_editor_rows = (edit_pane_h_px / cell_h_px).floor() as usize;
+        // Text starts pad_v pixels below the editor pane top, so the usable height is smaller.
+        let visible_editor_rows = ((edit_pane_h_px - snapshot.padding_v as f32) / cell_h_px).floor().max(1.0) as usize;
         if snapshot.editor_line_count > visible_editor_rows {
             let sb_w_ndc = 2.0 * SCROLLBAR_W_PX / size.width as f32;
             let sb_left = 1.0 - sb_w_ndc;

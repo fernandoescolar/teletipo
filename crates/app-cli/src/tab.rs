@@ -27,9 +27,13 @@ pub(crate) struct TabState {
     pub(crate) saved_input: String,
     /// Fraction of window height used by the terminal pane (0 < r < 1).
     pub(crate) split_ratio: f32,
-    /// Terminal text selection anchor (row, col).
+    /// Terminal text selection anchor (row, col) and the scroll_offset at the
+    /// time the selection point was recorded.  Rows must be adjusted by the
+    /// scroll delta when rendering or copying.
     pub(crate) selection_anchor: Option<(usize, usize)>,
+    pub(crate) selection_anchor_scroll: usize,
     pub(crate) selection_end: Option<(usize, usize)>,
+    pub(crate) selection_end_scroll: usize,
     pub(crate) is_selecting: bool,
     pub(crate) is_selecting_editor: bool,
     /// Terminal text from the most recent snapshot (used for Cmd+C copy).

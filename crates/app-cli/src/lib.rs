@@ -261,7 +261,9 @@ impl GpuRuntimeState {
             saved_input: String::new(),
             split_ratio,
             selection_anchor: None,
+            selection_anchor_scroll: 0,
             selection_end: None,
+            selection_end_scroll: 0,
             is_selecting: false,
             is_selecting_editor: false,
             last_terminal_text: String::new(),
@@ -432,10 +434,34 @@ pub(crate) fn suggestion_matches_frecency(
     // For cd commands, suppress noisy tier-2 matches.
     let (t1, t2) = if is_cd {
         let (raw_t1, _, _) = suggestion_matches_tiered(history, prefix);
-        let cd_t1: Vec<String> = raw_t1
+        let mut cd_t1: Vec<String> = raw_t1
             .into_iter()
             .filter(|e| e.starts_with("cd "))
             .collect();
+        // Normalize: "cd foo/" should also match history entries stored as "cd ./foo/…".
+        // If the path fragment has no explicit prefix (./ ../ / ~), look up the ./
+        // variant and rewrite its results to match the user's bare-relative style.
+        let path_frag = prefix.strip_prefix("cd ").unwrap_or("");
+        let bare_relative = !path_frag.is_empty()
+            && !path_frag.starts_with('/')
+            && !path_frag.starts_with('~')
+            && !path_frag.starts_with("./")
+            && !path_frag.starts_with("../");
+        if bare_relative {
+            let dot_prefix = format!("cd ./{}", path_frag);
+            let (dot_t1, _, _) = suggestion_matches_tiered(history, &dot_prefix);
+            let already: std::collections::HashSet<String> =
+                cd_t1.iter().map(|s| s.to_lowercase()).collect();
+            for entry in dot_t1 {
+                // Strip the "./" so the suggestion matches the user's typing style.
+                if let Some(rest) = entry.strip_prefix("cd ./") {
+                    let normalized = format!("cd {}", rest);
+                    if !already.contains(&normalized.to_lowercase()) {
+                        cd_t1.push(normalized);
+                    }
+                }
+            }
+        }
         (cd_t1, Vec::new())
     } else {
         let (a, b, _) = suggestion_matches_tiered(history, prefix);

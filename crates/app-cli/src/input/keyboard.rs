@@ -39,6 +39,34 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         state.tabs[active].suggestion_index = None;
     }
 
+    // Save terminal selection before (possibly) clearing it — Cmd+C needs the saved values.
+    let saved_terminal_anchor = state.tab().selection_anchor;
+    let saved_terminal_end   = state.tab().selection_end;
+    let saved_anchor_scroll  = state.tab().selection_anchor_scroll;
+    let saved_end_scroll     = state.tab().selection_end_scroll;
+    // Preserve selection while a modifier key is held or while the key being
+    // pressed IS a modifier (KeyboardInput fires before ModifiersChanged, so
+    // super_down/ctrl_down may not yet be set when the Cmd/Ctrl key arrives).
+    let is_modifier_key = matches!(
+        &key_event.logical_key,
+        Key::Named(
+            NamedKey::Super
+            | NamedKey::Control
+            | NamedKey::Shift
+            | NamedKey::Alt
+            | NamedKey::AltGraph
+            | NamedKey::Meta
+            | NamedKey::Hyper
+            | NamedKey::CapsLock,
+        )
+    );
+    if !state.super_down && !state.ctrl_down && !is_modifier_key {
+        let active = state.active_tab;
+        state.tabs[active].selection_anchor = None;
+        state.tabs[active].selection_end   = None;
+        state.tabs[active].is_selecting    = false;
+    }
+
     match &key_event.logical_key {
         Key::Named(NamedKey::Escape) => {
             if cycling {
@@ -149,17 +177,24 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                             && let Ok(mut cb) = Clipboard::new() {
                                 let _ = cb.set_text(selected);
                             }
-                    } else {
-                        let anchor = state.tab().selection_anchor;
-                        let sel_end = state.tab().selection_end;
-                        if let (Some(anchor), Some(sel_end)) = (anchor, sel_end) {
-                            let last_text = state.tab().last_terminal_text.clone();
-                            let text = extract_selection(&last_text, anchor, sel_end);
-                            if !text.is_empty()
-                                && let Ok(mut cb) = Clipboard::new() {
-                                    let _ = cb.set_text(text);
-                                }
-                        }
+                    } else if let (Some(anchor), Some(sel_end)) =
+                        (saved_terminal_anchor, saved_terminal_end)
+                    {
+                        // Adjust stored rows to the current scroll offset so that
+                        // Cmd+C copies the correct text even after scrolling.
+                        let current_scroll  = state.tab().scroll_offset as i64;
+                        let anchor_scroll   = saved_anchor_scroll as i64;
+                        let end_scroll      = saved_end_scroll as i64;
+                        let ar = (anchor.0 as i64 + current_scroll - anchor_scroll).max(0) as usize;
+                        let er = (sel_end.0 as i64 + current_scroll - end_scroll).max(0) as usize;
+                        let adjusted_anchor = (ar, anchor.1);
+                        let adjusted_end    = (er, sel_end.1);
+                        let last_text = state.tab().last_terminal_text.clone();
+                        let text = extract_selection(&last_text, adjusted_anchor, adjusted_end);
+                        if !text.is_empty()
+                            && let Ok(mut cb) = Clipboard::new() {
+                                let _ = cb.set_text(text);
+                            }
                     }
                 }
                 "v" => {

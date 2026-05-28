@@ -1,8 +1,8 @@
-use crate::coords::{current_line_prefix, cursor_at_line_end, read_child_cwd, shorten_cwd_label};
+use crate::coords::{current_line_prefix, cursor_at_line_end, cursor_to_terminal_cell, detect_terminal_links, read_child_cwd, shorten_cwd_label};
 use crate::settings::build_settings_overlay;
 use crate::theme;
 use crate::GpuRuntimeState;
-use render_wgpu::{ColorTheme, RenderSnapshot, SuggestionDropdown, TabContextMenu};
+use render_wgpu::{ColorTheme, RenderSnapshot, SuggestionDropdown, TabContextMenu, TerminalLink};
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
 /// if the string is longer.  Used to keep dropdown entries and ghost text
@@ -78,6 +78,34 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         styled.iter().map(|(_, _, bg)| *bg).collect();
     state.tabs[active].last_terminal_text = terminal_text.clone();
     state.tabs[active].term_row_count = terminal_text.lines().count().max(1);
+    // Underline only the link the cursor is currently hovering over.
+    let terminal_links: Vec<TerminalLink> = {
+        let all_links = detect_terminal_links(&terminal_text);
+        if all_links.is_empty() {
+            Vec::new()
+        } else {
+            let split_ratio = state.tabs[active].split_ratio;
+            let tab_bar_h   = state.tab_bar_h();
+            let pad_h = state.user_config.padding.horizontal as f32;
+            let pad_v = state.user_config.padding.vertical   as f32;
+            let term_row_count = state.tabs[active].term_row_count;
+            if let Some((hover_row, hover_col)) = cursor_to_terminal_cell(
+                state.cursor_x, state.cursor_y,
+                state.window_width, state.window_height,
+                split_ratio, state.cell_w, state.cell_h,
+                term_row_count, tab_bar_h,
+                pad_h, pad_v,
+            ) {
+                all_links
+                    .into_iter()
+                    .filter(|(r, cs, ce, _)| *r == hover_row && hover_col >= *cs && hover_col < *ce)
+                    .map(|(row, col_start, col_end, target)| TerminalLink { row, col_start, col_end, target })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+    };
     let editor_text = state.tabs[active].app.editor_snapshot();
     let editor_line_count = editor_text.lines().count().max(1);
     let editor_cursor_offset = state.tabs[active].app.editor_cursor_offset();
@@ -128,7 +156,10 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let editor_selection = state.tabs[active].app.editor_selection();
     let split_ratio = state.tabs[active].split_ratio;
     let selection_anchor = state.tabs[active].selection_anchor;
+    let selection_anchor_scroll = state.tabs[active].selection_anchor_scroll;
     let selection_end = state.tabs[active].selection_end;
+    let selection_end_scroll = state.tabs[active].selection_end_scroll;
+    let current_scroll = state.tabs[active].scroll_offset;
 
     let resize_overlay = if let Some(ref v) = state.pending_update {
         Some(format!("Updated to v{v} \u{2014} restart to apply"))
@@ -145,12 +176,19 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
 
     let selection = match (selection_anchor, selection_end) {
         (Some(a), Some(e)) => {
-            let (sr, sc, er, ec) = if a <= e {
-                (a.0, a.1, e.0, e.1)
+            // Adjust stored rows to the current scroll offset.  When
+            // scroll_offset increases (user scrolled back further), visible
+            // content moves down, so the row number increases by the delta.
+            let delta_a = current_scroll as i64 - selection_anchor_scroll as i64;
+            let delta_e = current_scroll as i64 - selection_end_scroll as i64;
+            let ar = (a.0 as i64 + delta_a).max(0) as usize;
+            let er = (e.0 as i64 + delta_e).max(0) as usize;
+            let (sr, sc, er_final, ec) = if (ar, a.1) <= (er, e.1) {
+                (ar, a.1, er, e.1)
             } else {
-                (e.0, e.1, a.0, a.1)
+                (er, e.1, ar, a.1)
             };
-            Some((sr, sc, er, ec))
+            Some((sr, sc, er_final, ec))
         }
         _ => None,
     };
@@ -225,6 +263,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             }
         },
         editor_suggestion,
+        terminal_links,
         suggestion_dropdown: {
             if let Some(idx) = state.tabs[active].suggestion_index {
                 let prefix = state.tabs[active]
