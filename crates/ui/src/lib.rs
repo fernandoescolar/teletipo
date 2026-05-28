@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod components;
+pub mod config;
 pub mod input;
 pub mod snapshot;
 pub mod state;

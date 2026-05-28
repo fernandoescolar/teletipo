@@ -485,6 +485,14 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) {
                 padding_vertical: s.user_config.padding.vertical as f32,
                 active_theme_idx: s.active_theme_idx,
                 active_font_idx: s.active_font_idx,
+                font_size: s.user_config.font.size,
+                font_family: s.user_config.font.family.clone(),
+                terminal_shell: s.user_config.terminal.shell.clone(),
+                terminal_scrollback_lines: s.user_config.terminal.scrollback_lines,
+                terminal_bell: s.user_config.terminal.bell,
+                active_theme: s.user_config.active_theme.clone(),
+                available_themes: s.available_themes.iter().map(|t| t.name.clone()).collect(),
+                available_fonts: s.available_fonts.iter().map(|f| f.family.clone()).collect(),
             },
         )
     }));

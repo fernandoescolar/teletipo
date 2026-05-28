@@ -1,4 +1,4 @@
-use crate::actions::{EditorCmd, UiAction};
+use crate::actions::{EditorCmd, SettingsCmd, UiAction};
 use crate::components::{
     BellState, CursorBlink, ModifierState, OverlayManager, PaneLayout, SelectionPoint, TabManager,
     TabPane, UiConfig, WindowMetrics,
@@ -124,6 +124,11 @@ impl UiState {
             }
             UiAction::SendReturn => {
                 let tab = self.tabs.active_tab_mut();
+                let text = tab.app.editor_snapshot();
+                let trimmed = text.trim().to_string();
+                if !trimmed.is_empty() {
+                    tab.app.record_history(&trimmed);
+                }
                 if let Some(mut pty) = tab.pty.take() {
                     let _ = tab.app.run_editor_command(&mut pty, true);
                     tab.pty = Some(pty);
@@ -187,6 +192,88 @@ impl UiState {
                 self.overlays.settings.open = false;
             }
             UiAction::SettingsAction(action) => {
+                // Intercept actions that need access to UiConfig (cycling, commit, begin-edit).
+                match &action {
+                    SettingsCmd::MoveLeft | SettingsCmd::MoveRight => {
+                        let is_right = matches!(&action, SettingsCmd::MoveRight);
+                        let cursor = self.overlays.settings.cursor;
+                        if let Some(field) = crate::config::SETTINGS_FIELDS.get(cursor) {
+                            if field.key == "theme" && !self.config.available_themes.is_empty() {
+                                let n = self.config.available_themes.len();
+                                let cur = self.config.active_theme_idx.unwrap_or(0);
+                                let next = if is_right {
+                                    (cur + 1) % n
+                                } else if cur == 0 {
+                                    n - 1
+                                } else {
+                                    cur - 1
+                                };
+                                self.config.active_theme_idx = Some(next);
+                                self.config.active_theme =
+                                    Some(self.config.available_themes[next].clone());
+                                self.overlays.settings.dirty = true;
+                            } else if field.section == "font"
+                                && field.key == "family"
+                                && !self.config.available_fonts.is_empty()
+                            {
+                                let n = self.config.available_fonts.len();
+                                let cur = self.config.active_font_idx;
+                                let next = if is_right {
+                                    (cur + 1) % n
+                                } else if cur == 0 {
+                                    n - 1
+                                } else {
+                                    cur - 1
+                                };
+                                self.config.active_font_idx = next;
+                                self.config.font_family = if next == 0 {
+                                    None
+                                } else {
+                                    self.config.available_fonts.get(next).cloned()
+                                };
+                                self.overlays.settings.dirty = true;
+                            } else if let Some(step) =
+                                crate::config::numeric_step(field.section, field.key)
+                            {
+                                let raw = self.config.get_field(field.section, field.key);
+                                let current: f32 = raw.parse().unwrap_or(0.0);
+                                let delta = if is_right { step } else { -step };
+                                let new_val = if step.fract() == 0.0 {
+                                    format!("{}", (current + delta).max(0.0) as u32)
+                                } else {
+                                    format!("{:.1}", (current + delta).max(0.0))
+                                };
+                                self.config.set_field(field.section, field.key, &new_val);
+                                self.overlays.settings.dirty = true;
+                            }
+                        }
+                    }
+                    SettingsCmd::BeginEdit => {
+                        let cursor = self.overlays.settings.cursor;
+                        if let Some(field) = crate::config::SETTINGS_FIELDS.get(cursor) {
+                            let current = self.config.get_field(field.section, field.key);
+                            let initial =
+                                if current == "(auto)" || current == "(default)" || current == "(none)" {
+                                    String::new()
+                                } else {
+                                    current
+                                };
+                            self.overlays.settings.edit_buf = Some(initial);
+                        }
+                        return; // handled — don't forward to SettingsState::apply
+                    }
+                    SettingsCmd::CommitEdit => {
+                        if let Some(buf) = self.overlays.settings.edit_buf.take() {
+                            let cursor = self.overlays.settings.cursor;
+                            if let Some(field) = crate::config::SETTINGS_FIELDS.get(cursor) {
+                                self.config.set_field(field.section, field.key, &buf);
+                                self.overlays.settings.dirty = true;
+                            }
+                        }
+                        return; // handled
+                    }
+                    _ => {}
+                }
                 self.overlays.settings.apply(action);
             }
             UiAction::CycleSuggestion(_) => {}
@@ -243,5 +330,104 @@ impl UiState {
                 self.modifiers = modifiers;
             }
         }
+    }
+
+    /// Advance cursor blink and pump PTY output for all tabs.
+    /// Returns `true` if the active tab received new data.
+    pub fn tick(&mut self) -> bool {
+        self.cursor_blink.tick();
+
+        let mut active_had_data = false;
+        let active = self.tabs.active;
+        let mut dead_tabs: Vec<usize> = Vec::new();
+        let mut fullscreen_to_enter: Vec<usize> = Vec::new();
+        let mut fullscreen_to_exit: Vec<usize> = Vec::new();
+        let mut flash_bell = false;
+        let bell_enabled = self.config.terminal_bell;
+
+        for i in 0..self.tabs.tabs.len() {
+            let tab = &mut self.tabs.tabs[i];
+            let Some(mut pty) = tab.pty.take() else { continue };
+            let had_data = tab.app.pump_pty_once(&mut pty).map(|n| n > 0).unwrap_or(false);
+            for response in tab.app.drain_pending_responses() {
+                let _ = tab.app.send_pty_input(&mut pty, response.as_bytes());
+            }
+            let is_dead = pty.try_wait().ok().flatten().is_some();
+            tab.pty = Some(pty);
+
+            if i == active && had_data {
+                active_had_data = true;
+            }
+            if tab.app.take_bell() && bell_enabled {
+                flash_bell = true;
+            }
+            let now_fullscreen = tab.app.is_alternate_screen();
+            if now_fullscreen != tab.is_terminal_fullscreen {
+                if now_fullscreen {
+                    fullscreen_to_enter.push(i);
+                } else {
+                    fullscreen_to_exit.push(i);
+                }
+            }
+            if is_dead {
+                dead_tabs.push(i);
+            }
+        }
+
+        if flash_bell {
+            self.bell.flash_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_millis(150));
+        }
+
+        if active_had_data {
+            let tab = &mut self.tabs.tabs[active];
+            tab.scroll.terminal_offset = 0;
+            self.cursor_blink.phase = true;
+        }
+
+        // Apply fullscreen transitions and resize PTYs.
+        let available_h = self.window.height as f32;
+        let cell_h = self.window.cell_h;
+        let cell_w = self.window.cell_w;
+        let pad_h = self.config.padding_horizontal;
+        let pad_v = self.config.padding_vertical;
+        let win_w = self.window.width;
+        let cols = ((win_w as f32 - 2.0 * pad_h) / cell_w).max(1.0) as u16;
+
+        for i in fullscreen_to_enter {
+            let tab = &mut self.tabs.tabs[i];
+            tab.is_terminal_fullscreen = true;
+            tab.pre_fullscreen_split_ratio = tab.split_ratio;
+            tab.split_ratio = 1.0;
+            tab.scroll.terminal_offset = 0;
+            let term_h = (available_h - 2.0 * pad_v).max(cell_h);
+            let rows = (term_h / cell_h).max(1.0) as u16;
+            if let Some(pty) = tab.pty.as_mut() {
+                pty.resize(rows, cols);
+            }
+            tab.app.resize_terminal(rows as usize, cols as usize);
+        }
+        for i in fullscreen_to_exit {
+            let tab = &mut self.tabs.tabs[i];
+            tab.is_terminal_fullscreen = false;
+            tab.split_ratio = tab.pre_fullscreen_split_ratio.clamp(0.2, 0.85);
+            let term_h = (available_h * tab.split_ratio - 2.0 * pad_v).max(cell_h);
+            let rows = (term_h / cell_h).max(1.0) as u16;
+            if let Some(pty) = tab.pty.as_mut() {
+                pty.resize(rows, cols);
+            }
+            tab.app.resize_terminal(rows as usize, cols as usize);
+        }
+
+        // Close dead tabs (or set should_exit if it was the last one).
+        for &idx in dead_tabs.iter().rev() {
+            if self.tabs.tabs.len() == 1 {
+                self.should_exit = true;
+            } else {
+                self.tabs.close(idx);
+            }
+        }
+
+        active_had_data
     }
 }
