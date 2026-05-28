@@ -2,6 +2,108 @@ use std::collections::HashMap;
 
 use crate::types::FontConfig;
 
+/// One shaped glyph produced by rustybuzz text shaping.
+#[derive(Debug, Clone)]
+pub(crate) struct ShapedGlyph {
+    /// Glyph ID in the font (same ID space as `fontdue::Font::rasterize_indexed`).
+    pub glyph_id: u16,
+    /// The first source character at this cluster position (for regular char-cache lookup).
+    pub source_char: char,
+    /// Terminal column where this glyph starts (0-based within the line).
+    pub col: usize,
+    /// Number of terminal columns spanned (1 = normal, 2+ = ligature).
+    pub span_cols: usize,
+    /// Character index in the full multi-line text string (for fg_color/style lookups).
+    pub full_char_idx: usize,
+    /// Sub-pixel x offset from the cell origin, in pixels.
+    pub x_offset_px: f32,
+    /// Sub-pixel y offset from the baseline, in pixels.
+    pub y_offset_px: f32,
+}
+
+/// Shape `text` (the whole terminal buffer, `\n`-separated) into per-line glyph sequences.
+/// Returns `None` if `font_data` is absent or the face cannot be parsed.
+/// Callers should fall back to character-by-character rendering on `None`.
+pub(crate) fn shape_terminal_text(
+    font_data: &[u8],
+    text: &str,
+    font_size: f32,
+) -> Option<Vec<Vec<ShapedGlyph>>> {
+    let face = rustybuzz::Face::from_slice(font_data, 0)?;
+    let units_per_em = face.units_per_em() as f32;
+    let px_per_unit = font_size / units_per_em;
+
+    let mut result = Vec::new();
+    let mut full_char_offset = 0usize;
+
+    for line in text.split('\n') {
+        let shaped_line = shape_line(&face, line, full_char_offset, px_per_unit);
+        // +1 accounts for the '\n' separator (the last split segment has no trailing '\n',
+        // but we still increment to keep full_char_offset consistent with chars()).
+        full_char_offset += line.chars().count() + 1;
+        result.push(shaped_line);
+    }
+
+    Some(result)
+}
+
+fn shape_line(
+    face: &rustybuzz::Face<'_>,
+    line: &str,
+    full_char_offset: usize,
+    px_per_unit: f32,
+) -> Vec<ShapedGlyph> {
+    if line.is_empty() {
+        return Vec::new();
+    }
+
+    // Build byte_offset → (col, source_char) map.
+    let byte_to_info: HashMap<u32, (usize, char)> = line
+        .char_indices()
+        .enumerate()
+        .map(|(char_i, (byte_off, ch))| (byte_off as u32, (char_i, ch)))
+        .collect();
+
+    let line_char_count = line.chars().count();
+
+    let mut buf = rustybuzz::UnicodeBuffer::new();
+    buf.push_str(line);
+    let shaped = rustybuzz::shape(face, &[], buf);
+
+    let infos = shaped.glyph_infos();
+    let positions = shaped.glyph_positions();
+
+    let mut result = Vec::with_capacity(infos.len());
+
+    for (i, (info, pos)) in infos.iter().zip(positions.iter()).enumerate() {
+        let cluster = info.cluster;
+        let &(col, source_char) = match byte_to_info.get(&cluster) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let span_cols = if i + 1 < infos.len() {
+            let next_cluster = infos[i + 1].cluster;
+            let next_col = byte_to_info.get(&next_cluster).map(|&(c, _)| c).unwrap_or(col + 1);
+            (next_col.saturating_sub(col)).max(1)
+        } else {
+            (line_char_count.saturating_sub(col)).max(1)
+        };
+
+        result.push(ShapedGlyph {
+            glyph_id: info.glyph_id.min(u16::MAX as u32) as u16,
+            source_char,
+            col,
+            span_cols,
+            full_char_idx: full_char_offset + col,
+            x_offset_px: pos.x_offset as f32 * px_per_unit,
+            y_offset_px: pos.y_offset as f32 * px_per_unit,
+        });
+    }
+
+    result
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GlyphKey {
     pub ch: char,
@@ -40,6 +142,9 @@ pub(crate) struct CachedGlyph {
     pub offset_y_px: f32,
     pub width_px: f32,
     pub height_px: f32,
+    /// `true` for colour glyphs (emoji): the atlas stores full RGBA pixels;
+    /// the shader renders them directly instead of tinting with the fg colour.
+    pub is_color: bool,
 }
 
 /// Tries to load raw font bytes from the configured family or system fallbacks.
@@ -127,6 +232,39 @@ pub(crate) fn load_bold_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
     query_bold_monospace_bytes(&db)
 }
 
+/// Tries to load a Unicode-capable fallback font for rendering characters not
+/// supported by the primary monospace font (box-drawing, block elements, symbols).
+/// Returns raw font bytes suitable for `fontdue::Font::from_bytes`.
+pub(crate) fn load_unicode_fallback_font_bytes() -> Option<Vec<u8>> {
+    fn query_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(family)],
+            ..fontdb::Query::default()
+        };
+        let id = db.query(&query)?;
+        db.with_face_data(id, |data, _| data.to_vec())
+    }
+
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+
+    // Ordered by Unicode coverage preference: macOS first, then Linux/Windows
+    for family in [
+        "Apple Symbols",     // macOS – broad symbol coverage, outline-based
+        "Arial Unicode MS",  // macOS/Windows – very wide Unicode range
+        "Segoe UI Symbol",   // Windows
+        "Noto Sans",         // Linux (if installed)
+        "DejaVu Sans",       // Linux fallback
+        "FreeSans",          // another Linux option
+    ] {
+        if let Some(bytes) = query_bytes(&db, family) {
+            return Some(bytes);
+        }
+    }
+
+    None
+}
+
 pub(crate) const TEXT_ATLAS_SIZE: u32 = 1024;
 
 /// Rasterizes one glyph into the atlas and returns its cached descriptor.
@@ -157,6 +295,8 @@ pub(crate) fn pack_glyph(
     }
     let dest_x = *alloc_x;
     let dest_y = *alloc_y;
+    // Convert coverage (1 byte/px) to RGBA8 (white with coverage in alpha).
+    let rgba: Vec<u8> = bitmap.iter().flat_map(|&cov| [255u8, 255, 255, cov]).collect();
     queue.write_texture(
         wgpu::ImageCopyTexture {
             texture: atlas_texture,
@@ -164,10 +304,10 @@ pub(crate) fn pack_glyph(
             origin: wgpu::Origin3d { x: dest_x, y: dest_y, z: 0 },
             aspect: wgpu::TextureAspect::All,
         },
-        bitmap,
+        &rgba,
         wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: Some(gw),
+            bytes_per_row: Some(gw * 4),
             rows_per_image: Some(gh),
         },
         wgpu::Extent3d { width: gw, height: gh, depth_or_array_layers: 1 },
@@ -183,5 +323,137 @@ pub(crate) fn pack_glyph(
     let glyph_ascent = metrics.height as f32 + metrics.ymin as f32;
     let offset_y_px = (baseline_y - glyph_ascent).max(-2.0);
     let offset_x_px = metrics.xmin as f32;
-    CachedGlyph { u0, v0, u1, v1, offset_x_px, offset_y_px, width_px: gw as f32, height_px: gh as f32 }
+    CachedGlyph {
+        u0, v0, u1, v1,
+        offset_x_px, offset_y_px,
+        width_px: gw as f32, height_px: gh as f32,
+        is_color: false,
+    }
+}
+
+/// Writes a pre-decoded RGBA8 image (e.g. a colour emoji) into the atlas.
+/// `rgba_pixels` must be exactly `glyph_w * glyph_h * 4` bytes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pack_color_glyph(
+    queue: &wgpu::Queue,
+    atlas_texture: &wgpu::Texture,
+    alloc_x: &mut u32,
+    alloc_y: &mut u32,
+    row_h: &mut u32,
+    rgba_pixels: &[u8],
+    glyph_w: u32,
+    glyph_h: u32,
+) -> CachedGlyph {
+    if glyph_w == 0 || glyph_h == 0 || rgba_pixels.is_empty() {
+        return CachedGlyph::default();
+    }
+    if *alloc_x + glyph_w + 1 > TEXT_ATLAS_SIZE {
+        *alloc_y += *row_h + 1;
+        *alloc_x = 0;
+        *row_h = 0;
+    }
+    if *alloc_y + glyph_h + 1 > TEXT_ATLAS_SIZE {
+        eprintln!("render-wgpu: glyph atlas full (colour glyph)");
+        return CachedGlyph::default();
+    }
+    let dest_x = *alloc_x;
+    let dest_y = *alloc_y;
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: atlas_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x: dest_x, y: dest_y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        rgba_pixels,
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(glyph_w * 4),
+            rows_per_image: Some(glyph_h),
+        },
+        wgpu::Extent3d { width: glyph_w, height: glyph_h, depth_or_array_layers: 1 },
+    );
+    *row_h = (*row_h).max(glyph_h);
+    *alloc_x += glyph_w + 1;
+    let af = TEXT_ATLAS_SIZE as f32;
+    let u0 = dest_x as f32 / af;
+    let v0 = dest_y as f32 / af;
+    let u1 = (dest_x + glyph_w) as f32 / af;
+    let v1 = (dest_y + glyph_h) as f32 / af;
+    CachedGlyph {
+        u0, v0, u1, v1,
+        offset_x_px: 0.0,
+        offset_y_px: 0.0,
+        width_px: glyph_w as f32,
+        height_px: glyph_h as f32,
+        is_color: true,
+    }
+}
+
+/// Tries to load the bytes of a colour emoji font from the system.
+/// On macOS this is Apple Color Emoji; on Linux Noto Color Emoji; on Windows Segoe UI Emoji.
+pub(crate) fn load_emoji_font_bytes() -> Option<Vec<u8>> {
+    fn query_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(family)],
+            ..fontdb::Query::default()
+        };
+        let id = db.query(&query)?;
+        db.with_face_data(id, |data, _| data.to_vec())
+    }
+
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+
+    for family in ["Apple Color Emoji", "Noto Color Emoji", "Segoe UI Emoji"] {
+        if let Some(bytes) = query_bytes(&db, family) {
+            return Some(bytes);
+        }
+    }
+
+    // macOS direct-path fallback in case fontdb does not index the .ttc
+    #[cfg(target_os = "macos")]
+    {
+        let paths = [
+            "/System/Library/Fonts/Apple Color Emoji.ttc",
+            "/System/Library/Fonts/Apple Color Emoji.ttf",
+        ];
+        for path in &paths {
+            if let Ok(bytes) = std::fs::read(path) {
+                return Some(bytes);
+            }
+        }
+    }
+
+    None
+}
+
+/// Extracts an emoji glyph from a colour font via the SBIX/CBDT raster image tables,
+/// decodes the embedded PNG/JPEG, scales it to `target_px × target_px`, and writes
+/// it into the atlas as RGBA8.  Returns `None` if the glyph cannot be found or decoded.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pack_emoji_glyph(
+    queue: &wgpu::Queue,
+    atlas_texture: &wgpu::Texture,
+    alloc_x: &mut u32,
+    alloc_y: &mut u32,
+    row_h: &mut u32,
+    emoji_font_bytes: &[u8],
+    ch: char,
+    target_px: u32,
+) -> Option<CachedGlyph> {
+    let face = ttf_parser::Face::parse(emoji_font_bytes, 0).ok()?;
+    let glyph_id = face.glyph_index(ch)?;
+    // Use u16::MAX to request the largest available strike; the API returns the
+    // strike whose ppem is closest to (and not below) target_px.
+    let raster = face.glyph_raster_image(glyph_id, target_px.min(u16::MAX as u32) as u16)?;
+    let img = image::load_from_memory(raster.data).ok()?;
+    // Scale to target_px (emoji are square; resize preserves aspect ratio).
+    let resized = img.resize(target_px, target_px, image::imageops::FilterType::Triangle);
+    let rgba8 = resized.to_rgba8();
+    let (w, h) = rgba8.dimensions();
+    Some(pack_color_glyph(
+        queue, atlas_texture, alloc_x, alloc_y, row_h,
+        rgba8.as_raw(), w, h,
+    ))
 }

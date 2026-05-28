@@ -5,9 +5,9 @@ use wgpu::SurfaceError;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::atlas::{load_bold_font_bytes, load_font_bytes, pack_glyph, CachedGlyph, TEXT_ATLAS_SIZE};
+use crate::atlas::{load_bold_font_bytes, load_emoji_font_bytes, load_font_bytes, load_unicode_fallback_font_bytes, pack_emoji_glyph, pack_glyph, shape_terminal_text, CachedGlyph, TEXT_ATLAS_SIZE};
 use crate::geometry::{
-    add_text_verts, build_panel_vertices, build_settings_overlay_bg_verts,
+    add_text_verts, add_text_verts_shaped, build_panel_vertices, build_settings_overlay_bg_verts,
     build_suggestion_dropdown_bg_verts, floats_as_bytes,
     SHADER_WGSL, TEXT_SHADER_WGSL, TEXT_VERTEX_BUF_CAPACITY, VERTEX_BUF_CAPACITY,
 };
@@ -36,6 +36,16 @@ pub(crate) struct GpuState<'a> {
     atlas_alloc_y: u32,
     atlas_row_h: u32,
     theme: ColorTheme,
+    /// Raw font bytes kept for rustybuzz shaping. `None` when no font was found.
+    font_data: Option<Box<[u8]>>,
+    /// Cache of glyphs rasterized by TTF glyph ID (used for ligature glyphs).
+    /// Keyed by `(glyph_id, is_bold)`.
+    shaped_glyph_cache: HashMap<(u16, bool), CachedGlyph>,
+    /// Fallback font for non-ASCII characters not covered by the primary monospace font.
+    unicode_fallback_font: Option<fontdue::Font>,
+    /// Raw bytes of a colour emoji font (Apple Color Emoji / Noto Color Emoji / Segoe UI Emoji).
+    /// Used to extract SBIX/CBDT raster images for characters fontdue cannot render.
+    emoji_font_bytes: Option<Box<[u8]>>,
 }
 
 impl<'a> GpuState<'a> {
@@ -152,7 +162,7 @@ impl<'a> GpuState<'a> {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -245,6 +255,7 @@ impl<'a> GpuState<'a> {
         // Font loading and ASCII glyph pre-rasterization
         let font_size = render_config.font.font_size;
         let font_bytes = load_font_bytes(&render_config.font);
+        let font_data: Option<Box<[u8]>> = font_bytes.as_deref().map(|b| b.to_vec().into_boxed_slice());
         let font = font_bytes.as_ref().and_then(|bytes| {
             fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
         });
@@ -267,6 +278,17 @@ impl<'a> GpuState<'a> {
                 );
                 glyph_cache.insert(ch, cached);
             }
+        }
+
+        // Unicode fallback font for non-ASCII symbols not in the primary monospace font.
+        let unicode_fallback_font = load_unicode_fallback_font_bytes().and_then(|bytes| {
+            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+        });
+
+        // Colour emoji font for characters fontdue cannot render (SBIX/CBDT bitmaps).
+        let emoji_font_bytes = load_emoji_font_bytes().map(|b| b.into_boxed_slice());
+        if emoji_font_bytes.is_none() {
+            eprintln!("render-wgpu: no colour emoji font found; emoji will not be rendered");
         }
 
         // Bold font: load and rasterize into the same atlas with a separate cache.
@@ -310,6 +332,10 @@ impl<'a> GpuState<'a> {
             atlas_alloc_y,
             atlas_row_h,
             theme: render_config.theme.clone(),
+            font_data,
+            shaped_glyph_cache: HashMap::new(),
+            unicode_fallback_font,
+            emoji_font_bytes,
         })
     }
 
@@ -325,9 +351,37 @@ impl<'a> GpuState<'a> {
         }
         self.glyph_cache.clear();
         self.bold_glyph_cache.clear();
+        self.shaped_glyph_cache.clear();
         self.atlas_alloc_x = 0;
         self.atlas_alloc_y = 0;
         self.atlas_row_h = 0;
+    }
+
+    /// Ensure a ligature glyph (identified by its TTF glyph ID) is rasterized and
+    /// stored in the shaped glyph cache.  No-op if already cached.
+    pub(crate) fn ensure_shaped_glyph(&mut self, glyph_id: u16, bold: bool) {
+        let key = (glyph_id, bold);
+        if self.shaped_glyph_cache.contains_key(&key) {
+            return;
+        }
+        let font = if bold {
+            self.bold_font.as_ref().or(self.font.as_ref())
+        } else {
+            self.font.as_ref()
+        };
+        let Some(font) = font else { return };
+        let (metrics, bitmap) = font.rasterize_indexed(glyph_id, self.font_size);
+        let cached = pack_glyph(
+            &self.queue,
+            &self.atlas_texture,
+            &mut self.atlas_alloc_x,
+            &mut self.atlas_alloc_y,
+            &mut self.atlas_row_h,
+            &metrics,
+            &bitmap,
+            self.cell_h_px,
+        );
+        self.shaped_glyph_cache.insert(key, cached);
     }
 
     pub(crate) fn ensure_glyph(&mut self, ch: char) {
@@ -338,16 +392,66 @@ impl<'a> GpuState<'a> {
             Some(f) => f,
             None => return,
         };
-        let (metrics, bitmap) = font.rasterize(ch, self.font_size);
+        let font_size = self.font_size;
+        let cell_h_px = self.cell_h_px;
+
+        // Check whether the character is actually in the primary font's cmap.
+        // fontdue::Font::rasterize returns the .notdef (tofu box) glyph for missing
+        // characters, and that glyph has non-zero metrics — so we cannot rely on
+        // `metrics.width > 0` alone to detect "font has this char".  Instead we
+        // call lookup_glyph_index which returns 0 when the char is absent.
+        let not_in_primary = ch > '\u{7E}' && font.lookup_glyph_index(ch) == 0;
+        let (metrics, bitmap) = font.rasterize(ch, font_size);
+
+        // Try Unicode symbol fallback (e.g. Apple Symbols) for non-ASCII not in primary.
+        let (final_metrics, final_bitmap, found) = if not_in_primary {
+            if let Some(ref fb) = self.unicode_fallback_font {
+                if fb.lookup_glyph_index(ch) != 0 {
+                    let (m, b) = fb.rasterize(ch, font_size);
+                    if m.width > 0 && m.height > 0 { (m, b, true) } else { (metrics, bitmap, false) }
+                } else {
+                    (metrics, bitmap, false)
+                }
+            } else {
+                (metrics, bitmap, false)
+            }
+        } else {
+            (metrics, bitmap, true)
+        };
+
+        // Last resort: colour emoji font (SBIX/CBDT) for chars not found above.
+        if !found {
+            let target_px = self.cell_h_px as u32;
+            let emoji_result = if let Some(bytes) = self.emoji_font_bytes.as_deref() {
+                pack_emoji_glyph(
+                    &self.queue,
+                    &self.atlas_texture,
+                    &mut self.atlas_alloc_x,
+                    &mut self.atlas_alloc_y,
+                    &mut self.atlas_row_h,
+                    bytes,
+                    ch,
+                    target_px,
+                )
+            } else {
+                None
+            };
+            if let Some(cached) = emoji_result {
+                self.glyph_cache.insert(ch, cached);
+                self.font = Some(font);
+                return;
+            }
+        }
+
         let cached = pack_glyph(
             &self.queue,
             &self.atlas_texture,
             &mut self.atlas_alloc_x,
             &mut self.atlas_alloc_y,
             &mut self.atlas_row_h,
-            &metrics,
-            &bitmap,
-            self.cell_h_px,
+            &final_metrics,
+            &final_bitmap,
+            cell_h_px,
         );
         self.glyph_cache.insert(ch, cached);
         self.font = Some(font);
@@ -469,10 +573,44 @@ impl<'a> GpuState<'a> {
 
         let mut text_verts: Vec<f32> = Vec::new();
 
-        add_text_verts(&snapshot.terminal_text, term_top_px + pad_v, pad_h, self.theme.text,
-            &snapshot.terminal_fg_colors, &snapshot.terminal_styles,
-            &self.glyph_cache, Some(&self.bold_glyph_cache),
-            self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
+        // Shape terminal text for ligature rendering when font data is available.
+        // Falls back to character-by-character rendering when shaping is unavailable.
+        let shaped_terminal = self
+            .font_data
+            .as_deref()
+            .and_then(|fd| shape_terminal_text(fd, &snapshot.terminal_text, self.font_size));
+
+        // Pre-rasterize any ligature glyphs (span_cols > 1) into the shaped glyph cache.
+        if let Some(ref shaped) = shaped_terminal {
+            for shaped_line in shaped {
+                for sg in shaped_line {
+                    if sg.span_cols > 1 {
+                        let is_bold = snapshot
+                            .terminal_styles
+                            .get(sg.full_char_idx)
+                            .copied()
+                            .unwrap_or(0)
+                            & 0b001
+                            != 0;
+                        self.ensure_shaped_glyph(sg.glyph_id, is_bold);
+                    }
+                }
+            }
+        }
+
+        if let Some(ref shaped) = shaped_terminal {
+            add_text_verts_shaped(
+                term_top_px + pad_v, pad_h, self.theme.text,
+                &snapshot.terminal_fg_colors, &snapshot.terminal_styles,
+                shaped, &self.shaped_glyph_cache, &self.glyph_cache, Some(&self.bold_glyph_cache),
+                self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0,
+            );
+        } else {
+            add_text_verts(&snapshot.terminal_text, term_top_px + pad_v, pad_h, self.theme.text,
+                &snapshot.terminal_fg_colors, &snapshot.terminal_styles,
+                &self.glyph_cache, Some(&self.bold_glyph_cache),
+                self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
+        }
 
         if let Some(ref overlay_text) = snapshot.resize_overlay {
             let n_chars = overlay_text.chars().count() as f32;

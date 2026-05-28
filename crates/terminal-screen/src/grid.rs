@@ -1,3 +1,5 @@
+use unicode_width::UnicodeWidthChar as _;
+
 use crate::cell::Cell;
 
 #[derive(Debug, Clone)]
@@ -31,11 +33,20 @@ impl Grid {
             return;
         }
 
+        // Unicode display width: 2 for emoji and CJK wide chars, 1 for everything else.
+        let char_width = ch.width().unwrap_or(1).max(1);
+
         let idx = self.cursor_row * self.cols + self.cursor_col;
         self.cells[idx] = Cell { ch, style };
         self.pending_wrap = false;
 
-        self.cursor_col += 1;
+        // For wide characters (display width 2) fill the trailing cell with a
+        // null placeholder so the renderer skips it without advancing columns.
+        if char_width == 2 && self.cursor_col + 1 < self.cols {
+            self.cells[idx + 1] = Cell { ch: '\0', style: crate::cell::CellStyle::default() };
+        }
+
+        self.cursor_col += char_width;
         if self.cursor_col >= self.cols {
             self.cursor_col = self.cols - 1;
             self.pending_wrap = true;

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use winit::dpi::PhysicalPosition;
 use winit::dpi::PhysicalSize;
 
-use crate::atlas::CachedGlyph;
+use crate::atlas::{CachedGlyph, ShapedGlyph};
 use crate::batch::CellQuad;
 use crate::types::{DamageRegion, PaneLayout, RenderSnapshot};
 
@@ -59,8 +59,14 @@ fn vs_text(v: TextVertIn) -> TextVertOut {
 }
 @fragment
 fn fs_text(in: TextVertOut) -> @location(0) vec4<f32> {
-    let alpha = textureSample(t_atlas, s_atlas, in.uv).r;
-    return vec4<f32>(in.color.rgb, in.color.a * alpha);
+    let sampled = textureSample(t_atlas, s_atlas, in.uv);
+    // Colour glyphs (emoji) use a sentinel alpha > 1.5 in the vertex colour.
+    // For those, the atlas stores full RGBA, so return the texture directly.
+    if in.color.a > 1.5 {
+        return sampled;
+    }
+    // Monochrome text: coverage is in the alpha channel; tint with fg colour.
+    return vec4<f32>(in.color.rgb, in.color.a * sampled.a);
 }
 "#;
 
@@ -68,6 +74,27 @@ fn fs_text(in: TextVertOut) -> @location(0) vec4<f32> {
 /// `f32` has no invalid bit patterns.
 pub(crate) fn floats_as_bytes(v: &[f32]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 4) }
+}
+
+/// Returns the number of terminal columns a character visually occupies.
+/// Colour emoji and other East-Asian-wide characters return 2; all others return 1.
+/// This must stay consistent with the `is_color` / `width_px` logic in the glyph
+/// renderer so that cursor positions and decorations line up with the rendered glyphs.
+#[inline]
+fn char_col_width(ch: char) -> usize {
+    let cp = ch as u32;
+    if matches!(cp,
+        0x1100..=0x115F   // Hangul Jamo
+        | 0x2E80..=0x303E // CJK Radicals + Symbols
+        | 0x3041..=0x33FF // Japanese, Korean
+        | 0x3400..=0x9FFF // CJK Unified Ideographs
+        | 0xAC00..=0xD7FF // Hangul Syllables
+        | 0xF900..=0xFAFF // CJK Compatibility
+        | 0xFE30..=0xFE6F // CJK Compatibility Forms
+        | 0xFF01..=0xFF60 // Fullwidth ASCII variants
+        | 0xFFE0..=0xFFE6 // Fullwidth Signs
+        | 0x1F000..=0x1FAFF // Emoji (main blocks)
+    ) { 2 } else { 1 }
 }
 
 pub(crate) fn quad_verts(x0: f32, y_bottom: f32, x1: f32, y_top: f32, color: [f32; 4]) -> [f32; 36] {
@@ -232,14 +259,15 @@ pub(crate) fn build_panel_vertices(
                 continue;
             }
             if let Some(Some([r, g, b])) = snapshot.terminal_bg_colors.get(char_idx) {
+                let w = char_col_width(ch);
                 let x0 = (pad_h + col as f32 * cell_w_px) * px_x - 1.0;
-                let x1 = (pad_h + (col + 1) as f32 * cell_w_px) * px_x - 1.0;
+                let x1 = (pad_h + (col + w) as f32 * cell_w_px) * px_x - 1.0;
                 let y1 = 1.0 - (pane_top_px + pad_v + row as f32 * cell_h_px) * px_y;
                 let y0 = 1.0 - (pane_top_px + pad_v + (row + 1) as f32 * cell_h_px) * px_y;
                 verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, [*r, *g, *b, 1.0]));
             }
             char_idx += 1;
-            col += 1;
+            col += char_col_width(ch);
         }
     }
 
@@ -266,15 +294,16 @@ pub(crate) fn build_panel_vertices(
                     .copied().flatten()
                     .map(|[r, g, b]| [r, g, b, 1.0_f32])
                     .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                let w = char_col_width(ch);
                 let x0 = (pad_h + col as f32 * cell_w_px) * px_x - 1.0;
-                let x1 = (pad_h + (col + 1) as f32 * cell_w_px) * px_x - 1.0;
+                let x1 = (pad_h + (col + w) as f32 * cell_w_px) * px_x - 1.0;
                 let strike_y_px = pane_top_px + pad_v + row as f32 * cell_h_px + cell_h_px * 0.50;
                 let y_top_ndc = 1.0 - (strike_y_px - 1.0) * px_y;
                 let y_bot_ndc = 1.0 - (strike_y_px + 1.0) * px_y;
                 verts.extend_from_slice(&quad_verts(x0, y_bot_ndc, x1, y_top_ndc, fg_color));
             }
             char_idx += 1;
-            col += 1;
+            col += char_col_width(ch);
         }
     }
 
@@ -323,8 +352,10 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
-    // Terminal cursor — hidden during the blink-off phase.
+    // Terminal cursor — visible only in fullscreen (alternate-screen) mode, and
+    // only during the blink-on phase.
     if snapshot.cursor_blink_on
+        && snapshot.terminal_fullscreen
         && size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
         let px_x = 2.0 / size.width as f32;
         let px_y = 2.0 / size.height as f32;
@@ -445,13 +476,14 @@ pub(crate) fn build_panel_vertices(
             let px_x = 2.0 / size.width as f32;
             let px_y = 2.0 / size.height as f32;
             // Convert a byte offset in editor_text to a (row, visual_col) pair.
+            // Wide characters (emoji, CJK) count as 2 columns.
             let to_visual = |offset: usize| -> (usize, usize) {
                 let clamped = offset.min(snapshot.editor_text.len());
                 let before = &snapshot.editor_text[..clamped];
                 let row = before.chars().filter(|&c| c == '\n').count();
-                let col_in_text = match before.rfind('\n') {
-                    Some(pos) => before[pos + 1..].chars().count(),
-                    None => before.chars().count(),
+                let col_in_text: usize = match before.rfind('\n') {
+                    Some(pos) => before[pos + 1..].chars().map(char_col_width).sum(),
+                    None => before.chars().map(char_col_width).sum(),
                 };
                 (row, col_in_text + if row == 0 { EDITOR_PREFIX_COLS } else { 0 })
             };
@@ -474,18 +506,22 @@ pub(crate) fn build_panel_vertices(
             }
     }
 
-    verts.extend_from_slice(&editor_caret_verts(
-        &snapshot.editor_text,
-        snapshot.editor_cursor_offset,
-        edit_top_px,
-        cell_w_px,
-        cell_h_px,
-        size,
-        theme.cursor,
-        editor_scroll,
-        pad_h,
-        pad_v,
-    ));
+    // Editor caret — blinks in non-fullscreen mode (same phase as the terminal
+    // cursor, so only one cursor is ever visible at a time).
+    if snapshot.cursor_blink_on {
+        verts.extend_from_slice(&editor_caret_verts(
+            &snapshot.editor_text,
+            snapshot.editor_cursor_offset,
+            edit_top_px,
+            cell_w_px,
+            cell_h_px,
+            size,
+            theme.cursor,
+            editor_scroll,
+            pad_h,
+            pad_v,
+        ));
+    }
 
     verts
 }
@@ -781,9 +817,10 @@ pub(crate) fn editor_caret_verts(
         return [0.0; 36];
     }
     let visible_row = row - scroll_offset;
-    let col_in_editor = match before.rfind('\n') {
-        Some(pos) => before[pos + 1..].chars().count(),
-        None => before.chars().count(),
+    // Wide characters (emoji, CJK) each occupy 2 visual columns.
+    let col_in_editor: usize = match before.rfind('\n') {
+        Some(pos) => before[pos + 1..].chars().map(char_col_width).sum(),
+        None => before.chars().map(char_col_width).sum(),
     };
     let col = col_in_editor + if row == 0 { EDITOR_PREFIX_COLS } else { 0 };
     let px_x = 2.0 / win_w;
@@ -833,6 +870,11 @@ pub(crate) fn add_text_verts(
             col = 0;
             continue;
         }
+        // Wide-character trail marker placed by Grid::put_char — skip without
+        // advancing the column counter so subsequent chars land at the right position.
+        if ch == '\0' {
+            continue;
+        }
         if row < skip_rows {
             col += 1;
             continue;
@@ -851,6 +893,8 @@ pub(crate) fn add_text_verts(
         } else {
             glyph_cache.get(&ch)
         };
+        // Wide (colour) glyphs occupy 2 terminal columns; track how many columns to advance.
+        let mut advance_cols = 1usize;
         if let Some(glyph) = cache
             && glyph.width_px > 0.0 && glyph.height_px > 0.0 {
                 let gx0 = x_start_px + col as f32 * cell_w_px + glyph.offset_x_px;
@@ -863,14 +907,112 @@ pub(crate) fn add_text_verts(
                 // Italic: shear the top of each glyph forward (to the right) by 20% of the
                 // cell height, giving a forward lean without loading a separate italic font.
                 let lean = if is_italic { cell_h_px * 0.20 * px_x } else { 0.0 };
-                verts.extend_from_slice(&[x0 + lean, y1, u0, v0, r, g, b, a]);
-                verts.extend_from_slice(&[x1 + lean, y1, u1, v0, r, g, b, a]);
-                verts.extend_from_slice(&[x1,        y0, u1, v1, r, g, b, a]);
-                verts.extend_from_slice(&[x0 + lean, y1, u0, v0, r, g, b, a]);
-                verts.extend_from_slice(&[x1,        y0, u1, v1, r, g, b, a]);
-                verts.extend_from_slice(&[x0,        y0, u0, v1, r, g, b, a]);
+                // Use sentinel alpha=2.0 for colour (emoji) glyphs so the shader
+                // can distinguish them from regular coverage-alpha text glyphs.
+                let va = if glyph.is_color { 2.0_f32 } else { a };
+                verts.extend_from_slice(&[x0 + lean, y1, u0, v0, r, g, b, va]);
+                verts.extend_from_slice(&[x1 + lean, y1, u1, v0, r, g, b, va]);
+                verts.extend_from_slice(&[x1,        y0, u1, v1, r, g, b, va]);
+                verts.extend_from_slice(&[x0 + lean, y1, u0, v0, r, g, b, va]);
+                verts.extend_from_slice(&[x1,        y0, u1, v1, r, g, b, va]);
+                verts.extend_from_slice(&[x0,        y0, u0, v1, r, g, b, va]);
+                // Colour (emoji) glyphs span ~2 monospace columns; advance accordingly.
+                if glyph.is_color {
+                    advance_cols = ((glyph.width_px / cell_w_px).round() as usize).max(1);
+                }
             }
-        col += 1;
+        col += advance_cols;
+    }
+}
+
+/// Render terminal text using pre-shaped glyph data from rustybuzz.
+///
+/// Ligature glyphs (`span_cols > 1`) are looked up by glyph ID in `shaped_cache`.
+/// Regular glyphs (`span_cols == 1`) fall back to the regular character cache to
+/// avoid duplicating atlas space.
+///
+/// `shaped_lines` must have one entry per `\n`-separated line in the text.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_text_verts_shaped(
+    pane_top_px: f32,
+    x_start_px: f32,
+    default_color: [f32; 4],
+    fg_colors: &[Option<[f32; 3]>],
+    // Per-character style bits: bit 0 = bold, bit 1 = italic, bit 2 = strikethrough.
+    styles: &[u8],
+    shaped_lines: &[Vec<ShapedGlyph>],
+    shaped_cache: &HashMap<(u16, bool), CachedGlyph>,
+    glyph_cache: &HashMap<char, CachedGlyph>,
+    bold_glyph_cache: Option<&HashMap<char, CachedGlyph>>,
+    cell_w_px: f32,
+    cell_h_px: f32,
+    window_size: PhysicalSize<u32>,
+    verts: &mut Vec<f32>,
+    skip_rows: usize,
+) {
+    let win_w = window_size.width as f32;
+    let win_h = window_size.height as f32;
+    if win_w == 0.0 || win_h == 0.0 {
+        return;
+    }
+    let px_x = 2.0 / win_w;
+    let px_y = 2.0 / win_h;
+
+    for (line_idx, shaped_line) in shaped_lines.iter().enumerate() {
+        if line_idx < skip_rows {
+            continue;
+        }
+        let visible_row = line_idx - skip_rows;
+        for sg in shaped_line {
+            let char_idx = sg.full_char_idx;
+            let [r, g, b, a] = match fg_colors.get(char_idx).copied().flatten() {
+                Some([cr, cg, cb]) => [cr, cg, cb, default_color[3]],
+                None => default_color,
+            };
+            let style = styles.get(char_idx).copied().unwrap_or(0);
+            let is_bold   = style & 0b001 != 0;
+            let is_italic = style & 0b010 != 0;
+
+            // For regular (non-ligature) glyphs use the char cache to avoid atlas waste.
+            // For ligature glyphs (span_cols > 1) use the shaped-glyph-ID cache.
+            let glyph = if sg.span_cols == 1 {
+                if is_bold {
+                    bold_glyph_cache
+                        .and_then(|bc| bc.get(&sg.source_char))
+                        .or_else(|| glyph_cache.get(&sg.source_char))
+                } else {
+                    glyph_cache.get(&sg.source_char)
+                }
+            } else {
+                shaped_cache
+                    .get(&(sg.glyph_id, is_bold))
+                    .or_else(|| shaped_cache.get(&(sg.glyph_id, false)))
+            };
+
+            let Some(glyph) = glyph else { continue };
+            if glyph.width_px == 0.0 || glyph.height_px == 0.0 {
+                continue;
+            }
+
+            let gx0 = x_start_px + sg.col as f32 * cell_w_px + glyph.offset_x_px + sg.x_offset_px;
+            let gy0 = pane_top_px + visible_row as f32 * cell_h_px + glyph.offset_y_px - sg.y_offset_px;
+            let x0 = gx0 * px_x - 1.0;
+            let x1 = (gx0 + glyph.width_px) * px_x - 1.0;
+            let y1 = 1.0 - gy0 * px_y;
+            let y0 = 1.0 - (gy0 + glyph.height_px) * px_y;
+            let (u0, v0, u1, v1) = (glyph.u0, glyph.v0, glyph.u1, glyph.v1);
+
+            let lean = if is_italic { cell_h_px * 0.20 * px_x } else { 0.0 };
+            let va = if glyph.is_color { 2.0_f32 } else { a };
+
+            verts.extend_from_slice(&[x0 + lean, y1, u0, v0, r, g, b, va]);
+            verts.extend_from_slice(&[x1 + lean, y1, u1, v0, r, g, b, va]);
+            verts.extend_from_slice(&[x1,        y0, u1, v1, r, g, b, va]);
+            verts.extend_from_slice(&[x0 + lean, y1, u0, v0, r, g, b, va]);
+            verts.extend_from_slice(&[x1,        y0, u1, v1, r, g, b, va]);
+            verts.extend_from_slice(&[x0,        y0, u0, v1, r, g, b, va]);
+
+        }
     }
 }
 
@@ -901,7 +1043,7 @@ pub fn snapshot_to_cell_quads_in_bounds(
         }
 
         for (col, ch) in line.chars().enumerate() {
-            if ch == ' ' {
+            if ch == ' ' || ch == '\0' {
                 continue;
             }
 
