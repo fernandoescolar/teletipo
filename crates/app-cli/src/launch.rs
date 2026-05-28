@@ -288,6 +288,7 @@ pub(crate) fn build_initial_state(
         update_rx: Some(update_rx),
         pending_update: None,
         settings: crate::SettingsUiState::default(),
+        should_exit: false,
     };
 
     state.active_theme_idx = state

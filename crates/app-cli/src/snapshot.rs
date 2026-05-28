@@ -264,6 +264,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         },
         editor_suggestion,
         terminal_links,
+        request_exit: state.should_exit,
         suggestion_dropdown: {
             if let Some(idx) = state.tabs[active].suggestion_index {
                 let prefix = state.tabs[active]

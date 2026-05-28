@@ -99,6 +99,8 @@ struct GpuRuntimeState {
     pending_update: Option<String>,
     /// Settings overlay interaction state.
     settings: SettingsUiState,
+    /// Set to `true` when the last shell session ends so the window closes.
+    should_exit: bool,
 }
 
 impl GpuRuntimeState {
@@ -119,12 +121,25 @@ impl GpuRuntimeState {
     fn pump_all_ptys(&mut self) -> bool {
         let mut active_had_data = false;
         let active = self.active_tab;
+        let mut dead_tabs: Vec<usize> = Vec::new();
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             let Some(mut pty) = tab.pty.take() else { continue };
             let had_data = tab.app.pump_pty_once(&mut pty).map(|n| n > 0).unwrap_or(false);
+            let is_dead = pty.try_wait().ok().flatten().is_some();
             tab.pty = Some(pty);
             if i == active && had_data {
                 active_had_data = true;
+            }
+            if is_dead {
+                dead_tabs.push(i);
+            }
+        }
+        // Close tabs whose shell exited; if it is the last tab, quit the app.
+        for &idx in dead_tabs.iter().rev() {
+            if self.tabs.len() == 1 {
+                self.should_exit = true;
+            } else {
+                self.close_tab(idx);
             }
         }
         active_had_data

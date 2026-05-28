@@ -65,6 +65,8 @@ pub struct RenderSnapshot {
     /// File paths and URLs detected in the terminal output.  Populated only
     /// when the Cmd key is held so the renderer can draw link underlines.
     pub terminal_links: Vec<TerminalLink>,
+    /// When `true` the event loop should exit (e.g. last shell session ended).
+    pub request_exit: bool,
 }
 
 /// Visual state for the suggestion cycling dropdown shown above the editor.

@@ -237,6 +237,10 @@ where
                 }
                 WindowEvent::RedrawRequested => {
                     let snapshot = next_snapshot();
+                    if snapshot.request_exit {
+                        target.exit();
+                        return;
+                    }
                     #[cfg(target_os = "macos")]
                     if snapshot.theme.terminal_bg != last_titlebar_bg {
                         last_titlebar_bg = snapshot.theme.terminal_bg;
