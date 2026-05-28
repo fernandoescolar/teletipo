@@ -7,6 +7,7 @@ use crate::error::TerminalError;
 pub struct TerminalSession {
     parser: Parser,
     screen: Screen,
+    last_exit_code: Option<i32>,
 }
 
 impl TerminalSession {
@@ -18,6 +19,7 @@ impl TerminalSession {
         Ok(Self {
             parser: Parser::new(),
             screen: Screen::new(rows, cols),
+            last_exit_code: None,
         })
     }
 
@@ -53,6 +55,13 @@ impl TerminalSession {
                 Action::DecPrivateModeReset(mode) => {
                     if mode == 1049 {
                         self.screen.set_alternate_screen(false);
+                    }
+                }
+                Action::Osc(s) => {
+                    // OSC 133;D;N — shell integration exit-code report.
+                    if let Some(rest) = s.strip_prefix("133;D;")
+                        && let Ok(code) = rest.parse::<i32>() {
+                        self.last_exit_code = Some(code);
                     }
                 }
             }
@@ -109,6 +118,12 @@ impl TerminalSession {
 
     pub fn take_damage(&mut self) -> DamageRegion {
         self.screen.take_damage()
+    }
+
+    /// Consumes and returns the exit code reported by the most recent OSC 133;D
+    /// shell-integration sequence, or `None` if no new code has arrived.
+    pub fn take_last_exit_code(&mut self) -> Option<i32> {
+        self.last_exit_code.take()
     }
 }
 

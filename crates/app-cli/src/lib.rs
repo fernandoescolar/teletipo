@@ -122,6 +122,7 @@ impl GpuRuntimeState {
         let mut active_had_data = false;
         let active = self.active_tab;
         let mut dead_tabs: Vec<usize> = Vec::new();
+        let mut exit_codes: Vec<(usize, i32)> = Vec::new();
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             let Some(mut pty) = tab.pty.take() else { continue };
             let had_data = tab.app.pump_pty_once(&mut pty).map(|n| n > 0).unwrap_or(false);
@@ -130,8 +131,19 @@ impl GpuRuntimeState {
             if i == active && had_data {
                 active_had_data = true;
             }
+            if let Some(code) = tab.app.take_last_exit_code() {
+                exit_codes.push((i, code));
+            }
             if is_dead {
                 dead_tabs.push(i);
+            }
+        }
+        // Commit or discard pending commands based on shell-reported exit codes.
+        for (idx, code) in exit_codes {
+            if code == 0 {
+                self.commit_pending_cmd(idx);
+            } else {
+                self.tabs[idx].pending_cmd = None;
             }
         }
         // Close tabs whose shell exited; if it is the last tab, quit the app.
@@ -153,37 +165,68 @@ impl GpuRuntimeState {
         tab.pty = Some(pty);
     }
 
+    /// Commit `pending_cmd` (if any) for `tab_idx` to history.
+    /// Called when the shell reports exit code 0 via OSC 133.
+    fn commit_pending_cmd(&mut self, tab_idx: usize) {
+        let tab = &mut self.tabs[tab_idx];
+        let Some(text) = tab.pending_cmd.take() else { return };
+        if text.is_empty() { return; }
+        // Deduplicate.
+        tab.history.retain(|e| e.trim() != text.as_str());
+        // Upsert frecency entry.
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let entry_idx = tab.history_entries.iter().position(|e| e.cmd.trim() == text.as_str());
+        if let Some(idx) = entry_idx {
+            tab.history_entries[idx].count += 1;
+            tab.history_entries[idx].last_used_secs = now_secs;
+        } else {
+            tab.history_entries.push(tab::HistoryEntry {
+                cmd: text.clone(),
+                count: 1,
+                last_used_secs: now_secs,
+            });
+        }
+        tab.history.push(text);
+    }
+
     fn run_editor_command(&mut self) {
         let active = self.active_tab;
         let tab = &mut self.tabs[active];
         let text = tab.app.editor_snapshot();
+        let text = text.trim().to_string();
         if !text.is_empty() {
-            // Deduplicate: remove earlier occurrences of the same command so the
-            // most-recently-used entry always sits at the end (highest recency).
-            tab.history.retain(|e| e != &text);
-            // Upsert frecency entry.
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let entry_idx = tab.history_entries.iter().position(|e| e.cmd == text);
-            if let Some(idx) = entry_idx {
-                tab.history_entries[idx].count += 1;
-                tab.history_entries[idx].last_used_secs = now_secs;
+            if tab.shell_integration {
+                // Defer: save to history only after the shell reports exit code 0.
+                tab.pending_cmd = Some(text);
             } else {
-                tab.history_entries.push(tab::HistoryEntry {
-                    cmd: text.clone(),
-                    count: 1,
-                    last_used_secs: now_secs,
-                });
+                // No integration – save immediately (original behaviour).
+                tab.history.retain(|e| e.trim() != text.as_str());
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let entry_idx = tab.history_entries.iter().position(|e| e.cmd.trim() == text.as_str());
+                if let Some(idx) = entry_idx {
+                    tab.history_entries[idx].count += 1;
+                    tab.history_entries[idx].last_used_secs = now_secs;
+                } else {
+                    tab.history_entries.push(tab::HistoryEntry {
+                        cmd: text.clone(),
+                        count: 1,
+                        last_used_secs: now_secs,
+                    });
+                }
+                tab.history.push(text);
             }
-            tab.history.push(text);
-            tab.history_index = None;
-            tab.saved_input = String::new();
-            // End any active Tab cycling.
-            tab.suggestion_prefix = None;
-            tab.suggestion_index = None;
         }
+        // Always reset navigation state regardless of integration mode.
+        tab.history_index = None;
+        tab.saved_input = String::new();
+        tab.suggestion_prefix = None;
+        tab.suggestion_index = None;
         let Some(mut pty) = tab.pty.take() else { return };
         let _ = tab.app.run_editor_command(&mut pty, false);
         tab.pty = Some(pty);
@@ -265,7 +308,9 @@ impl GpuRuntimeState {
         let rows = (term_h / self.cell_h).max(1.0) as u16;
         let app = App::new(rows as usize, cols as usize).expect("valid size");
         let active_cwd = self.tab().cwd.clone();
-        let pty = spawn_pty(&self.shell, rows, cols, None, Some(&active_cwd)).ok();
+        let (pty, integration) = spawn_pty(&self.shell, rows, cols, None, Some(&active_cwd))
+            .map(|(p, i)| (Some(p), i))
+            .unwrap_or((None, false));
         self.tabs.push(TabState {
             app,
             pty,
@@ -289,6 +334,8 @@ impl GpuRuntimeState {
             suggestion_prefix: None,
             suggestion_index: None,
             history_entries: vec![],
+            pending_cmd: None,
+            shell_integration: integration,
         });
         self.active_tab = self.tabs.len() - 1;
     }
@@ -1020,6 +1067,10 @@ pub(crate) fn suggestion_matches_tiered(
     if prefix.is_empty() {
         return (Vec::new(), Vec::new(), Vec::new());
     }
+    // Normalize: trim every entry so commands stored with accidental leading/
+    // trailing spaces still match a trimmed prefix.
+    let normalized: Vec<String> = history.iter().map(|e| e.trim().to_string()).collect();
+    let history: &[String] = &normalized;
     let lower = prefix.to_lowercase();
 
     // ── Tier 1: full prefix match ──────────────────────────────────────────

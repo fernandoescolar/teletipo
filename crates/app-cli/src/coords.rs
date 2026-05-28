@@ -219,7 +219,17 @@ pub(crate) fn extract_selection(
 pub(crate) fn current_line_prefix(text: &str, cursor: usize) -> &str {
     let cursor = cursor.min(text.len());
     let line_start = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    &text[line_start..cursor]
+    text[line_start..cursor].trim()
+}
+
+/// Returns the leading whitespace of the line containing `cursor`.
+/// Used when confirming a suggestion so that indentation is preserved.
+pub(crate) fn line_leading_spaces(text: &str, cursor: usize) -> &str {
+    let cursor = cursor.min(text.len());
+    let line_start = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let raw = &text[line_start..cursor];
+    let trimmed = raw.trim_start();
+    &raw[..raw.len() - trimmed.len()]
 }
 
 /// Returns `true` when `cursor` sits at the end of its line — i.e. the next

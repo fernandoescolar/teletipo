@@ -22,4 +22,7 @@ pub enum Action {
     SetGraphicsRendition(Vec<u16>),
     DecPrivateModeSet(u16),
     DecPrivateModeReset(u16),
+    /// Raw OSC (Operating System Command) sequence payload, e.g. "133;D;0"
+    /// for shell integration exit-code reporting.
+    Osc(String),
 }

@@ -25,6 +25,7 @@ enum ParserState {
 pub struct Parser {
     state: ParserState,
     csi_buf: Vec<u8>,
+    osc_buf: Vec<u8>,
     osc_esc_seen: bool,
     /// Partial UTF-8 sequence accumulator (up to 4 bytes).
     utf8_buf: [u8; 4],
@@ -37,6 +38,7 @@ impl Parser {
         Self {
             state: ParserState::Ground,
             csi_buf: Vec::with_capacity(64),
+            osc_buf: Vec::with_capacity(64),
             osc_esc_seen: false,
             utf8_buf: [0u8; 4],
             utf8_len: 0,
@@ -96,6 +98,7 @@ impl Parser {
                 }
                 b']' => {
                     self.osc_esc_seen = false;
+                    self.osc_buf.clear();
                     self.state = ParserState::Osc;
                 }
                 b'7' => {
@@ -121,10 +124,16 @@ impl Parser {
             }
             ParserState::Osc => {
                 if byte == 0x07 || (self.osc_esc_seen && byte == b'\\') {
-                    self.state = ParserState::Ground;
+                    let payload = String::from_utf8_lossy(&self.osc_buf).into_owned();
+                    actions.push(Action::Osc(payload));
+                    self.osc_buf.clear();
                     self.osc_esc_seen = false;
+                    self.state = ParserState::Ground;
+                } else if byte == 0x1b {
+                    self.osc_esc_seen = true;
                 } else {
-                    self.osc_esc_seen = byte == 0x1b;
+                    self.osc_esc_seen = false;
+                    self.osc_buf.push(byte);
                 }
             }
         }

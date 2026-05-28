@@ -1,4 +1,4 @@
-use crate::coords::{clamp_editor_scroll, current_line_prefix, cursor_at_line_end, editor_cursor_row_col, editor_row_col_to_offset, extract_selection, replace_cursor_line};
+use crate::coords::{clamp_editor_scroll, current_line_prefix, cursor_at_line_end, editor_cursor_row_col, editor_row_col_to_offset, extract_selection, line_leading_spaces, replace_cursor_line};
 use crate::settings;
 use crate::GpuRuntimeState;
 use arboard::Clipboard;
@@ -93,7 +93,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 if let Some(full) = matches.get(idx).cloned() {
                     let editor_text = state.tab().app.editor_snapshot();
                     let cursor = state.tab().app.editor_cursor_offset();
-                    let (new_text, new_cursor) = replace_cursor_line(&editor_text, cursor, &full);
+                    let indent = line_leading_spaces(&editor_text, cursor).to_owned();
+                    let full_indented = format!("{indent}{full}");
+                    let (new_text, new_cursor) = replace_cursor_line(&editor_text, cursor, &full_indented);
                     state.tab_mut().app.editor_clear();
                     state.tab_mut().app.insert_editor_input(&new_text);
                     state.tab_mut().app.set_editor_cursor(new_cursor, false);
@@ -269,7 +271,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 if let Some(full) = matches.get(idx).cloned() {
                     let editor_text = state.tab().app.editor_snapshot();
                     let cursor = state.tab().app.editor_cursor_offset();
-                    let (new_text, new_cursor) = replace_cursor_line(&editor_text, cursor, &full);
+                    let indent = line_leading_spaces(&editor_text, cursor).to_owned();
+                    let full_indented = format!("{indent}{full}");
+                    let (new_text, new_cursor) = replace_cursor_line(&editor_text, cursor, &full_indented);
                     state.tab_mut().app.editor_clear();
                     state.tab_mut().app.insert_editor_input(&new_text);
                     state.tab_mut().app.set_editor_cursor(new_cursor, false);

@@ -51,6 +51,13 @@ pub(crate) struct TabState {
     pub(crate) suggestion_index: Option<usize>,
     /// Per-command frecency metadata (parallel lookup table, not ordered).
     pub(crate) history_entries: Vec<HistoryEntry>,
+    /// Command that has been sent to the PTY but whose exit code has not yet
+    /// been received.  `None` when no command is in-flight or when shell
+    /// integration is inactive.
+    pub(crate) pending_cmd: Option<String>,
+    /// `true` when the shell was spawned with OSC 133 exit-code integration.
+    /// When `false`, commands are saved to history immediately on Enter.
+    pub(crate) shell_integration: bool,
 }
 
 /// Persistent state for a single tab.

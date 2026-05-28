@@ -170,6 +170,12 @@ impl App {
     pub fn editor_snapshot(&self) -> String {
         self.editor.text().to_string()
     }
+
+    /// Consumes and returns the exit code from the most recent OSC 133;D shell
+    /// integration sequence, or `None` if no new report has arrived.
+    pub fn take_last_exit_code(&mut self) -> Option<i32> {
+        self.terminal.take_last_exit_code()
+    }
 }
 
 #[cfg(test)]

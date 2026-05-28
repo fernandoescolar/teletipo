@@ -86,22 +86,25 @@ pub(crate) fn spawn_pty(
     cols: u16,
     exec: Option<&str>,
     cwd: Option<&str>,
-) -> anyhow::Result<PortablePtySession> {
+) -> anyhow::Result<(PortablePtySession, bool)> {
     match exec {
         Some(cmd) => {
+            // --exec mode: no shell integration (single-shot command).
             #[cfg(target_os = "windows")]
             {
-                PortablePtySession::spawn_command(
+                let pty = PortablePtySession::spawn_command(
                     "powershell.exe",
                     &["-NoProfile", "-Command", cmd],
                     rows,
                     cols,
                     cwd,
-                )
+                )?;
+                Ok((pty, false))
             }
             #[cfg(not(target_os = "windows"))]
             {
-                PortablePtySession::spawn_command(shell, &["-lc", cmd], rows, cols, cwd)
+                let pty = PortablePtySession::spawn_command(shell, &["-lc", cmd], rows, cols, cwd)?;
+                Ok((pty, false))
             }
         }
         None => PortablePtySession::spawn_shell(shell, rows, cols, cwd),
@@ -208,16 +211,18 @@ pub(crate) fn build_initial_state(
         } else {
             Some(initial_cwd.as_str())
         };
-        let pty = if i == 0 {
+        let (pty, integration) = if i == 0 {
             match spawn_pty(shell, rows as u16, cols as u16, exec, restore_cwd) {
-                Ok(p) => Some(p),
+                Ok((p, integ)) => (Some(p), integ),
                 Err(err) => {
                     app.feed_terminal(format!("PTY unavailable: {err}\n").as_bytes());
-                    None
+                    (None, false)
                 }
             }
         } else {
-            spawn_pty(shell, rows as u16, cols as u16, None, restore_cwd).ok()
+            spawn_pty(shell, rows as u16, cols as u16, None, restore_cwd)
+                .map(|(p, integ)| (Some(p), integ))
+                .unwrap_or((None, false))
         };
         tabs.push(TabState {
             app,
@@ -250,6 +255,8 @@ pub(crate) fn build_initial_state(
             } else {
                 saved.history_entries.clone()
             },
+            pending_cmd: None,
+            shell_integration: integration,
         });
     }
 
