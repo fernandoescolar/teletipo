@@ -3785,6 +3785,7 @@ dependencies = [
  "platform-abstraction",
  "render-wgpu",
  "terminal-pty",
+ "winit",
 ]
 
 [[package]]

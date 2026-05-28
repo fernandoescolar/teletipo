@@ -8,3 +8,4 @@ app-orchestrator = { path = "../app-orchestrator" }
 render-wgpu = { path = "../render-wgpu" }
 platform-abstraction = { path = "../platform-abstraction" }
 terminal-pty = { path = "../terminal-pty" }
+winit = "0.29"
