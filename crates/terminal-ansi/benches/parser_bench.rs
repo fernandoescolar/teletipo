@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use terminal_ansi::Parser;
 
 fn bench_parser(c: &mut Criterion) {

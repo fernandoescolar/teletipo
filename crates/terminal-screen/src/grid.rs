@@ -43,7 +43,10 @@ impl Grid {
         // For wide characters (display width 2) fill the trailing cell with a
         // null placeholder so the renderer skips it without advancing columns.
         if char_width == 2 && self.cursor_col + 1 < self.cols {
-            self.cells[idx + 1] = Cell { ch: '\0', style: crate::cell::CellStyle::default() };
+            self.cells[idx + 1] = Cell {
+                ch: '\0',
+                style: crate::cell::CellStyle::default(),
+            };
         }
 
         self.cursor_col += char_width;

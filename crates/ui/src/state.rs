@@ -3,13 +3,10 @@ use crate::components::{
     BellState, CursorBlink, ModifierState, OverlayManager, PaneLayout, SelectionPoint, TabManager,
     TabPane, UiConfig, WindowMetrics,
 };
-use app_orchestrator::App;
+use crate::tab_backend::TabBackend;
 
-const DEFAULT_ROWS: usize = 24;
-const DEFAULT_COLS: usize = 80;
-
-pub struct UiState {
-    pub tabs: TabManager,
+pub struct UiState<B: TabBackend> {
+    pub tabs: TabManager<B>,
     pub shell: String,
     pub layout: PaneLayout,
     pub overlays: OverlayManager,
@@ -20,13 +17,17 @@ pub struct UiState {
     pub should_exit: bool,
     pub config: UiConfig,
     pub pending_update: Option<String>,
+    tab_factory: Box<dyn Fn() -> TabPane<B>>,
 }
 
-impl UiState {
-    pub fn new(shell: String, config: UiConfig) -> Result<Self, String> {
-        let app = App::new(DEFAULT_ROWS, DEFAULT_COLS).map_err(|err| err.to_string())?;
-        let initial_tab = TabPane::new(app, None, String::new());
-        Ok(Self {
+impl<B: TabBackend> UiState<B> {
+    pub fn new(
+        shell: String,
+        config: UiConfig,
+        initial_tab: TabPane<B>,
+        tab_factory: Box<dyn Fn() -> TabPane<B>>,
+    ) -> Self {
+        Self {
             tabs: TabManager::new(initial_tab),
             shell,
             layout: PaneLayout::default(),
@@ -38,15 +39,15 @@ impl UiState {
             should_exit: false,
             config,
             pending_update: None,
-        })
+            tab_factory,
+        }
     }
 
     pub fn apply_action(&mut self, action: UiAction) {
         match action {
             UiAction::NewTab => {
-                if let Ok(app) = App::new(DEFAULT_ROWS, DEFAULT_COLS) {
-                    self.tabs.open_new(TabPane::new(app, None, String::new()));
-                }
+                let new_tab = (self.tab_factory)();
+                self.tabs.open_new(new_tab);
             }
             UiAction::CloseTab(idx) => {
                 self.tabs.close(idx);
@@ -93,46 +94,39 @@ impl UiState {
                 self.tabs.active_tab_mut().is_terminal_fullscreen = self.layout.terminal_fullscreen;
             }
             UiAction::SendToTerminal(bytes) => {
-                let tab = self.tabs.active_tab_mut();
-                if let Some(mut pty) = tab.pty.take() {
-                    let _ = tab.app.send_pty_input(&mut pty, &bytes);
-                    tab.pty = Some(pty);
-                }
+                self.tabs.active_tab_mut().backend.send_bytes(&bytes);
             }
             UiAction::EditorInsert(text) => {
-                self.tabs.active_tab_mut().app.insert_editor_input(&text);
+                self.tabs.active_tab_mut().backend.insert_text(&text);
             }
             UiAction::EditorAction(cmd) => {
                 let tab = self.tabs.active_tab_mut();
                 match cmd {
-                    EditorCmd::Backspace => tab.app.editor_backspace(),
-                    EditorCmd::DeleteForward => tab.app.editor_delete_forward(),
+                    EditorCmd::Backspace => tab.backend.backspace(),
+                    EditorCmd::DeleteForward => tab.backend.delete_forward(),
                     EditorCmd::MoveLeft { extend_selection } => {
-                        tab.app.editor_move_cursor_left(extend_selection)
+                        tab.backend.move_cursor_left(extend_selection)
                     }
                     EditorCmd::MoveRight { extend_selection } => {
-                        tab.app.editor_move_cursor_right(extend_selection)
+                        tab.backend.move_cursor_right(extend_selection)
                     }
                     EditorCmd::SetCursor {
                         offset,
                         extend_selection,
-                    } => tab.app.set_editor_cursor(offset, extend_selection),
-                    EditorCmd::Undo => tab.app.editor_undo(),
-                    EditorCmd::Redo => tab.app.editor_redo(),
-                    EditorCmd::Clear => tab.app.editor_clear(),
+                    } => tab.backend.set_cursor(offset, extend_selection),
+                    EditorCmd::Undo => tab.backend.undo(),
+                    EditorCmd::Redo => tab.backend.redo(),
+                    EditorCmd::Clear => tab.backend.clear_editor(),
                 }
             }
             UiAction::SendReturn => {
                 let tab = self.tabs.active_tab_mut();
-                let text = tab.app.editor_snapshot();
+                let text = tab.backend.editor_snapshot();
                 let trimmed = text.trim().to_string();
                 if !trimmed.is_empty() {
-                    tab.app.record_history(&trimmed);
+                    tab.backend.record_history(&trimmed);
                 }
-                if let Some(mut pty) = tab.pty.take() {
-                    let _ = tab.app.run_editor_command(&mut pty, true);
-                    tab.pty = Some(pty);
-                }
+                tab.backend.run_command(true);
             }
             UiAction::ScrollBy(delta) => {
                 let tab = self.tabs.active_tab_mut();
@@ -140,8 +134,10 @@ impl UiState {
                     tab.scroll.terminal_offset =
                         tab.scroll.terminal_offset.saturating_add(delta as usize);
                 } else {
-                    tab.scroll.terminal_offset =
-                        tab.scroll.terminal_offset.saturating_sub(delta.unsigned_abs() as usize);
+                    tab.scroll.terminal_offset = tab
+                        .scroll
+                        .terminal_offset
+                        .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }
             UiAction::ScrollTo(offset) => {
@@ -150,10 +146,13 @@ impl UiState {
             UiAction::EditorScrollBy(delta) => {
                 let tab = self.tabs.active_tab_mut();
                 if delta > 0 {
-                    tab.scroll.editor_offset = tab.scroll.editor_offset.saturating_add(delta as usize);
-                } else {
                     tab.scroll.editor_offset =
-                        tab.scroll.editor_offset.saturating_sub(delta.unsigned_abs() as usize);
+                        tab.scroll.editor_offset.saturating_add(delta as usize);
+                } else {
+                    tab.scroll.editor_offset = tab
+                        .scroll
+                        .editor_offset
+                        .saturating_sub(delta.unsigned_abs() as usize);
                 }
             }
             UiAction::SelectionBegin { row, col } => {
@@ -252,12 +251,14 @@ impl UiState {
                         let cursor = self.overlays.settings.cursor;
                         if let Some(field) = crate::config::SETTINGS_FIELDS.get(cursor) {
                             let current = self.config.get_field(field.section, field.key);
-                            let initial =
-                                if current == "(auto)" || current == "(default)" || current == "(none)" {
-                                    String::new()
-                                } else {
-                                    current
-                                };
+                            let initial = if current == "(auto)"
+                                || current == "(default)"
+                                || current == "(none)"
+                            {
+                                String::new()
+                            } else {
+                                current
+                            };
                             self.overlays.settings.edit_buf = Some(initial);
                         }
                         return; // handled — don't forward to SettingsState::apply
@@ -284,7 +285,7 @@ impl UiState {
                 self.tabs.active_tab_mut().suggestions.clear();
             }
             UiAction::Paste(text) => {
-                self.tabs.active_tab_mut().app.insert_editor_input(&text);
+                self.tabs.active_tab_mut().backend.insert_text(&text);
             }
             UiAction::RequestExit => {
                 self.should_exit = true;
@@ -347,21 +348,22 @@ impl UiState {
 
         for i in 0..self.tabs.tabs.len() {
             let tab = &mut self.tabs.tabs[i];
-            let Some(mut pty) = tab.pty.take() else { continue };
-            let had_data = tab.app.pump_pty_once(&mut pty).map(|n| n > 0).unwrap_or(false);
-            for response in tab.app.drain_pending_responses() {
-                let _ = tab.app.send_pty_input(&mut pty, response.as_bytes());
+            if !tab.backend.has_pty() {
+                continue;
             }
-            let is_dead = pty.try_wait().ok().flatten().is_some();
-            tab.pty = Some(pty);
+            let had_data = tab.backend.pump().map(|n| n > 0).unwrap_or(false);
+            for response in tab.backend.drain_responses() {
+                tab.backend.send_bytes(response.as_bytes());
+            }
+            let is_dead = tab.backend.is_dead();
 
             if i == active && had_data {
                 active_had_data = true;
             }
-            if tab.app.take_bell() && bell_enabled {
+            if tab.backend.take_bell() && bell_enabled {
                 flash_bell = true;
             }
-            let now_fullscreen = tab.app.is_alternate_screen();
+            let now_fullscreen = tab.backend.is_alternate_screen();
             if now_fullscreen != tab.is_terminal_fullscreen {
                 if now_fullscreen {
                     fullscreen_to_enter.push(i);
@@ -402,10 +404,7 @@ impl UiState {
             tab.scroll.terminal_offset = 0;
             let term_h = (available_h - 2.0 * pad_v).max(cell_h);
             let rows = (term_h / cell_h).max(1.0) as u16;
-            if let Some(pty) = tab.pty.as_mut() {
-                pty.resize(rows, cols);
-            }
-            tab.app.resize_terminal(rows as usize, cols as usize);
+            tab.backend.resize(rows, cols);
         }
         for i in fullscreen_to_exit {
             let tab = &mut self.tabs.tabs[i];
@@ -413,10 +412,7 @@ impl UiState {
             tab.split_ratio = tab.pre_fullscreen_split_ratio.clamp(0.2, 0.85);
             let term_h = (available_h * tab.split_ratio - 2.0 * pad_v).max(cell_h);
             let rows = (term_h / cell_h).max(1.0) as u16;
-            if let Some(pty) = tab.pty.as_mut() {
-                pty.resize(rows, cols);
-            }
-            tab.app.resize_terminal(rows as usize, cols as usize);
+            tab.backend.resize(rows, cols);
         }
 
         // Close dead tabs (or set should_exit if it was the last one).

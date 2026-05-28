@@ -1,6 +1,17 @@
 use std::{fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+// ── Validation bounds ───────────────────────────────────────────────────────
+
+/// Min/max permitted font point size.
+pub const FONT_SIZE_MIN: f32 = 4.0;
+pub const FONT_SIZE_MAX: f32 = 80.0;
+/// Max horizontal/vertical padding in physical pixels.
+pub const PADDING_MAX: u32 = 200;
+/// Max scrollback lines per session.
+pub const SCROLLBACK_LINES_MAX: u32 = 1_000_000;
 
 // ── Persisted config structs ────────────────────────────────────────────────
 
@@ -15,7 +26,10 @@ pub struct FontCfg {
 
 impl Default for FontCfg {
     fn default() -> Self {
-        Self { size: 14.0, family: None }
+        Self {
+            size: 14.0,
+            family: None,
+        }
     }
 }
 
@@ -41,16 +55,20 @@ pub struct TerminalCfg {
 
 impl Default for TerminalCfg {
     fn default() -> Self {
-        Self { shell: None, scrollback_lines: 0, bell: true }
+        Self {
+            shell: None,
+            scrollback_lines: 0,
+            bell: true,
+        }
     }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UserConfig {
-    pub font:         FontCfg,
-    pub padding:      PaddingCfg,
-    pub terminal:     TerminalCfg,
+    pub font: FontCfg,
+    pub padding: PaddingCfg,
+    pub terminal: TerminalCfg,
     /// Name of the active preset theme file (`None` = default colors).
     pub active_theme: Option<String>,
 }
@@ -60,19 +78,43 @@ pub struct UserConfig {
 /// Static descriptor of every editable setting.
 pub const SETTINGS_FIELDS: &[SettingsDef] = &[
     // "theme" key is the theme picker — cycled with ← →, not free-text edited.
-    SettingsDef { section: "theme",    key: "theme" },
-    SettingsDef { section: "font",     key: "size" },
-    SettingsDef { section: "font",     key: "family" },
-    SettingsDef { section: "padding",  key: "horizontal" },
-    SettingsDef { section: "padding",  key: "vertical" },
-    SettingsDef { section: "terminal", key: "shell" },
-    SettingsDef { section: "terminal", key: "scrollback_lines" },
-    SettingsDef { section: "terminal", key: "bell" },
+    SettingsDef {
+        section: "theme",
+        key: "theme",
+    },
+    SettingsDef {
+        section: "font",
+        key: "size",
+    },
+    SettingsDef {
+        section: "font",
+        key: "family",
+    },
+    SettingsDef {
+        section: "padding",
+        key: "horizontal",
+    },
+    SettingsDef {
+        section: "padding",
+        key: "vertical",
+    },
+    SettingsDef {
+        section: "terminal",
+        key: "shell",
+    },
+    SettingsDef {
+        section: "terminal",
+        key: "scrollback_lines",
+    },
+    SettingsDef {
+        section: "terminal",
+        key: "bell",
+    },
 ];
 
 pub struct SettingsDef {
     pub section: &'static str,
-    pub key:     &'static str,
+    pub key: &'static str,
 }
 
 // ── UserConfig field get/set ────────────────────────────────────────────────
@@ -81,15 +123,23 @@ impl UserConfig {
     /// Return the current string value of `section.key`.
     pub fn get_field(&self, section: &str, key: &str) -> String {
         match (section, key) {
-            ("theme",    "theme")            => self.active_theme.clone()
-                                                   .unwrap_or_else(|| "(none)".to_owned()),
-            ("font",     "size")             => format!("{}", self.font.size),
-            ("font",     "family")           => self.font.family.clone()
-                                                   .unwrap_or_else(|| "(default)".to_owned()),
-            ("padding",  "horizontal")       => format!("{}", self.padding.horizontal),
-            ("padding",  "vertical")         => format!("{}", self.padding.vertical),
-            ("terminal", "shell")            => self.terminal.shell.clone()
-                                                   .unwrap_or_else(|| "(auto)".to_owned()),
+            ("theme", "theme") => self
+                .active_theme
+                .clone()
+                .unwrap_or_else(|| "(none)".to_owned()),
+            ("font", "size") => format!("{}", self.font.size),
+            ("font", "family") => self
+                .font
+                .family
+                .clone()
+                .unwrap_or_else(|| "(default)".to_owned()),
+            ("padding", "horizontal") => format!("{}", self.padding.horizontal),
+            ("padding", "vertical") => format!("{}", self.padding.vertical),
+            ("terminal", "shell") => self
+                .terminal
+                .shell
+                .clone()
+                .unwrap_or_else(|| "(auto)".to_owned()),
             ("terminal", "scrollback_lines") => {
                 if self.terminal.scrollback_lines == 0 {
                     "(default)".to_owned()
@@ -97,8 +147,75 @@ impl UserConfig {
                     format!("{}", self.terminal.scrollback_lines)
                 }
             }
-            ("terminal", "bell") => if self.terminal.bell { "on".to_owned() } else { "off".to_owned() },
+            ("terminal", "bell") => {
+                if self.terminal.bell {
+                    "on".to_owned()
+                } else {
+                    "off".to_owned()
+                }
+            }
             _ => String::new(),
+        }
+    }
+
+    /// Clamp out-of-range numeric fields to safe values. Each clamp logs a
+    /// `tracing::warn!` event so the user can see why their setting was
+    /// modified.
+    pub fn validate(&mut self) {
+        if !self.font.size.is_finite()
+            || self.font.size < FONT_SIZE_MIN
+            || self.font.size > FONT_SIZE_MAX
+        {
+            let old = self.font.size;
+            self.font.size = self.font.size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
+            if !old.is_finite() {
+                self.font.size = FontCfg::default().size;
+            }
+            tracing::warn!(
+                field = "font.size",
+                old = old,
+                new = self.font.size,
+                "clamped out-of-range value"
+            );
+        }
+        if self.padding.horizontal > PADDING_MAX {
+            let old = self.padding.horizontal;
+            self.padding.horizontal = PADDING_MAX;
+            tracing::warn!(
+                field = "padding.horizontal",
+                old = old,
+                new = self.padding.horizontal,
+                "clamped out-of-range value"
+            );
+        }
+        if self.padding.vertical > PADDING_MAX {
+            let old = self.padding.vertical;
+            self.padding.vertical = PADDING_MAX;
+            tracing::warn!(
+                field = "padding.vertical",
+                old = old,
+                new = self.padding.vertical,
+                "clamped out-of-range value"
+            );
+        }
+        if self.terminal.scrollback_lines > SCROLLBACK_LINES_MAX {
+            let old = self.terminal.scrollback_lines;
+            self.terminal.scrollback_lines = SCROLLBACK_LINES_MAX;
+            tracing::warn!(
+                field = "terminal.scrollback_lines",
+                old = old,
+                new = self.terminal.scrollback_lines,
+                "clamped out-of-range value"
+            );
+        }
+        if let Some(ref shell) = self.terminal.shell
+            && !std::path::Path::new(shell).exists()
+        {
+            tracing::warn!(
+                field = "terminal.shell",
+                shell = %shell,
+                "configured shell path does not exist; will fall back at spawn time"
+            );
         }
     }
 
@@ -109,7 +226,12 @@ impl UserConfig {
         match (section, key) {
             ("font", "size") => {
                 if let Ok(v) = value.parse::<f32>()
-                    && v > 4.0 && v < 80.0 { self.font.size = v; return true; }
+                    && v > 4.0
+                    && v < 80.0
+                {
+                    self.font.size = v;
+                    return true;
+                }
                 false
             }
             ("font", "family") => {
@@ -122,12 +244,20 @@ impl UserConfig {
             }
             ("padding", "horizontal") => {
                 if let Ok(v) = value.parse::<u32>()
-                    && v <= 100 { self.padding.horizontal = v; return true; }
+                    && v <= 100
+                {
+                    self.padding.horizontal = v;
+                    return true;
+                }
                 false
             }
             ("padding", "vertical") => {
                 if let Ok(v) = value.parse::<u32>()
-                    && v <= 100 { self.padding.vertical = v; return true; }
+                    && v <= 100
+                {
+                    self.padding.vertical = v;
+                    return true;
+                }
                 false
             }
             ("terminal", "shell") => {
@@ -144,16 +274,24 @@ impl UserConfig {
                     return true;
                 }
                 if let Ok(v) = value.parse::<u32>()
-                    && v <= 500_000 { self.terminal.scrollback_lines = v; return true; }
+                    && v <= 500_000
+                {
+                    self.terminal.scrollback_lines = v;
+                    return true;
+                }
                 false
             }
-            ("terminal", "bell") => {
-                match value.to_lowercase().as_str() {
-                    "on"  | "true"  | "1" => { self.terminal.bell = true;  true }
-                    "off" | "false" | "0" => { self.terminal.bell = false; true }
-                    _ => false,
+            ("terminal", "bell") => match value.to_lowercase().as_str() {
+                "on" | "true" | "1" => {
+                    self.terminal.bell = true;
+                    true
                 }
-            }
+                "off" | "false" | "0" => {
+                    self.terminal.bell = false;
+                    true
+                }
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -161,36 +299,80 @@ impl UserConfig {
 
 // ── File I/O ─────────────────────────────────────────────────────────────────
 
+/// Errors that can occur while loading the user config file.
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    /// The XDG/standard config directory could not be located.
+    #[error("could not determine config directory")]
+    NoConfigDir,
+    /// The config file could not be read from disk.
+    #[error("failed to read config file {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// The config file contents could not be parsed as TOML.
+    #[error("failed to parse config file {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+}
+
 pub fn config_path() -> Option<PathBuf> {
     let dir = dirs::config_dir()?.join("teletipo");
     fs::create_dir_all(&dir).ok()?;
     Some(dir.join("config.toml"))
 }
 
-/// Load config from disk.  If the file does not exist yet, write a default
-/// one with inline comments so the user can discover all options.
-pub fn load_config() -> UserConfig {
-    let path = match config_path() {
-        Some(p) => p,
-        None => return UserConfig::default(),
-    };
+/// Fallible variant of [`load_config`]. Returns a typed error instead of
+/// silently falling back to defaults.
+///
+/// If the config file does not exist yet, a richly commented default file is
+/// written to disk and `UserConfig::default()` is returned.
+pub fn load_config_result() -> Result<UserConfig, ConfigError> {
+    let path = config_path().ok_or(ConfigError::NoConfigDir)?;
     if !path.exists() {
         let cfg = UserConfig::default();
         write_default_config(&path);
-        return cfg;
+        return Ok(cfg);
     }
-    let data = match fs::read_to_string(&path) {
-        Ok(d) => d,
-        Err(_) => return UserConfig::default(),
-    };
-    toml::from_str(&data).unwrap_or_default()
+    let data = fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+        path: path.clone(),
+        source,
+    })?;
+    let mut cfg: UserConfig = toml::from_str(&data).map_err(|source| ConfigError::Parse {
+        path: path.clone(),
+        source,
+    })?;
+    cfg.validate();
+    Ok(cfg)
+}
+
+/// Load config from disk.  If the file does not exist yet, write a default
+/// one with inline comments so the user can discover all options.
+///
+/// On any I/O or parse failure this function logs a `tracing::warn!` event
+/// with the offending path and returns `UserConfig::default()`. Callers that
+/// need the underlying error should use [`load_config_result`].
+pub fn load_config() -> UserConfig {
+    match load_config_result() {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            tracing::warn!(error = %err, "falling back to default config");
+            UserConfig::default()
+        }
+    }
 }
 
 pub fn save_config(cfg: &UserConfig) {
     if let Some(path) = config_path()
-        && let Ok(s) = toml::to_string_pretty(cfg) {
-            let _ = fs::write(path, s);
-        }
+        && let Ok(s) = toml::to_string_pretty(cfg)
+    {
+        let _ = fs::write(path, s);
+    }
 }
 
 /// Write a richly commented default config file.
@@ -242,5 +424,131 @@ pub fn parse_color(s: &str) -> Option<[f32; 4]> {
             Some([r, g, b, a])
         }
         _ => None,
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_color_rrggbb() {
+        let c = parse_color("#ff8000").unwrap();
+        assert!((c[0] - 1.0).abs() < 1e-3);
+        assert!((c[1] - 128.0 / 255.0).abs() < 1e-3);
+        assert!((c[2] - 0.0).abs() < 1e-3);
+        assert!((c[3] - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn parse_color_invalid_returns_none() {
+        assert!(parse_color("not-a-color").is_none());
+        assert!(parse_color("#fff").is_none());
+    }
+
+    #[test]
+    fn validate_clamps_font_size_too_small() {
+        let mut cfg = UserConfig {
+            font: FontCfg {
+                size: 1.0,
+                family: None,
+            },
+            ..Default::default()
+        };
+        cfg.validate();
+        assert_eq!(cfg.font.size, FONT_SIZE_MIN);
+    }
+
+    #[test]
+    fn validate_clamps_font_size_too_large() {
+        let mut cfg = UserConfig {
+            font: FontCfg {
+                size: 9999.0,
+                family: None,
+            },
+            ..Default::default()
+        };
+        cfg.validate();
+        assert_eq!(cfg.font.size, FONT_SIZE_MAX);
+    }
+
+    #[test]
+    fn validate_resets_nan_font_size_to_default() {
+        let mut cfg = UserConfig {
+            font: FontCfg {
+                size: f32::NAN,
+                family: None,
+            },
+            ..Default::default()
+        };
+        cfg.validate();
+        assert_eq!(cfg.font.size, FontCfg::default().size);
+    }
+
+    #[test]
+    fn validate_clamps_padding() {
+        let mut cfg = UserConfig {
+            padding: PaddingCfg {
+                horizontal: 10_000,
+                vertical: 10_000,
+            },
+            ..Default::default()
+        };
+        cfg.validate();
+        assert_eq!(cfg.padding.horizontal, PADDING_MAX);
+        assert_eq!(cfg.padding.vertical, PADDING_MAX);
+    }
+
+    #[test]
+    fn validate_clamps_scrollback_lines() {
+        let mut cfg = UserConfig {
+            terminal: TerminalCfg {
+                scrollback_lines: u32::MAX,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        cfg.validate();
+        assert_eq!(cfg.terminal.scrollback_lines, SCROLLBACK_LINES_MAX);
+    }
+
+    #[test]
+    fn validate_leaves_in_range_values_unchanged() {
+        let mut cfg = UserConfig {
+            font: FontCfg {
+                size: 14.0,
+                family: None,
+            },
+            padding: PaddingCfg {
+                horizontal: 8,
+                vertical: 8,
+            },
+            terminal: TerminalCfg {
+                scrollback_lines: 10_000,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let snapshot = format!("{cfg:?}");
+        cfg.validate();
+        assert_eq!(format!("{cfg:?}"), snapshot);
+    }
+
+    #[test]
+    fn config_error_parse_includes_path() {
+        // Construct a Parse error by parsing intentionally bad TOML and check
+        // Display contains a path-like marker.
+        let path = std::path::PathBuf::from("/tmp/teletipo-test.toml");
+        let err = match toml::from_str::<UserConfig>("not = valid = toml") {
+            Ok(_) => panic!("expected parse error"),
+            Err(source) => ConfigError::Parse {
+                path: path.clone(),
+                source,
+            },
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("teletipo-test.toml"));
     }
 }

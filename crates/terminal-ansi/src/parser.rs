@@ -81,9 +81,10 @@ impl Parser {
                         if self.utf8_len == expected {
                             let slice = &self.utf8_buf[..expected as usize];
                             if let Ok(s) = std::str::from_utf8(slice)
-                                && let Some(ch) = s.chars().next() {
-                                    actions.push(Action::Print(ch));
-                                }
+                                && let Some(ch) = s.chars().next()
+                            {
+                                actions.push(Action::Print(ch));
+                            }
                             self.utf8_len = 0;
                         }
                     } else {
@@ -186,10 +187,9 @@ impl Parser {
                     actions.push(Action::DecPrivateModeReset(*mode));
                 }
             }
-            b'n' if !has_private_prefix
-                && params.first().copied() == Some(6) => {
-                    actions.push(Action::DeviceStatusReport);
-                }
+            b'n' if !has_private_prefix && params.first().copied() == Some(6) => {
+                actions.push(Action::DeviceStatusReport);
+            }
             b'q' if !has_private_prefix => {
                 // DECSCUSR: \x1b[N q — the space before 'q' is an intermediate byte.
                 // Strip all intermediate bytes (0x20-0x2F) so parse_params sees just the digit.
@@ -431,7 +431,10 @@ mod tests {
 
         assert_eq!(
             actions,
-            vec![Action::DecPrivateModeSet(1049), Action::DecPrivateModeReset(1049)]
+            vec![
+                Action::DecPrivateModeSet(1049),
+                Action::DecPrivateModeReset(1049)
+            ]
         );
     }
 
@@ -471,12 +474,20 @@ mod tests {
     #[test]
     fn runs_fixture_matrix() {
         let fixtures = fixture_matrix();
-        assert!(fixtures.len() >= 50, "fixture matrix too small: {}", fixtures.len());
+        assert!(
+            fixtures.len() >= 50,
+            "fixture matrix too small: {}",
+            fixtures.len()
+        );
 
         for fixture in fixtures {
             let mut parser = Parser::new();
             let actions = parser.advance(&fixture.input);
-            assert_eq!(actions, fixture.expected, "fixture failed: {}", fixture.name);
+            assert_eq!(
+                actions, fixture.expected,
+                "fixture failed: {}",
+                fixture.name
+            );
         }
     }
 
@@ -487,7 +498,10 @@ mod tests {
         let a2 = parser.advance(b"31mX");
 
         assert!(a1.is_empty());
-        assert_eq!(a2, vec![Action::SetGraphicsRendition(vec![31]), Action::Print('X')]);
+        assert_eq!(
+            a2,
+            vec![Action::SetGraphicsRendition(vec![31]), Action::Print('X')]
+        );
     }
 
     #[test]
@@ -565,7 +579,11 @@ mod tests {
             let mut parser = Parser::new();
             let input = format!("\x1b[{shape} q");
             let actions = parser.advance(input.as_bytes());
-            assert_eq!(actions, vec![Action::SetCursorShape(shape)], "shape={shape}");
+            assert_eq!(
+                actions,
+                vec![Action::SetCursorShape(shape)],
+                "shape={shape}"
+            );
         }
     }
 

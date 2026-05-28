@@ -5,16 +5,14 @@ mod types;
 
 pub use impls::{BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryClipboard, MemoryIme};
 pub use platform::{
-    current_platform, default_shell, detect_display_backend, detect_display_backend_from,
-    native_services, NativePlatformServices, PlatformServices,
+    NativePlatformServices, PlatformServices, current_platform, default_shell,
+    detect_display_backend, detect_display_backend_from, native_services,
 };
 pub use traits::{Accessibility, Clipboard, DpiAwareness, FontFallback, Ime};
-pub use types::{DisplayBackend, PlatformKind};
+pub use types::{AppWindowEvent, DisplayBackend, PlatformKind};
 
 #[cfg(target_os = "linux")]
-pub use platform::{
-    LinuxAccessibility, LinuxClipboard, LinuxDpi, LinuxFontFallback, LinuxIme,
-};
+pub use platform::{LinuxAccessibility, LinuxClipboard, LinuxDpi, LinuxFontFallback, LinuxIme};
 
 #[cfg(target_os = "macos")]
 pub use platform::{MacAccessibility, MacClipboard, MacDpi, MacFontFallback, MacIme};

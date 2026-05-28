@@ -53,7 +53,9 @@ impl TerminalSession {
                 Action::CursorPosition { row, col } => self.screen.cursor_position(row, col),
                 Action::SaveCursor => self.screen.save_cursor(),
                 Action::RestoreCursor => self.screen.restore_cursor(),
-                Action::SetScrollRegion { top, bottom } => self.screen.set_scroll_region(top, bottom),
+                Action::SetScrollRegion { top, bottom } => {
+                    self.screen.set_scroll_region(top, bottom)
+                }
                 Action::InsertChars(n) => self.screen.insert_chars(n),
                 Action::DeleteChars(n) => self.screen.delete_chars(n),
                 Action::InsertLines(n) => self.screen.insert_lines(n),
@@ -61,32 +63,31 @@ impl TerminalSession {
                 Action::EraseInDisplay(mode) => self.screen.erase_in_display(mode),
                 Action::EraseInLine(mode) => self.screen.erase_in_line(mode),
                 Action::SetGraphicsRendition(params) => self.screen.set_sgr(&params),
-                Action::DecPrivateModeSet(mode) => {
-                    match mode {
-                        1 => self.application_cursor_keys = true,
-                        1049 => self.screen.set_alternate_screen(true),
-                        1000 | 1002 | 1003 | 1006 => self.mouse_mode = mode,
-                        2004 => self.bracketed_paste = true,
-                        _ => {}
+                Action::DecPrivateModeSet(mode) => match mode {
+                    1 => self.application_cursor_keys = true,
+                    1049 => self.screen.set_alternate_screen(true),
+                    1000 | 1002 | 1003 | 1006 => self.mouse_mode = mode,
+                    2004 => self.bracketed_paste = true,
+                    _ => {}
+                },
+                Action::DecPrivateModeReset(mode) => match mode {
+                    1 => self.application_cursor_keys = false,
+                    1049 => self.screen.set_alternate_screen(false),
+                    1000 | 1002 | 1003 | 1006 if self.mouse_mode == mode => {
+                        self.mouse_mode = 0;
                     }
-                }
-                Action::DecPrivateModeReset(mode) => {
-                    match mode {
-                        1 => self.application_cursor_keys = false,
-                        1049 => self.screen.set_alternate_screen(false),
-                        1000 | 1002 | 1003 | 1006 if self.mouse_mode == mode => {
-                            self.mouse_mode = 0;
-                        }
-                        2004 => self.bracketed_paste = false,
-                        _ => {}
-                    }
-                }
+                    2004 => self.bracketed_paste = false,
+                    _ => {}
+                },
                 Action::Osc(s) => {
                     // OSC 133;D;N — shell integration exit-code report.
                     if let Some(rest) = s.strip_prefix("133;D;")
-                        && let Ok(code) = rest.parse::<i32>() {
+                        && let Ok(code) = rest.parse::<i32>()
+                    {
                         self.last_exit_code = Some(code);
-                    } else if let Some(title) = s.strip_prefix("0;").or_else(|| s.strip_prefix("2;")) {
+                    } else if let Some(title) =
+                        s.strip_prefix("0;").or_else(|| s.strip_prefix("2;"))
+                    {
                         self.window_title = Some(title.to_owned());
                     }
                 }
@@ -117,10 +118,7 @@ impl TerminalSession {
     }
 
     /// Like `snapshot_styled` but scrolled back by `scroll_offset` rows.
-    pub fn snapshot_styled_at_offset(
-        &self,
-        scroll_offset: usize,
-    ) -> StyledChars {
+    pub fn snapshot_styled_at_offset(&self, scroll_offset: usize) -> StyledChars {
         self.screen.dump_styled_at_offset(scroll_offset)
     }
 
@@ -131,11 +129,19 @@ impl TerminalSession {
         scroll_offset: usize,
         palette: Option<&[[f32; 3]; 16]>,
     ) -> StyledChars {
-        self.screen.dump_styled_at_offset_with_palette(scroll_offset, palette)
+        self.screen
+            .dump_styled_at_offset_with_palette(scroll_offset, palette)
     }
 
     pub fn scrollback_len(&self) -> usize {
         self.screen.scrollback_len()
+    }
+
+    /// Returns the current screen version counter.  This value is incremented
+    /// on every write to the screen and can be compared across frames to
+    /// determine whether the terminal content has changed.
+    pub fn screen_version(&self) -> u64 {
+        self.screen.version()
     }
 
     /// Resize the terminal grid to the given dimensions.
@@ -211,9 +217,15 @@ impl TerminalSession {
 mod tests {
     use super::TerminalSession;
 
+    /// Construct a `TerminalSession` with the given dimensions for testing.
+    /// Panics if construction fails (invalid size).
+    fn make_session(rows: usize, cols: usize) -> TerminalSession {
+        TerminalSession::new(rows, cols).expect("make_session: valid size")
+    }
+
     #[test]
     fn applies_ansi_actions_to_grid() {
-        let mut session = TerminalSession::new(3, 12).expect("session");
+        let mut session = make_session(3, 12);
         session.feed(b"hello\n\rworld");
 
         let snapshot = session.snapshot_text();
@@ -223,7 +235,7 @@ mod tests {
 
     #[test]
     fn applies_cursor_and_erase_sequences() {
-        let mut session = TerminalSession::new(2, 8).expect("session");
+        let mut session = make_session(2, 8);
         session.feed(b"hello");
         session.feed(b"\x1b[1;1H\x1b[2K");
 
@@ -233,7 +245,7 @@ mod tests {
 
     #[test]
     fn switches_to_alternate_buffer() {
-        let mut session = TerminalSession::new(2, 8).expect("session");
+        let mut session = make_session(2, 8);
         session.feed(b"main");
         session.feed(b"\x1b[?1049h");
         session.feed(b"alt");
@@ -245,7 +257,7 @@ mod tests {
 
     #[test]
     fn alternate_screen_accessor_toggles() {
-        let mut session = TerminalSession::new(2, 8).expect("session");
+        let mut session = make_session(2, 8);
         assert!(!session.is_alternate_screen());
         session.feed(b"\x1b[?1049h");
         assert!(session.is_alternate_screen());
@@ -255,7 +267,7 @@ mod tests {
 
     #[test]
     fn exposes_damage_tracking() {
-        let mut session = TerminalSession::new(2, 8).expect("session");
+        let mut session = make_session(2, 8);
         let d0 = session.take_damage();
         assert!(d0.full_redraw);
 
@@ -266,7 +278,7 @@ mod tests {
 
     #[test]
     fn bell_sets_and_clears_flag() {
-        let mut session = TerminalSession::new(2, 8).expect("session");
+        let mut session = make_session(2, 8);
         assert!(!session.take_bell(), "bell should start as false");
         session.feed(b"\x07");
         assert!(session.take_bell(), "bell should be true after BEL byte");
@@ -275,7 +287,7 @@ mod tests {
 
     #[test]
     fn dsr_response_contains_cursor_position() {
-        let mut session = TerminalSession::new(5, 20).expect("session");
+        let mut session = make_session(5, 20);
         // Cursor is at top-left (1;1) after a fresh session.
         session.feed(b"\x1b[6n");
         let responses = session.drain_pending_responses();
@@ -285,7 +297,7 @@ mod tests {
 
     #[test]
     fn dsr_response_reflects_moved_cursor() {
-        let mut session = TerminalSession::new(5, 20).expect("session");
+        let mut session = make_session(5, 20);
         // Move cursor to row 3, col 5 (ESC[3;5H) then query.
         session.feed(b"\x1b[3;5H\x1b[6n");
         let responses = session.drain_pending_responses();
@@ -295,7 +307,7 @@ mod tests {
 
     #[test]
     fn bracketed_paste_toggle() {
-        let mut session = TerminalSession::new(2, 8).expect("session");
+        let mut session = make_session(2, 8);
         assert!(!session.bracketed_paste());
         session.feed(b"\x1b[?2004h");
         assert!(session.bracketed_paste());
@@ -305,7 +317,7 @@ mod tests {
 
     #[test]
     fn cursor_shape_sequence() {
-        let mut session = TerminalSession::new(2, 8).expect("session");
+        let mut session = make_session(2, 8);
         assert_eq!(session.cursor_shape(), 0);
         session.feed(b"\x1b[4 q"); // steady underline
         assert_eq!(session.cursor_shape(), 4);
@@ -315,7 +327,7 @@ mod tests {
 
     #[test]
     fn window_title_from_osc() {
-        let mut session = TerminalSession::new(2, 8).expect("session");
+        let mut session = make_session(2, 8);
         assert!(session.window_title().is_none());
         // OSC 0 ; title BEL
         session.feed(b"\x1b]0;My Title\x07");
@@ -327,7 +339,7 @@ mod tests {
 
     #[test]
     fn mouse_mode_toggle() {
-        let mut session = TerminalSession::new(2, 8).expect("session");
+        let mut session = make_session(2, 8);
         assert_eq!(session.mouse_mode(), 0);
         session.feed(b"\x1b[?1000h");
         assert_eq!(session.mouse_mode(), 1000);

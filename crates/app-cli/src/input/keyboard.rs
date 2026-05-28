@@ -1,7 +1,9 @@
-use crate::coords::{clamp_editor_scroll, current_line_prefix, cursor_at_line_end, editor_cursor_row_col, editor_row_col_to_offset, extract_selection, line_leading_spaces, replace_cursor_line};
-use crate::settings;
 use crate::GpuRuntimeState;
-use arboard::Clipboard;
+use crate::coords::{
+    clamp_editor_scroll, current_line_prefix, cursor_at_line_end, editor_cursor_row_col,
+    editor_row_col_to_offset, extract_selection, line_leading_spaces, replace_cursor_line,
+};
+use crate::settings;
 use render_wgpu::AppWindowEvent;
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};
@@ -9,13 +11,16 @@ use winit::keyboard::{Key, NamedKey};
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     let AppWindowEvent::KeyboardInput(key_event) = &event else {
         if let AppWindowEvent::ImeCommit(text) = event
-            && !text.is_empty() && text != "\r" && text != "\n" {
-                if state.tab().app.is_alternate_screen() {
-                    state.send_terminal_input(text.as_bytes());
-                } else {
-                    state.tab_mut().app.insert_editor_input(text.as_str());
-                }
+            && !text.is_empty()
+            && text != "\r"
+            && text != "\n"
+        {
+            if state.tab().app.is_alternate_screen() {
+                state.send_terminal_input(text.as_bytes());
+            } else {
+                state.tab_mut().app.insert_editor_input(text.as_str());
             }
+        }
         return;
     };
 
@@ -83,18 +88,54 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 state.send_terminal_input(b" ");
                 return;
             }
-            Key::Named(NamedKey::F1) => { state.send_terminal_input(b"\x1bOP"); return; }
-            Key::Named(NamedKey::F2) => { state.send_terminal_input(b"\x1bOQ"); return; }
-            Key::Named(NamedKey::F3) => { state.send_terminal_input(b"\x1bOR"); return; }
-            Key::Named(NamedKey::F4) => { state.send_terminal_input(b"\x1bOS"); return; }
-            Key::Named(NamedKey::F5) => { state.send_terminal_input(b"\x1b[15~"); return; }
-            Key::Named(NamedKey::F6) => { state.send_terminal_input(b"\x1b[17~"); return; }
-            Key::Named(NamedKey::F7) => { state.send_terminal_input(b"\x1b[18~"); return; }
-            Key::Named(NamedKey::F8) => { state.send_terminal_input(b"\x1b[19~"); return; }
-            Key::Named(NamedKey::F9) => { state.send_terminal_input(b"\x1b[20~"); return; }
-            Key::Named(NamedKey::F10) => { state.send_terminal_input(b"\x1b[21~"); return; }
-            Key::Named(NamedKey::F11) => { state.send_terminal_input(b"\x1b[23~"); return; }
-            Key::Named(NamedKey::F12) => { state.send_terminal_input(b"\x1b[24~"); return; }
+            Key::Named(NamedKey::F1) => {
+                state.send_terminal_input(b"\x1bOP");
+                return;
+            }
+            Key::Named(NamedKey::F2) => {
+                state.send_terminal_input(b"\x1bOQ");
+                return;
+            }
+            Key::Named(NamedKey::F3) => {
+                state.send_terminal_input(b"\x1bOR");
+                return;
+            }
+            Key::Named(NamedKey::F4) => {
+                state.send_terminal_input(b"\x1bOS");
+                return;
+            }
+            Key::Named(NamedKey::F5) => {
+                state.send_terminal_input(b"\x1b[15~");
+                return;
+            }
+            Key::Named(NamedKey::F6) => {
+                state.send_terminal_input(b"\x1b[17~");
+                return;
+            }
+            Key::Named(NamedKey::F7) => {
+                state.send_terminal_input(b"\x1b[18~");
+                return;
+            }
+            Key::Named(NamedKey::F8) => {
+                state.send_terminal_input(b"\x1b[19~");
+                return;
+            }
+            Key::Named(NamedKey::F9) => {
+                state.send_terminal_input(b"\x1b[20~");
+                return;
+            }
+            Key::Named(NamedKey::F10) => {
+                state.send_terminal_input(b"\x1b[21~");
+                return;
+            }
+            Key::Named(NamedKey::F11) => {
+                state.send_terminal_input(b"\x1b[23~");
+                return;
+            }
+            Key::Named(NamedKey::F12) => {
+                state.send_terminal_input(b"\x1b[24~");
+                return;
+            }
             Key::Character(ch) if state.ctrl_down => {
                 if let Some(c) = ch.as_str().chars().next() {
                     let lo = c.to_ascii_lowercase();
@@ -112,9 +153,12 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             }
             Key::Character(_) => {
                 if let Some(text) = key_event.text.as_ref()
-                    && text != "\n" && text != "\r" && text != "\r\n" {
-                        state.send_terminal_input(text.as_bytes());
-                    }
+                    && text != "\n"
+                    && text != "\r"
+                    && text != "\r\n"
+                {
+                    state.send_terminal_input(text.as_bytes());
+                }
                 return;
             }
             _ => {}
@@ -125,8 +169,10 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     // that subsequent ghost-text lookups start fresh from the new editor text.
     // Exception: Up/Down and Esc are allowed to handle the dropdown themselves.
     let is_tab = matches!(&key_event.logical_key, Key::Named(NamedKey::Tab));
-    let is_nav = matches!(&key_event.logical_key,
-        Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown));
+    let is_nav = matches!(
+        &key_event.logical_key,
+        Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown)
+    );
     let is_esc = matches!(&key_event.logical_key, Key::Named(NamedKey::Escape));
     let is_enter = matches!(&key_event.logical_key, Key::Named(NamedKey::Enter));
     let cycling = state.tabs[state.active_tab].suggestion_index.is_some();
@@ -138,9 +184,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
 
     // Save terminal selection before (possibly) clearing it — Cmd+C needs the saved values.
     let saved_terminal_anchor = state.tab().selection_anchor;
-    let saved_terminal_end   = state.tab().selection_end;
-    let saved_anchor_scroll  = state.tab().selection_anchor_scroll;
-    let saved_end_scroll     = state.tab().selection_end_scroll;
+    let saved_terminal_end = state.tab().selection_end;
+    let saved_anchor_scroll = state.tab().selection_anchor_scroll;
+    let saved_end_scroll = state.tab().selection_end_scroll;
     // Preserve selection while a modifier key is held or while the key being
     // pressed IS a modifier (KeyboardInput fires before ModifiersChanged, so
     // super_down/ctrl_down may not yet be set when the Cmd/Ctrl key arrives).
@@ -148,20 +194,20 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         &key_event.logical_key,
         Key::Named(
             NamedKey::Super
-            | NamedKey::Control
-            | NamedKey::Shift
-            | NamedKey::Alt
-            | NamedKey::AltGraph
-            | NamedKey::Meta
-            | NamedKey::Hyper
-            | NamedKey::CapsLock,
+                | NamedKey::Control
+                | NamedKey::Shift
+                | NamedKey::Alt
+                | NamedKey::AltGraph
+                | NamedKey::Meta
+                | NamedKey::Hyper
+                | NamedKey::CapsLock,
         )
     );
     if !state.super_down && !state.ctrl_down && !is_modifier_key {
         let active = state.active_tab;
         state.tabs[active].selection_anchor = None;
-        state.tabs[active].selection_end   = None;
-        state.tabs[active].is_selecting    = false;
+        state.tabs[active].selection_end = None;
+        state.tabs[active].is_selecting = false;
     }
 
     match &key_event.logical_key {
@@ -179,7 +225,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             // confirm the highlighted entry: fill the editor and close the dropdown.
             if cycling && !state.shift_down {
                 let prefix = state.tabs[state.active_tab]
-                    .suggestion_prefix.clone().unwrap_or_default();
+                    .suggestion_prefix
+                    .clone()
+                    .unwrap_or_default();
                 let idx = state.tabs[state.active_tab].suggestion_index.unwrap_or(0);
                 let matches = crate::suggestion_matches_frecency(
                     &state.tabs[state.active_tab].history,
@@ -192,7 +240,8 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                     let cursor = state.tab().app.editor_cursor_offset();
                     let indent = line_leading_spaces(&editor_text, cursor).to_owned();
                     let full_indented = format!("{indent}{full}");
-                    let (new_text, new_cursor) = replace_cursor_line(&editor_text, cursor, &full_indented);
+                    let (new_text, new_cursor) =
+                        replace_cursor_line(&editor_text, cursor, &full_indented);
                     state.tab_mut().app.editor_clear();
                     state.tab_mut().app.insert_editor_input(&new_text);
                     state.tab_mut().app.set_editor_cursor(new_cursor, false);
@@ -272,47 +321,44 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                     if let Some((start, end)) = state.tab().app.editor_selection() {
                         let editor_text = state.tab().app.editor_snapshot();
                         let selected = editor_text[start..end].to_string();
-                        if !selected.is_empty()
-                            && let Ok(mut cb) = Clipboard::new() {
-                                let _ = cb.set_text(selected);
-                            }
+                        if !selected.is_empty() {
+                            state.shell_services.clipboard_set(selected);
+                        }
                     } else if let (Some(anchor), Some(sel_end)) =
                         (saved_terminal_anchor, saved_terminal_end)
                     {
                         // Adjust stored rows to the current scroll offset so that
                         // Cmd+C copies the correct text even after scrolling.
-                        let current_scroll  = state.tab().scroll_offset as i64;
-                        let anchor_scroll   = saved_anchor_scroll as i64;
-                        let end_scroll      = saved_end_scroll as i64;
+                        let current_scroll = state.tab().scroll_offset as i64;
+                        let anchor_scroll = saved_anchor_scroll as i64;
+                        let end_scroll = saved_end_scroll as i64;
                         let ar = (anchor.0 as i64 + current_scroll - anchor_scroll).max(0) as usize;
                         let er = (sel_end.0 as i64 + current_scroll - end_scroll).max(0) as usize;
                         let adjusted_anchor = (ar, anchor.1);
-                        let adjusted_end    = (er, sel_end.1);
+                        let adjusted_end = (er, sel_end.1);
                         let last_text = state.tab().last_terminal_text.clone();
                         let text = extract_selection(&last_text, adjusted_anchor, adjusted_end);
-                        if !text.is_empty()
-                            && let Ok(mut cb) = Clipboard::new() {
-                                let _ = cb.set_text(text);
-                            }
+                        if !text.is_empty() {
+                            state.shell_services.clipboard_set(text);
+                        }
                     }
                 }
                 "v" => {
-                    if let Ok(mut cb) = Clipboard::new()
-                        && let Ok(text) = cb.get_text() {
-                            let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-                            if !normalized.is_empty() {
-                                if state.tab().app.is_alternate_screen() {
-                                    if state.tab().app.bracketed_paste() {
-                                        let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
-                                        state.send_terminal_input(bracketed.as_bytes());
-                                    } else {
-                                        state.send_terminal_input(normalized.as_bytes());
-                                    }
+                    if let Some(text) = state.shell_services.clipboard_get() {
+                        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                        if !normalized.is_empty() {
+                            if state.tab().app.is_alternate_screen() {
+                                if state.tab().app.bracketed_paste() {
+                                    let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
+                                    state.send_terminal_input(bracketed.as_bytes());
                                 } else {
-                                    state.tab_mut().app.insert_editor_input(&normalized);
+                                    state.send_terminal_input(normalized.as_bytes());
                                 }
+                            } else {
+                                state.tab_mut().app.insert_editor_input(&normalized);
                             }
                         }
+                    }
                 }
                 "a" => {
                     let end = state.tab().app.editor_snapshot().len();
@@ -366,7 +412,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             if cycling && !state.shift_down {
                 // Confirm: fill the editor with the selected match before submitting.
                 let prefix = state.tabs[state.active_tab]
-                    .suggestion_prefix.clone().unwrap_or_default();
+                    .suggestion_prefix
+                    .clone()
+                    .unwrap_or_default();
                 let idx = state.tabs[state.active_tab].suggestion_index.unwrap_or(0);
                 let matches = crate::suggestion_matches_frecency(
                     &state.tabs[state.active_tab].history,
@@ -379,7 +427,8 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                     let cursor = state.tab().app.editor_cursor_offset();
                     let indent = line_leading_spaces(&editor_text, cursor).to_owned();
                     let full_indented = format!("{indent}{full}");
-                    let (new_text, new_cursor) = replace_cursor_line(&editor_text, cursor, &full_indented);
+                    let (new_text, new_cursor) =
+                        replace_cursor_line(&editor_text, cursor, &full_indented);
                     state.tab_mut().app.editor_clear();
                     state.tab_mut().app.insert_editor_input(&new_text);
                     state.tab_mut().app.set_editor_cursor(new_cursor, false);
@@ -431,7 +480,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             if cycling {
                 // Navigate dropdown: move to the previous item (Shift+Tab direction).
                 let prefix = state.tabs[state.active_tab]
-                    .suggestion_prefix.clone().unwrap_or_default();
+                    .suggestion_prefix
+                    .clone()
+                    .unwrap_or_default();
                 let matches = crate::suggestion_matches_frecency(
                     &state.tabs[state.active_tab].history,
                     &state.tabs[state.active_tab].history_entries,
@@ -461,7 +512,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             if cycling {
                 // Navigate dropdown: move to the next item.
                 let prefix = state.tabs[state.active_tab]
-                    .suggestion_prefix.clone().unwrap_or_default();
+                    .suggestion_prefix
+                    .clone()
+                    .unwrap_or_default();
                 let matches = crate::suggestion_matches_frecency(
                     &state.tabs[state.active_tab].history,
                     &state.tabs[state.active_tab].history_entries,
@@ -502,28 +555,31 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         }
         Key::Character(_) => {
             if let Some(text) = key_event.text.as_ref()
-                && text != "\n" && text != "\r" && text != "\r\n" {
-                    state.tab_mut().app.insert_editor_input(text.as_str());
-                    if cycling {
-                        let active = state.active_tab;
-                        let editor_text = state.tab().app.editor_snapshot();
-                        let cursor = state.tab().app.editor_cursor_offset();
-                        let new_prefix = current_line_prefix(&editor_text, cursor).to_string();
-                        let matches = crate::suggestion_matches_frecency(
-                            &state.tabs[active].history,
-                            &state.tabs[active].history_entries,
-                            &new_prefix,
-                            &state.tabs[active].cwd,
-                        );
-                        if !matches.is_empty() {
-                            state.tabs[active].suggestion_prefix = Some(new_prefix);
-                            state.tabs[active].suggestion_index = Some(0);
-                        } else {
-                            state.tabs[active].suggestion_prefix = None;
-                            state.tabs[active].suggestion_index = None;
-                        }
+                && text != "\n"
+                && text != "\r"
+                && text != "\r\n"
+            {
+                state.tab_mut().app.insert_editor_input(text.as_str());
+                if cycling {
+                    let active = state.active_tab;
+                    let editor_text = state.tab().app.editor_snapshot();
+                    let cursor = state.tab().app.editor_cursor_offset();
+                    let new_prefix = current_line_prefix(&editor_text, cursor).to_string();
+                    let matches = crate::suggestion_matches_frecency(
+                        &state.tabs[active].history,
+                        &state.tabs[active].history_entries,
+                        &new_prefix,
+                        &state.tabs[active].cwd,
+                    );
+                    if !matches.is_empty() {
+                        state.tabs[active].suggestion_prefix = Some(new_prefix);
+                        state.tabs[active].suggestion_index = Some(0);
+                    } else {
+                        state.tabs[active].suggestion_prefix = None;
+                        state.tabs[active].suggestion_index = None;
                     }
                 }
+            }
         }
         _ => {}
     }

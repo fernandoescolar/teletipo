@@ -2,14 +2,14 @@ use crate::color::AnsiColor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CellStyle {
-    pub fg: AnsiColor,
-    pub bg: AnsiColor,
-    pub bold: bool,
-    pub dim: bool,
-    pub italic: bool,
-    pub underline: bool,
-    pub reverse: bool,
-    pub strikethrough: bool,
+    pub(crate) fg: AnsiColor,
+    pub(crate) bg: AnsiColor,
+    pub(crate) bold: bool,
+    pub(crate) dim: bool,
+    pub(crate) italic: bool,
+    pub(crate) underline: bool,
+    pub(crate) reverse: bool,
+    pub(crate) strikethrough: bool,
 }
 
 impl Default for CellStyle {
@@ -29,8 +29,8 @@ impl Default for CellStyle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
-    pub ch: char,
-    pub style: CellStyle,
+    pub(crate) ch: char,
+    pub(crate) style: CellStyle,
 }
 
 impl Default for Cell {

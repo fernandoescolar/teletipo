@@ -2,10 +2,25 @@ use std::io::{self, Read, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
-use anyhow::Context;
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 use crate::backend::PtyBackend;
+use crate::error::PtyError;
+
+type Result<T> = std::result::Result<T, PtyError>;
+
+/// Maximum number of read chunks (each up to [`READ_CHUNK_SIZE`] bytes) that
+/// may sit in the PTY → consumer channel before the reader thread blocks.
+///
+/// This caps in-flight memory at roughly `PTY_CHANNEL_CAPACITY * READ_CHUNK_SIZE`
+/// bytes per session (currently ~256 KiB). When the renderer falls behind, the
+/// reader blocks on `send`, which lets the kernel PTY buffer fill up and apply
+/// natural backpressure to the child process — preferable to unbounded queueing
+/// that would grow memory until the consumer catches up.
+const PTY_CHANNEL_CAPACITY: usize = 64;
+
+/// Size of the buffer the reader thread fills before forwarding a chunk.
+const READ_CHUNK_SIZE: usize = 4096;
 
 pub struct PortablePtySession {
     writer: Box<dyn Write + Send>,
@@ -108,13 +123,18 @@ impl PortablePtySession {
         rows: u16,
         cols: u16,
         cwd: Option<&str>,
-    ) -> anyhow::Result<(Self, bool)> {
+    ) -> Result<(Self, bool)> {
         let integration = setup_shell_integration(shell);
 
         let pty_system = native_pty_system();
         let pair = pty_system
-            .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-            .context("open pty")?;
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| PtyError::stage("open pty", e))?;
 
         let mut cmd = CommandBuilder::new(shell);
 
@@ -133,15 +153,24 @@ impl PortablePtySession {
             cmd.cwd(dir);
         }
 
-        let child = pair.slave.spawn_command(cmd).context("spawn command")?;
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| PtyError::stage("spawn command", e))?;
         drop(pair.slave);
 
-        let mut reader = pair.master.try_clone_reader().context("clone pty reader")?;
-        let writer = pair.master.take_writer().context("take pty writer")?;
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| PtyError::stage("clone pty reader", e))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| PtyError::stage("take pty writer", e))?;
 
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
         thread::spawn(move || {
-            let mut buf = [0u8; 4096];
+            let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
@@ -155,7 +184,12 @@ impl PortablePtySession {
             }
         });
 
-        let session = Self { writer, master: pair.master, child, rx };
+        let session = Self {
+            writer,
+            master: pair.master,
+            child,
+            rx,
+        };
         Ok((session, integration.is_some()))
     }
 
@@ -165,7 +199,7 @@ impl PortablePtySession {
         rows: u16,
         cols: u16,
         cwd: Option<&str>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -174,26 +208,36 @@ impl PortablePtySession {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .context("open pty")?;
+            .map_err(|e| PtyError::stage("open pty", e))?;
 
         let mut cmd = CommandBuilder::new(program);
         for arg in args {
             cmd.arg(*arg);
         }
         if let Some(dir) = cwd
-            && !dir.is_empty() {
-                cmd.cwd(dir);
-            }
+            && !dir.is_empty()
+        {
+            cmd.cwd(dir);
+        }
 
-        let child = pair.slave.spawn_command(cmd).context("spawn command")?;
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| PtyError::stage("spawn command", e))?;
         drop(pair.slave);
 
-        let mut reader = pair.master.try_clone_reader().context("clone pty reader")?;
-        let writer = pair.master.take_writer().context("take pty writer")?;
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| PtyError::stage("clone pty reader", e))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| PtyError::stage("take pty writer", e))?;
 
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
         thread::spawn(move || {
-            let mut buf = [0u8; 4096];
+            let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
@@ -207,11 +251,18 @@ impl PortablePtySession {
             }
         });
 
-        Ok(Self { writer, master: pair.master, child, rx })
+        Ok(Self {
+            writer,
+            master: pair.master,
+            child,
+            rx,
+        })
     }
 
-    pub fn try_wait(&mut self) -> anyhow::Result<Option<portable_pty::ExitStatus>> {
-        self.child.try_wait().context("query child status")
+    pub fn try_wait(&mut self) -> Result<Option<portable_pty::ExitStatus>> {
+        self.child
+            .try_wait()
+            .map_err(|e| PtyError::stage("query child status", e))
     }
 
     /// Returns the OS process-id of the spawned child, if available.

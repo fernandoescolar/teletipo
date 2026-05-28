@@ -1,9 +1,14 @@
+use crate::gap_buffer::GapBuffer;
 use crate::history::{Edit, EditHistory};
-use crate::types::{BufferEngineKind, Cursor, SemanticCommand, Selection};
+use crate::types::{BufferEngineKind, Cursor, Selection, SemanticCommand};
 
 #[derive(Debug, Default)]
 pub struct EditorBuffer {
-    text: String,
+    /// Gap-buffer engine: provides O(1) insert/delete near the cursor.
+    gap: GapBuffer,
+    /// Always-current string materialisation of `gap`.  Updated after every
+    /// mutation so that `text()` can return a `&str` without any allocation.
+    text_cache: String,
     cursor: Cursor,
     selection: Selection,
     engine: BufferEngineKind,
@@ -25,8 +30,13 @@ impl EditorBuffer {
         }
     }
 
+    /// Rebuild `text_cache` from the gap buffer.  Called after every mutation.
+    fn sync_cache(&mut self) {
+        self.text_cache = self.gap.to_owned_string();
+    }
+
     pub fn text(&self) -> &str {
-        &self.text
+        &self.text_cache
     }
 
     pub fn engine(&self) -> BufferEngineKind {
@@ -42,10 +52,9 @@ impl EditorBuffer {
     }
 
     pub fn set_cursor(&mut self, offset: usize, extend_selection: bool) {
-        let mut clamped = offset.min(self.text.len());
-        // Snap to the nearest char boundary so callers never need to worry
-        // about multi-byte character alignment.
-        while clamped > 0 && !self.text.is_char_boundary(clamped) {
+        let len = self.gap.len();
+        let mut clamped = offset.min(len);
+        while clamped > 0 && !self.gap.is_char_boundary(clamped) {
             clamped -= 1;
         }
         self.cursor.offset = clamped;
@@ -70,7 +79,7 @@ impl EditorBuffer {
             return;
         }
         let mut new = cur - 1;
-        while new > 0 && !self.text.is_char_boundary(new) {
+        while new > 0 && !self.gap.is_char_boundary(new) {
             new -= 1;
         }
         self.set_cursor(new, extend_selection);
@@ -85,10 +94,14 @@ impl EditorBuffer {
                 return;
             }
         }
-        if cur >= self.text.len() {
+        if cur >= self.gap.len() {
             return;
         }
-        let step = self.text[cur..].chars().next().map_or(1, |c| c.len_utf8());
+        // Determine step width from the cached string (which is always in sync).
+        let step = self.text_cache[cur..]
+            .chars()
+            .next()
+            .map_or(1, |c| c.len_utf8());
         self.set_cursor(cur + step, extend_selection);
     }
 
@@ -97,11 +110,11 @@ impl EditorBuffer {
         if start == end {
             return None;
         }
-        self.text.get(start..end).map(|s| s.to_string())
+        self.text_cache.get(start..end).map(|s| s.to_string())
     }
 
     pub fn semantic_command(&self) -> Option<SemanticCommand> {
-        let raw = self.text.trim();
+        let raw = self.text_cache.trim();
         if raw.is_empty() {
             return None;
         }
@@ -118,15 +131,14 @@ impl EditorBuffer {
     }
 
     pub fn command_payload(&self, prefer_selection: bool) -> Option<String> {
-        if prefer_selection
-            && let Some(sel) = self.selected_text() {
-                let trimmed = sel.trim().to_string();
-                if !trimmed.is_empty() {
-                    return Some(trimmed);
-                }
+        if prefer_selection && let Some(sel) = self.selected_text() {
+            let trimmed = sel.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
             }
+        }
 
-        let trimmed = self.text.trim().to_string();
+        let trimmed = self.text_cache.trim().to_string();
         if trimmed.is_empty() {
             None
         } else {
@@ -137,7 +149,8 @@ impl EditorBuffer {
     pub fn insert_str(&mut self, s: &str) {
         self.delete_selection_inner(); // replace any active selection first
         let at = self.cursor.offset;
-        self.text.insert_str(at, s);
+        self.gap.insert_str(at, s);
+        self.sync_cache();
         self.cursor.offset += s.len();
         self.selection.anchor = self.cursor.offset;
         self.selection.active = self.cursor.offset;
@@ -156,14 +169,12 @@ impl EditorBuffer {
             return;
         }
 
-        // Walk backward from the cursor to find the previous char boundary;
-        // this is necessary for multi-byte characters (e.g. accented letters,
-        // CJK, emoji) where a single character occupies more than 1 byte.
         let mut at = self.cursor.offset - 1;
-        while at > 0 && !self.text.is_char_boundary(at) {
+        while at > 0 && !self.gap.is_char_boundary(at) {
             at -= 1;
         }
-        let removed = self.text.remove(at);
+        let removed = self.gap.remove_char(at);
+        self.sync_cache();
         self.cursor.offset = at;
         self.selection.anchor = at;
         self.selection.active = at;
@@ -180,11 +191,11 @@ impl EditorBuffer {
             return;
         }
         let at = self.cursor.offset;
-        if at >= self.text.len() {
+        if at >= self.gap.len() {
             return;
         }
-        let removed = self.text.remove(at);
-        // Cursor stays at the same byte position.
+        let removed = self.gap.remove_char(at);
+        self.sync_cache();
         self.selection.anchor = self.cursor.offset;
         self.selection.active = self.cursor.offset;
         self.history.push_undo(Edit::Delete {
@@ -200,12 +211,15 @@ impl EditorBuffer {
         if start == end {
             return false;
         }
-        let removed: String = self.text[start..end].to_string();
-        self.text.replace_range(start..end, "");
+        let removed = self.gap.delete_range(start, end);
+        self.sync_cache();
         self.cursor.offset = start;
         self.selection.anchor = start;
         self.selection.active = start;
-        self.history.push_undo(Edit::Delete { at: start, text: removed });
+        self.history.push_undo(Edit::Delete {
+            at: start,
+            text: removed,
+        });
         self.history.clear_redo();
         true
     }
@@ -215,11 +229,13 @@ impl EditorBuffer {
             match &edit {
                 Edit::Insert { at, text } => {
                     let end = at + text.len();
-                    self.text.replace_range(*at..end, "");
+                    self.gap.delete_range(*at, end);
+                    self.sync_cache();
                     self.cursor.offset = *at;
                 }
                 Edit::Delete { at, text } => {
-                    self.text.insert_str(*at, text);
+                    self.gap.insert_str(*at, text);
+                    self.sync_cache();
                     self.cursor.offset = at + text.len();
                 }
             }
@@ -233,12 +249,14 @@ impl EditorBuffer {
         if let Some(edit) = self.history.pop_redo() {
             match &edit {
                 Edit::Insert { at, text } => {
-                    self.text.insert_str(*at, text);
+                    self.gap.insert_str(*at, text);
+                    self.sync_cache();
                     self.cursor.offset = at + text.len();
                 }
                 Edit::Delete { at, text } => {
                     let end = at + text.len();
-                    self.text.replace_range(*at..end, "");
+                    self.gap.delete_range(*at, end);
+                    self.sync_cache();
                     self.cursor.offset = *at;
                 }
             }
@@ -251,9 +269,13 @@ impl EditorBuffer {
     /// Clears all text and resets the cursor to the beginning.
     /// The cleared text is pushed onto the undo stack so it can be recovered.
     pub fn clear(&mut self) {
-        if !self.text.is_empty() {
-            let removed = std::mem::take(&mut self.text);
-            self.history.push_undo(Edit::Delete { at: 0, text: removed });
+        if !self.gap.is_empty() {
+            let removed = self.gap.clear();
+            self.text_cache.clear();
+            self.history.push_undo(Edit::Delete {
+                at: 0,
+                text: removed,
+            });
             self.history.clear_redo();
         }
         self.cursor.offset = 0;
@@ -305,7 +327,7 @@ pub(crate) fn tokenize_shell_words(input: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{EditorBuffer};
+    use super::EditorBuffer;
     use crate::types::BufferEngineKind;
 
     #[test]
@@ -370,7 +392,10 @@ mod tests {
         buf.set_cursor(9, true);
 
         assert_eq!(buf.command_payload(true).as_deref(), Some("from"));
-        assert_eq!(buf.command_payload(false).as_deref(), Some("echo from buffer"));
+        assert_eq!(
+            buf.command_payload(false).as_deref(),
+            Some("echo from buffer")
+        );
     }
 
     #[test]

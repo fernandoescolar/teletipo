@@ -53,22 +53,12 @@ pub type WindowsDpi = FixedDpi;
 pub type WindowsFontFallback = BasicFontFallback;
 
 #[cfg(target_os = "linux")]
-pub type NativePlatformServices = PlatformServices<
-    LinuxClipboard,
-    LinuxIme,
-    LinuxAccessibility,
-    LinuxDpi,
-    LinuxFontFallback,
->;
+pub type NativePlatformServices =
+    PlatformServices<LinuxClipboard, LinuxIme, LinuxAccessibility, LinuxDpi, LinuxFontFallback>;
 
 #[cfg(target_os = "macos")]
-pub type NativePlatformServices = PlatformServices<
-    MacClipboard,
-    MacIme,
-    MacAccessibility,
-    MacDpi,
-    MacFontFallback,
->;
+pub type NativePlatformServices =
+    PlatformServices<MacClipboard, MacIme, MacAccessibility, MacDpi, MacFontFallback>;
 
 #[cfg(target_os = "windows")]
 pub type NativePlatformServices = PlatformServices<
@@ -132,7 +122,9 @@ pub fn default_shell() -> String {
 #[cfg(test)]
 mod tests {
     use super::{current_platform, detect_display_backend_from, native_services};
-    use crate::impls::{BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryClipboard, MemoryIme};
+    use crate::impls::{
+        BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryClipboard, MemoryIme,
+    };
     use crate::traits::{Accessibility, Clipboard, DpiAwareness, FontFallback, Ime};
     use crate::types::{DisplayBackend, PlatformKind};
 
@@ -160,7 +152,10 @@ mod tests {
     #[test]
     fn fallback_selects_font() {
         let fallback = BasicFontFallback;
-        assert_eq!(fallback.fallback_for_char('a').as_deref(), Some("monospace"));
+        assert_eq!(
+            fallback.fallback_for_char('a').as_deref(),
+            Some("monospace")
+        );
         assert_eq!(
             fallback.fallback_for_char('你').as_deref(),
             Some("fallback-unicode")
@@ -192,8 +187,14 @@ mod tests {
             detect_display_backend_from(Some("wayland-0"), Some(":0")),
             DisplayBackend::Wayland
         );
-        assert_eq!(detect_display_backend_from(None, Some(":0")), DisplayBackend::X11);
-        assert_eq!(detect_display_backend_from(None, None), DisplayBackend::Unknown);
+        assert_eq!(
+            detect_display_backend_from(None, Some(":0")),
+            DisplayBackend::X11
+        );
+        assert_eq!(
+            detect_display_backend_from(None, None),
+            DisplayBackend::Unknown
+        );
     }
 
     #[test]

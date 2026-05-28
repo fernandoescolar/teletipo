@@ -27,3 +27,8 @@ self_update = { version = "0.44", default-features = false, features = [
     "ureq",
     "rustls",
 ] }
+tracing = { workspace = true }
+thiserror = "1"
+
+[lints]
+workspace = true

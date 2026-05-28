@@ -1,9 +1,7 @@
 use std::time::Instant;
 
 use crate::batch::{Batch, BatchBuilder, FramePacer};
-use crate::geometry::{
-    snapshot_to_cell_quads_in_bounds, snapshot_to_text_quads_in_bounds,
-};
+use crate::geometry::{snapshot_to_cell_quads_in_bounds, snapshot_to_text_quads_in_bounds};
 use crate::types::{
     DamageRegion, PaneLayout, PipelineStage, RenderConfig, RenderSnapshot, RenderStats,
 };
@@ -19,6 +17,7 @@ pub struct WgpuRenderer {
     pacer: FramePacer,
     frames: usize,
     stats: RenderStats,
+    batch_builder: BatchBuilder,
 }
 
 impl WgpuRenderer {
@@ -32,6 +31,7 @@ impl WgpuRenderer {
             },
             frames: 0,
             stats: RenderStats::default(),
+            batch_builder: BatchBuilder::default(),
         }
     }
 
@@ -51,36 +51,35 @@ impl WgpuRenderer {
         &self.stats
     }
 
-    fn build_batches(&self, snapshot: &RenderSnapshot) -> Vec<Batch> {
-        let layout = PaneLayout { split_ratio: snapshot.split_ratio };
+    fn build_batches(&mut self, snapshot: &RenderSnapshot) -> Vec<Batch> {
+        let layout = PaneLayout {
+            split_ratio: snapshot.split_ratio,
+        };
         let terminal_quads = snapshot_to_cell_quads_in_bounds(
             &snapshot.terminal_text,
             &self.pending_damage,
             80,
             layout.terminal_bounds(),
         );
-        let editor_quads = snapshot_to_text_quads_in_bounds(
-            &snapshot.editor_text,
-            80,
-            layout.editor_bounds(),
-        );
-        let mut builder = BatchBuilder::default();
-        builder.add(Batch {
+        let editor_quads =
+            snapshot_to_text_quads_in_bounds(&snapshot.editor_text, 80, layout.editor_bounds());
+        self.batch_builder.clear();
+        self.batch_builder.add(Batch {
             stage: PipelineStage::Background,
             vertex_count: 12,
             index_count: 12,
         });
-        builder.add(Batch {
+        self.batch_builder.add(Batch {
             stage: PipelineStage::Text,
             vertex_count: (terminal_quads.len() + editor_quads.len()) * 4,
             index_count: (terminal_quads.len() + editor_quads.len()) * 6,
         });
-        builder.add(Batch {
+        self.batch_builder.add(Batch {
             stage: PipelineStage::Overlay,
             vertex_count: 6,
             index_count: 6,
         });
-        builder.build()
+        self.batch_builder.build()
     }
 }
 
@@ -140,6 +139,7 @@ mod tests {
     };
     use winit::dpi::PhysicalSize;
 
+    #[allow(dead_code)]
     fn blank_snapshot() -> RenderSnapshot {
         RenderSnapshot {
             terminal_text: String::new(),
@@ -175,6 +175,7 @@ mod tests {
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
             terminal_fullscreen: false,
+            terminal_screen_version: 0,
             terminal_styles: vec![],
             cursor_blink_on: true,
         }
@@ -221,6 +222,7 @@ mod tests {
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
             terminal_fullscreen: false,
+            terminal_screen_version: 0,
             terminal_styles: vec![],
             cursor_blink_on: true,
         });
@@ -273,6 +275,7 @@ mod tests {
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
             terminal_fullscreen: false,
+            terminal_screen_version: 0,
             terminal_styles: vec![],
             cursor_blink_on: true,
         });
@@ -317,6 +320,7 @@ mod tests {
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
             terminal_fullscreen: false,
+            terminal_screen_version: 0,
             terminal_styles: vec![],
             cursor_blink_on: true,
         });
@@ -360,6 +364,7 @@ mod tests {
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
             terminal_fullscreen: false,
+            terminal_screen_version: 0,
             terminal_styles: vec![],
             cursor_blink_on: true,
         };
@@ -449,6 +454,7 @@ mod tests {
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
             terminal_fullscreen: false,
+            terminal_screen_version: 0,
             terminal_styles: vec![],
             cursor_blink_on: true,
         };
@@ -495,12 +501,20 @@ mod tests {
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
             terminal_fullscreen: false,
+            terminal_screen_version: 0,
             terminal_styles: vec![],
             cursor_blink_on: true,
         };
         let (pos, size) = snapshot_to_ime_area(&snapshot, PhysicalSize::new(1280u32, 720u32));
-        assert!(pos.y > 500.0, "IME y={:.1} should be in the editor half", pos.y);
+        assert!(
+            pos.y > 500.0,
+            "IME y={:.1} should be in the editor half",
+            pos.y
+        );
         assert!(pos.x > 0.0, "IME x={:.1} should be right of origin", pos.x);
-        assert!(size.width > 0.0 && size.height > 0.0, "IME size must be positive");
+        assert!(
+            size.width > 0.0 && size.height > 0.0,
+            "IME size must be positive"
+        );
     }
 }

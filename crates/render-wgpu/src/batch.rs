@@ -28,8 +28,13 @@ impl BatchBuilder {
         self.batches.push(batch);
     }
 
-    pub fn build(self) -> Vec<Batch> {
-        self.batches
+    /// Clear the builder, retaining allocated capacity for reuse.
+    pub fn clear(&mut self) {
+        self.batches.clear();
+    }
+
+    pub fn build(&self) -> Vec<Batch> {
+        self.batches.clone()
     }
 }
 

@@ -1,9 +1,8 @@
 use std::time::Duration;
 
-use winit::event::{ElementState, KeyEvent, MouseButton};
-use winit::keyboard::ModifiersState;
-
-/// A detected link span in the terminal output (file path or URL).
+// `AppWindowEvent` is defined in `platform-abstraction` so that the UI crate
+// can consume window events without depending on the GPU renderer.
+pub use platform_abstraction::AppWindowEvent;
 #[derive(Debug, Clone)]
 pub struct TerminalLink {
     /// Row index in the terminal grid (0-based).
@@ -81,6 +80,11 @@ pub struct RenderSnapshot {
     pub terminal_cursor_col: usize,
     /// Whether terminal fullscreen mode is active (alternate screen apps).
     pub terminal_fullscreen: bool,
+    /// Monotonic version counter from the terminal screen — incremented on
+    /// every write.  Renderers can compare this against their last-rendered
+    /// version to skip expensive terminal vertex uploads when content is
+    /// unchanged.
+    pub terminal_screen_version: u64,
 }
 
 /// Visual state for the suggestion cycling dropdown shown above the editor.
@@ -132,7 +136,7 @@ pub struct SettingsOverlay {
 /// A single row in the settings overlay.
 #[derive(Debug, Clone)]
 pub struct SettingsItem {
-    /// `true` → section header (e.g. "[theme]"); not selectable.
+    /// `true` → section header (e.g. `[theme]`); not selectable.
     pub is_header: bool,
     /// `true` → value is cycled with ← → rather than free-text edited.
     pub is_selectable: bool,
@@ -142,25 +146,6 @@ pub struct SettingsItem {
     pub key: String,
     /// Right column text (empty for headers).
     pub value: String,
-}
-
-#[derive(Debug, Clone)]
-pub enum AppWindowEvent {
-    CloseRequested,
-    /// New top-left position of the window in physical pixels.
-    WindowMoved { x: i32, y: i32 },
-    /// Physical pixel dimensions of the window plus the actual cell size (physical px)
-    /// as measured from the loaded font. Use `cell_w`/`cell_h` to compute col/row counts.
-    Resized { width: u32, height: u32, scale_factor: f64, cell_w: f32, cell_h: f32 },
-    CursorMoved { x: f64, y: f64 },
-    MouseInput {
-        state: ElementState,
-        button: MouseButton,
-    },
-    MouseWheel { delta_lines: f32 },
-    ModifiersChanged(ModifiersState),
-    KeyboardInput(KeyEvent),
-    ImeCommit(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,27 +192,27 @@ pub enum VsyncMode {
 
 #[derive(Debug, Clone)]
 pub struct ColorTheme {
-    pub terminal_bg:       [f32; 4],
-    pub editor_bg:         [f32; 4],
-    pub separator:         [f32; 4],
+    pub terminal_bg: [f32; 4],
+    pub editor_bg: [f32; 4],
+    pub separator: [f32; 4],
     pub separator_focused: [f32; 4],
-    pub cursor:            [f32; 4],
-    pub text:              [f32; 4],
+    pub cursor: [f32; 4],
+    pub text: [f32; 4],
     /// ANSI 16-color palette override: indices 0-7 = normal, 8-15 = bright.
     /// Used by the terminal renderer instead of the built-in xterm table.
-    pub ansi_palette:      [[f32; 3]; 16],
+    pub ansi_palette: [[f32; 3]; 16],
 }
 
 impl Default for ColorTheme {
     fn default() -> Self {
         Self {
-            terminal_bg:       [0.05, 0.07, 0.09, 1.0],
-            editor_bg:         [0.09, 0.11, 0.14, 1.0],
-            separator:         [0.25, 0.27, 0.30, 1.0],
+            terminal_bg: [0.05, 0.07, 0.09, 1.0],
+            editor_bg: [0.09, 0.11, 0.14, 1.0],
+            separator: [0.25, 0.27, 0.30, 1.0],
             separator_focused: [0.00, 0.75, 1.00, 1.0],
-            cursor:            [0.00, 0.85, 1.00, 0.90],
-            text:              [0.85, 0.87, 0.90, 1.0],
-            ansi_palette:      default_ansi_palette(),
+            cursor: [0.00, 0.85, 1.00, 0.90],
+            text: [0.85, 0.87, 0.90, 1.0],
+            ansi_palette: default_ansi_palette(),
         }
     }
 }

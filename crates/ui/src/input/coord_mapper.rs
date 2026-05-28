@@ -1,4 +1,6 @@
-use render_wgpu::SCROLLBAR_W_PX;
+// Scrollbar width in physical pixels — must stay in sync with render-wgpu's
+// `geometry::SCROLLBAR_W_PX` so that hit-testing is consistent with rendering.
+const SCROLLBAR_W_PX: f32 = 10.0;
 
 pub fn clamp_editor_scroll_offset(
     cursor_row: usize,
@@ -130,13 +132,220 @@ pub fn detect_terminal_links(text: &str) -> Vec<(usize, usize, usize, String)> {
     let mut out = Vec::new();
     for (row, line) in text.split('\n').enumerate() {
         for token in line.split_whitespace() {
-            if token.starts_with("http://") || token.starts_with("https://") || token.starts_with("ftp://") {
-                if let Some(start) = line.find(token) {
-                    let end = start + token.chars().count();
-                    out.push((row, start, end, token.to_owned()));
-                }
+            if (token.starts_with("http://")
+                || token.starts_with("https://")
+                || token.starts_with("ftp://"))
+                && let Some(start) = line.find(token)
+            {
+                let end = start + token.chars().count();
+                out.push((row, start, end, token.to_owned()));
             }
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── clamp_editor_scroll_offset ────────────────────────────────────────
+
+    #[test]
+    fn clamp_scroll_keeps_offset_when_cursor_in_view() {
+        assert_eq!(clamp_editor_scroll_offset(5, 10, 0), 0);
+    }
+
+    #[test]
+    fn clamp_scroll_jumps_up_when_cursor_above_view() {
+        assert_eq!(clamp_editor_scroll_offset(2, 10, 5), 2);
+    }
+
+    #[test]
+    fn clamp_scroll_scrolls_down_when_cursor_below_view() {
+        // visible rows = 10, cursor on row 15 → offset must be 6 so 6..15 inclusive
+        // (6, 7, 8, 9, 10, 11, 12, 13, 14, 15 = 10 rows).
+        assert_eq!(clamp_editor_scroll_offset(15, 10, 0), 6);
+    }
+
+    // ── editor_row_col_to_offset ─────────────────────────────────────────
+
+    #[test]
+    fn row_col_to_offset_first_line() {
+        assert_eq!(editor_row_col_to_offset("hello\nworld", 0, 3), 3);
+    }
+
+    #[test]
+    fn row_col_to_offset_second_line() {
+        // "hello\n" = 6 bytes, "wo" = 2 → offset 8.
+        assert_eq!(editor_row_col_to_offset("hello\nworld", 1, 2), 8);
+    }
+
+    #[test]
+    fn row_col_to_offset_clamps_overshoot_column() {
+        // col past end of line clamps to line end (5).
+        assert_eq!(editor_row_col_to_offset("hello\nworld", 0, 100), 5);
+    }
+
+    #[test]
+    fn row_col_to_offset_clamps_overshoot_row() {
+        // row past last line clamps to last line.
+        let text = "a\nb\nc";
+        assert_eq!(editor_row_col_to_offset(text, 99, 1), 5); // "a\nb\nc" -> last line "c" pos
+    }
+
+    #[test]
+    fn row_col_to_offset_empty_text() {
+        assert_eq!(editor_row_col_to_offset("", 0, 0), 0);
+    }
+
+    #[test]
+    fn row_col_to_offset_unicode() {
+        // "á" is 2 bytes; col=1 should land after it (byte 2).
+        assert_eq!(editor_row_col_to_offset("áb", 0, 1), 2);
+    }
+
+    // ── editor_cursor_row_col ────────────────────────────────────────────
+
+    #[test]
+    fn cursor_row_col_at_start() {
+        assert_eq!(editor_cursor_row_col("hello", 0), (0, 0));
+    }
+
+    #[test]
+    fn cursor_row_col_on_third_line() {
+        assert_eq!(editor_cursor_row_col("a\nb\nc", 4), (2, 0));
+    }
+
+    #[test]
+    fn cursor_row_col_offset_past_end_is_clamped() {
+        let text = "ab";
+        assert_eq!(editor_cursor_row_col(text, 999), (0, 2));
+    }
+
+    #[test]
+    fn cursor_row_col_counts_characters_not_bytes() {
+        // "ñ" (U+00F1) = 2 bytes; column count is in chars.
+        assert_eq!(editor_cursor_row_col("ñx", 3), (0, 2));
+    }
+
+    // ── cursor_to_terminal_cell ──────────────────────────────────────────
+
+    #[test]
+    fn cursor_outside_pane_returns_none() {
+        // cy above tab bar → None
+        assert!(
+            cursor_to_terminal_cell(100.0, 5.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 4.0, 4.0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cursor_in_scrollbar_returns_none() {
+        // cx in the rightmost SCROLLBAR_W_PX pixels → None
+        assert!(
+            cursor_to_terminal_cell(795.0, 100.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 4.0, 4.0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cursor_in_pane_returns_row_col() {
+        let res =
+            cursor_to_terminal_cell(50.0, 100.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 0.0, 0.0);
+        assert!(res.is_some());
+    }
+
+    // ── extract_selection ─────────────────────────────────────────────────
+
+    #[test]
+    fn extract_selection_single_line() {
+        let text = "hello world";
+        // Select "ello" — char positions (0, 1) to (0, 4)
+        let s = extract_selection(text, (0, 1), (0, 4));
+        assert_eq!(s, "ello");
+    }
+
+    #[test]
+    fn extract_selection_multi_line() {
+        let text = "abc\ndef\nghi";
+        // Select from (0, 1) to (2, 1) → "bc\ndef\ngh"
+        let s = extract_selection(text, (0, 1), (2, 1));
+        assert_eq!(s, "bc\ndef\ngh");
+    }
+
+    #[test]
+    fn extract_selection_handles_reversed_anchor() {
+        let text = "abc\ndef";
+        // anchor after end → still normalises.
+        let s1 = extract_selection(text, (1, 1), (0, 0));
+        let s2 = extract_selection(text, (0, 0), (1, 1));
+        assert_eq!(s1, s2);
+    }
+
+    // ── current_line_prefix ──────────────────────────────────────────────
+
+    #[test]
+    fn current_line_prefix_strips_whitespace() {
+        assert_eq!(current_line_prefix("  git status", 12), "git status");
+    }
+
+    #[test]
+    fn current_line_prefix_only_last_line() {
+        let text = "first\nsecond cmd";
+        assert_eq!(current_line_prefix(text, text.len()), "second cmd");
+    }
+
+    // ── line_leading_spaces ──────────────────────────────────────────────
+
+    #[test]
+    fn leading_spaces_returns_indent() {
+        assert_eq!(line_leading_spaces("    code", 8), "    ");
+    }
+
+    #[test]
+    fn leading_spaces_no_indent() {
+        assert_eq!(line_leading_spaces("code", 4), "");
+    }
+
+    // ── cursor_at_line_end ───────────────────────────────────────────────
+
+    #[test]
+    fn cursor_at_end_of_text_is_line_end() {
+        assert!(cursor_at_line_end("abc", 3));
+    }
+
+    #[test]
+    fn cursor_before_newline_is_line_end() {
+        assert!(cursor_at_line_end("abc\ndef", 3));
+    }
+
+    #[test]
+    fn cursor_mid_line_is_not_line_end() {
+        assert!(!cursor_at_line_end("abc", 1));
+    }
+
+    // ── detect_terminal_links ────────────────────────────────────────────
+
+    #[test]
+    fn detects_https_link() {
+        let links = detect_terminal_links("visit https://example.com today");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].3, "https://example.com");
+    }
+
+    #[test]
+    fn detects_multiple_link_schemes() {
+        let text = "http://a.org\nftp://b.org";
+        let links = detect_terminal_links(text);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].0, 0); // row 0
+        assert_eq!(links[1].0, 1); // row 1
+    }
+
+    #[test]
+    fn ignores_non_url_tokens() {
+        let links = detect_terminal_links("plain text here");
+        assert!(links.is_empty());
+    }
 }

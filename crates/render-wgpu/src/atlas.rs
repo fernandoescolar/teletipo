@@ -84,7 +84,10 @@ fn shape_line(
 
         let span_cols = if i + 1 < infos.len() {
             let next_cluster = infos[i + 1].cluster;
-            let next_col = byte_to_info.get(&next_cluster).map(|&(c, _)| c).unwrap_or(col + 1);
+            let next_col = byte_to_info
+                .get(&next_cluster)
+                .map(|&(c, _)| c)
+                .unwrap_or(col + 1);
             (next_col.saturating_sub(col)).max(1)
         } else {
             (line_char_count.saturating_sub(col)).max(1)
@@ -147,6 +150,16 @@ pub(crate) struct CachedGlyph {
     pub is_color: bool,
 }
 
+/// Monospace font families tried in order when the user's configured family is
+/// unavailable or unspecified.
+const MONOSPACE_FONT_FAMILIES: &[&str] = &[
+    "Hack",
+    "DejaVu Sans Mono",
+    "Consolas",
+    "Courier New",
+    "Menlo",
+];
+
 /// Tries to load raw font bytes from the configured family or system fallbacks.
 pub(crate) fn load_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
     fn query_bytes_by_family(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
@@ -174,10 +187,10 @@ pub(crate) fn load_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
         if let Some(bytes) = query_bytes_by_family(&db, family) {
             return Some(bytes);
         }
-        eprintln!("render-wgpu: cannot load font family '{family}', trying fallback");
+        tracing::warn!(family = %family, "cannot load font family, trying fallback");
     }
 
-    for family in ["Hack", "DejaVu Sans Mono", "Consolas", "Courier New", "Menlo"] {
+    for &family in MONOSPACE_FONT_FAMILIES {
         if let Some(bytes) = query_bytes_by_family(&db, family) {
             return Some(bytes);
         }
@@ -187,7 +200,7 @@ pub(crate) fn load_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
         return Some(bytes);
     }
 
-    eprintln!("render-wgpu: no system font found — text will not be rendered");
+    tracing::error!("no system font found — text will not be rendered");
     None
 }
 
@@ -217,13 +230,13 @@ pub(crate) fn load_bold_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
 
-    if let Some(ref family) = config.font_family {
-        if let Some(bytes) = query_bold_bytes(&db, family) {
-            return Some(bytes);
-        }
+    if let Some(ref family) = config.font_family
+        && let Some(bytes) = query_bold_bytes(&db, family)
+    {
+        return Some(bytes);
     }
 
-    for family in ["Hack", "DejaVu Sans Mono", "Consolas", "Courier New", "Menlo"] {
+    for &family in MONOSPACE_FONT_FAMILIES {
         if let Some(bytes) = query_bold_bytes(&db, family) {
             return Some(bytes);
         }
@@ -250,12 +263,12 @@ pub(crate) fn load_unicode_fallback_font_bytes() -> Option<Vec<u8>> {
 
     // Ordered by Unicode coverage preference: macOS first, then Linux/Windows
     for family in [
-        "Apple Symbols",     // macOS – broad symbol coverage, outline-based
-        "Arial Unicode MS",  // macOS/Windows – very wide Unicode range
-        "Segoe UI Symbol",   // Windows
-        "Noto Sans",         // Linux (if installed)
-        "DejaVu Sans",       // Linux fallback
-        "FreeSans",          // another Linux option
+        "Apple Symbols",    // macOS – broad symbol coverage, outline-based
+        "Arial Unicode MS", // macOS/Windows – very wide Unicode range
+        "Segoe UI Symbol",  // Windows
+        "Noto Sans",        // Linux (if installed)
+        "DejaVu Sans",      // Linux fallback
+        "FreeSans",         // another Linux option
     ] {
         if let Some(bytes) = query_bytes(&db, family) {
             return Some(bytes);
@@ -290,18 +303,25 @@ pub(crate) fn pack_glyph(
         *row_h = 0;
     }
     if *alloc_y + gh + 1 > TEXT_ATLAS_SIZE {
-        eprintln!("render-wgpu: glyph atlas full");
+        tracing::warn!("glyph atlas full");
         return CachedGlyph::default();
     }
     let dest_x = *alloc_x;
     let dest_y = *alloc_y;
     // Convert coverage (1 byte/px) to RGBA8 (white with coverage in alpha).
-    let rgba: Vec<u8> = bitmap.iter().flat_map(|&cov| [255u8, 255, 255, cov]).collect();
+    let rgba: Vec<u8> = bitmap
+        .iter()
+        .flat_map(|&cov| [255u8, 255, 255, cov])
+        .collect();
     queue.write_texture(
         wgpu::ImageCopyTexture {
             texture: atlas_texture,
             mip_level: 0,
-            origin: wgpu::Origin3d { x: dest_x, y: dest_y, z: 0 },
+            origin: wgpu::Origin3d {
+                x: dest_x,
+                y: dest_y,
+                z: 0,
+            },
             aspect: wgpu::TextureAspect::All,
         },
         &rgba,
@@ -310,7 +330,11 @@ pub(crate) fn pack_glyph(
             bytes_per_row: Some(gw * 4),
             rows_per_image: Some(gh),
         },
-        wgpu::Extent3d { width: gw, height: gh, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width: gw,
+            height: gh,
+            depth_or_array_layers: 1,
+        },
     );
     *row_h = (*row_h).max(gh);
     *alloc_x += gw + 1;
@@ -324,9 +348,14 @@ pub(crate) fn pack_glyph(
     let offset_y_px = (baseline_y - glyph_ascent).max(-2.0);
     let offset_x_px = metrics.xmin as f32;
     CachedGlyph {
-        u0, v0, u1, v1,
-        offset_x_px, offset_y_px,
-        width_px: gw as f32, height_px: gh as f32,
+        u0,
+        v0,
+        u1,
+        v1,
+        offset_x_px,
+        offset_y_px,
+        width_px: gw as f32,
+        height_px: gh as f32,
         is_color: false,
     }
 }
@@ -353,7 +382,7 @@ pub(crate) fn pack_color_glyph(
         *row_h = 0;
     }
     if *alloc_y + glyph_h + 1 > TEXT_ATLAS_SIZE {
-        eprintln!("render-wgpu: glyph atlas full (colour glyph)");
+        tracing::warn!("glyph atlas full (colour glyph)");
         return CachedGlyph::default();
     }
     let dest_x = *alloc_x;
@@ -362,7 +391,11 @@ pub(crate) fn pack_color_glyph(
         wgpu::ImageCopyTexture {
             texture: atlas_texture,
             mip_level: 0,
-            origin: wgpu::Origin3d { x: dest_x, y: dest_y, z: 0 },
+            origin: wgpu::Origin3d {
+                x: dest_x,
+                y: dest_y,
+                z: 0,
+            },
             aspect: wgpu::TextureAspect::All,
         },
         rgba_pixels,
@@ -371,7 +404,11 @@ pub(crate) fn pack_color_glyph(
             bytes_per_row: Some(glyph_w * 4),
             rows_per_image: Some(glyph_h),
         },
-        wgpu::Extent3d { width: glyph_w, height: glyph_h, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width: glyph_w,
+            height: glyph_h,
+            depth_or_array_layers: 1,
+        },
     );
     *row_h = (*row_h).max(glyph_h);
     *alloc_x += glyph_w + 1;
@@ -381,7 +418,10 @@ pub(crate) fn pack_color_glyph(
     let u1 = (dest_x + glyph_w) as f32 / af;
     let v1 = (dest_y + glyph_h) as f32 / af;
     CachedGlyph {
-        u0, v0, u1, v1,
+        u0,
+        v0,
+        u1,
+        v1,
         offset_x_px: 0.0,
         offset_y_px: 0.0,
         width_px: glyph_w as f32,
@@ -453,7 +493,13 @@ pub(crate) fn pack_emoji_glyph(
     let rgba8 = resized.to_rgba8();
     let (w, h) = rgba8.dimensions();
     Some(pack_color_glyph(
-        queue, atlas_texture, alloc_x, alloc_y, row_h,
-        rgba8.as_raw(), w, h,
+        queue,
+        atlas_texture,
+        alloc_x,
+        alloc_y,
+        row_h,
+        rgba8.as_raw(),
+        w,
+        h,
     ))
 }

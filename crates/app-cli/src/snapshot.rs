@@ -1,7 +1,10 @@
-use crate::coords::{current_line_prefix, cursor_at_line_end, cursor_to_terminal_cell, detect_terminal_links, read_child_cwd, shorten_cwd_label};
+use crate::GpuRuntimeState;
+use crate::coords::{
+    current_line_prefix, cursor_at_line_end, cursor_to_terminal_cell, detect_terminal_links,
+    read_child_cwd, shorten_cwd_label,
+};
 use crate::settings::build_settings_overlay;
 use crate::theme;
-use crate::GpuRuntimeState;
 use render_wgpu::{ColorTheme, RenderSnapshot, SuggestionDropdown, TabContextMenu, TerminalLink};
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
@@ -25,13 +28,13 @@ pub(crate) fn theme_from_config(theme_file: Option<&theme::ThemeFile>) -> ColorT
         crate::config::parse_color(s).unwrap_or([0.0, 0.0, 0.0, 1.0])
     }
     ColorTheme {
-        terminal_bg:       c(&tf.background),
-        editor_bg:         c(&tf.background),
-        separator:         c(&tf.terminal_colors.normal.black),
+        terminal_bg: c(&tf.background),
+        editor_bg: c(&tf.background),
+        separator: c(&tf.terminal_colors.normal.black),
         separator_focused: c(&tf.accent),
-        cursor:            c(&tf.cursor),
-        text:              c(&tf.foreground),
-        ansi_palette:      theme::build_ansi_palette(tf),
+        cursor: c(&tf.cursor),
+        text: c(&tf.foreground),
+        ansi_palette: theme::build_ansi_palette(tf),
     }
 }
 
@@ -67,27 +70,25 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     }
 
     // Advance cursor blink: toggle every 500 ms.
-    const BLINK_HALF_MS: u128 = 500;
-    if state.cursor_blink_last.elapsed().as_millis() >= BLINK_HALF_MS {
+    if state.cursor_blink_last.elapsed().as_millis() >= crate::consts::BLINK_HALF_MS {
         state.cursor_blink_phase = !state.cursor_blink_phase;
         state.cursor_blink_last = std::time::Instant::now();
     }
 
     let active = state.active_tab;
     let scroll_offset = state.tabs[active].scroll_offset;
-    let active_palette: Option<[[f32; 3]; 16]> = state.active_theme_idx
+    let active_palette: Option<[[f32; 3]; 16]> = state
+        .active_theme_idx
         .map(|i| theme::build_ansi_palette(&state.available_themes[i]));
-    let styled = state.tabs[active].app.terminal_styled_snapshot_at_offset_with_palette(
-        scroll_offset,
-        active_palette.as_ref(),
-    );
+    let styled = state.tabs[active]
+        .app
+        .terminal_styled_snapshot_at_offset_with_palette(scroll_offset, active_palette.as_ref());
     let terminal_text: String = styled.iter().map(|(ch, _, _, _)| *ch).collect();
     let terminal_fg_colors: Vec<Option<[f32; 3]>> =
         styled.iter().map(|(_, fg, _, _)| *fg).collect();
     let terminal_bg_colors: Vec<Option<[f32; 3]>> =
         styled.iter().map(|(_, _, bg, _)| *bg).collect();
-    let terminal_styles: Vec<u8> =
-        styled.iter().map(|(_, _, _, s)| *s).collect();
+    let terminal_styles: Vec<u8> = styled.iter().map(|(_, _, _, s)| *s).collect();
     state.tabs[active].last_terminal_text = terminal_text.clone();
     state.tabs[active].term_row_count = terminal_text.lines().count().max(1);
     // Underline only the link the cursor is currently hovering over.
@@ -97,21 +98,32 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             Vec::new()
         } else {
             let split_ratio = state.tabs[active].split_ratio;
-            let tab_bar_h   = state.tab_bar_h();
+            let tab_bar_h = state.tab_bar_h();
             let pad_h = state.user_config.padding.horizontal as f32;
-            let pad_v = state.user_config.padding.vertical   as f32;
+            let pad_v = state.user_config.padding.vertical as f32;
             let term_row_count = state.tabs[active].term_row_count;
             if let Some((hover_row, hover_col)) = cursor_to_terminal_cell(
-                state.cursor_x, state.cursor_y,
-                state.window_width, state.window_height,
-                split_ratio, state.cell_w, state.cell_h,
-                term_row_count, tab_bar_h,
-                pad_h, pad_v,
+                state.cursor_x,
+                state.cursor_y,
+                state.window_width,
+                state.window_height,
+                split_ratio,
+                state.cell_w,
+                state.cell_h,
+                term_row_count,
+                tab_bar_h,
+                pad_h,
+                pad_v,
             ) {
                 all_links
                     .into_iter()
                     .filter(|(r, cs, ce, _)| *r == hover_row && hover_col >= *cs && hover_col < *ce)
-                    .map(|(row, col_start, col_end, target)| TerminalLink { row, col_start, col_end, target })
+                    .map(|(row, col_start, col_end, target)| TerminalLink {
+                        row,
+                        col_start,
+                        col_end,
+                        target,
+                    })
                     .collect()
             } else {
                 Vec::new()
@@ -209,12 +221,15 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let n_tabs = state.tabs.len();
     for i in 0..n_tabs {
         if let Some(pid) = state.tabs[i].pty.as_ref().and_then(|p| p.child_pid())
-            && let Some(new_cwd) = read_child_cwd(pid) {
-                state.tabs[i].cwd = new_cwd;
-            }
+            && let Some(new_cwd) = read_child_cwd(pid)
+        {
+            state.tabs[i].cwd = new_cwd;
+        }
     }
     let tab_labels: Vec<String> = if state.tabs.len() > 1 {
-        state.tabs.iter()
+        state
+            .tabs
+            .iter()
             .map(|t| shorten_cwd_label(&t.cwd, 16))
             .collect()
     } else {
@@ -238,12 +253,14 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     });
 
     let tab_context_menu = if state.tabs.len() > 1 {
-        state.tab_context_menu.map(|(tab_idx, x_px, y_px)| TabContextMenu {
-            tab_idx,
-            x_px: x_px as f32,
-            y_px: y_px as f32,
-            hovered_item: state.tab_context_hover,
-        })
+        state
+            .tab_context_menu
+            .map(|(tab_idx, x_px, y_px)| TabContextMenu {
+                tab_idx,
+                x_px: x_px as f32,
+                y_px: y_px as f32,
+                hovered_item: state.tab_context_hover,
+            })
     } else {
         None
     };
@@ -270,8 +287,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         tab_drag_from: state.tab_drag,
         tab_drag_insert_before,
         theme: {
-            let tf = state.active_theme_idx
-                .map(|i| &state.available_themes[i]);
+            let tf = state.active_theme_idx.map(|i| &state.available_themes[i]);
             theme_from_config(tf)
         },
         padding_h: state.user_config.padding.horizontal,
@@ -295,11 +311,14 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         terminal_links,
         request_exit: state.should_exit,
         cursor_shape: state.tabs[active].app.cursor_shape(),
-        bell_active: state.bell_flash_until.map_or(false, |t| t > std::time::Instant::now()),
+        bell_active: state
+            .bell_flash_until
+            .is_some_and(|t| t > std::time::Instant::now()),
         cursor_blink_on: state.cursor_blink_phase,
         terminal_cursor_row: state.tabs[active].app.terminal_cursor_pos().0,
         terminal_cursor_col: state.tabs[active].app.terminal_cursor_pos().1,
         terminal_fullscreen: state.tabs[active].was_terminal_fullscreen,
+        terminal_screen_version: state.tabs[active].app.terminal_screen_version(),
         suggestion_dropdown: {
             if let Some(idx) = state.tabs[active].suggestion_index {
                 let prefix = state.tabs[active]
@@ -313,14 +332,22 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                     &state.tabs[active].cwd,
                 );
                 if items.len() >= 2 {
-                    let display: Vec<String> =
-                        items.into_iter().map(|s| truncate_display(&s, 50)).collect();
-                    // Keep the selected item inside the visible window.
-                    const MAX_VISIBLE: usize = 8;
+                    let display: Vec<String> = items
+                        .into_iter()
+                        .map(|s| truncate_display(&s, 50))
+                        .collect();
                     let scroll_offset = idx
-                        .saturating_sub(MAX_VISIBLE - 1)
-                        .min(display.len().saturating_sub(MAX_VISIBLE));
-                    Some(SuggestionDropdown { items: display, selected: idx, scroll_offset })
+                        .saturating_sub(crate::consts::SUGGESTION_DROPDOWN_MAX_VISIBLE - 1)
+                        .min(
+                            display
+                                .len()
+                                .saturating_sub(crate::consts::SUGGESTION_DROPDOWN_MAX_VISIBLE),
+                        );
+                    Some(SuggestionDropdown {
+                        items: display,
+                        selected: idx,
+                        scroll_offset,
+                    })
                 } else {
                     None
                 }

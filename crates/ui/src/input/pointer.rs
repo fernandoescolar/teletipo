@@ -1,9 +1,13 @@
 use crate::actions::UiAction;
 use crate::state::UiState;
-use render_wgpu::AppWindowEvent;
+use crate::tab_backend::TabBackend;
+use platform_abstraction::AppWindowEvent;
 use winit::event::{ElementState, MouseButton};
 
-pub(super) fn map_pointer_event(state: &UiState, event: &AppWindowEvent) -> Vec<UiAction> {
+pub(super) fn map_pointer_event<B: TabBackend>(
+    state: &UiState<B>,
+    event: &AppWindowEvent,
+) -> Vec<UiAction> {
     match event {
         AppWindowEvent::WindowMoved { x, y } => {
             vec![UiAction::CursorMoved {

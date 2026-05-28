@@ -1,11 +1,11 @@
+use crate::GpuRuntimeState;
 use crate::config::load_config;
 use crate::tab::{HistoryEntry, PersistentSession, TabSession, TabState};
 use crate::theme;
-use crate::GpuRuntimeState;
 use app_orchestrator::App;
 use fontdb::Database;
-use std::fs;
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::PathBuf;
 use terminal_pty::PortablePtySession;
 
@@ -37,7 +37,12 @@ pub(crate) fn enumerate_font_families() -> Vec<FontEntry> {
         .into_iter()
         .map(|family| FontEntry { family })
         .collect();
-    fonts.insert(0, FontEntry { family: "(default)".to_owned() });
+    fonts.insert(
+        0,
+        FontEntry {
+            family: "(default)".to_owned(),
+        },
+    );
     fonts
 }
 
@@ -70,7 +75,7 @@ pub(crate) fn spawn_pty(
                 Ok((pty, false))
             }
         }
-        None => PortablePtySession::spawn_shell(shell, rows, cols, cwd),
+        None => Ok(PortablePtySession::spawn_shell(shell, rows, cols, cwd)?),
     }
 }
 
@@ -89,34 +94,61 @@ pub(crate) fn load_session() -> PersistentSession {
     };
     let data = match fs::read_to_string(&path) {
         Ok(d) => d,
-        Err(_) => return PersistentSession::default(),
+        Err(err) => {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "failed to read session file",
+                );
+            }
+            return PersistentSession::default();
+        }
     };
-    serde_json::from_str(&data).unwrap_or_default()
+    match serde_json::from_str(&data) {
+        Ok(s) => s,
+        Err(err) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %err,
+                "failed to parse session file; ignoring saved session",
+            );
+            PersistentSession::default()
+        }
+    }
 }
 
 pub(crate) fn save_session(state: &GpuRuntimeState) {
     let Some(path) = session_path() else { return };
 
     fn trim_output(s: &str) -> String {
-        let t: String = s.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
+        let t: String = s
+            .lines()
+            .map(|l| l.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n");
         t.trim_end().to_string()
     }
 
-    let tab_sessions: Vec<TabSession> = state.tabs.iter().map(|tab| TabSession {
-        terminal_output: trim_output(&tab.app.terminal_ansi_snapshot()),
-        history: tab.history.clone(),
-        split_ratio: tab.split_ratio,
-        cwd: tab.cwd.clone(),
-        history_entries: tab.history_entries.clone(),
-    }).collect();
+    let tab_sessions: Vec<TabSession> = state
+        .tabs
+        .iter()
+        .map(|tab| TabSession {
+            terminal_output: trim_output(&tab.app.terminal_ansi_snapshot()),
+            history: tab.history.clone(),
+            split_ratio: tab.split_ratio,
+            cwd: tab.cwd.clone(),
+            history_entries: tab.history_entries.clone(),
+        })
+        .collect();
 
     let active = &state.tabs[state.active_tab];
     // Store logical pixels (physical ÷ scale_factor) so window.rs can restore the
     // size correctly with LogicalSize::new(…) on the next launch.
-    let logical_w = (state.window_width  as f64 / state.scale_factor).round() as u32;
+    let logical_w = (state.window_width as f64 / state.scale_factor).round() as u32;
     let logical_h = (state.window_height as f64 / state.scale_factor).round() as u32;
     let session = PersistentSession {
-        window_width:  logical_w,
+        window_width: logical_w,
         window_height: logical_h,
         window_x: Some(state.window_x),
         window_y: Some(state.window_y),
@@ -138,7 +170,7 @@ pub(crate) fn build_initial_state(
     session: PersistentSession,
     update_rx: std::sync::mpsc::Receiver<Option<String>>,
 ) -> GpuRuntimeState {
-    let window_width  = session.window_width;
+    let window_width = session.window_width;
     let window_height = session.window_height;
     let window_x = session.window_x.unwrap_or(0);
     let window_y = session.window_y.unwrap_or(0);
@@ -212,11 +244,16 @@ pub(crate) fn build_initial_state(
             // Backward compat: if no frecency data is stored, seed each history
             // entry with count=1 and an artificial age so older entries rank lower.
             history_entries: if saved.history_entries.is_empty() {
-                saved.history.iter().enumerate().map(|(i, cmd)| HistoryEntry {
-                    cmd: cmd.clone(),
-                    count: 1,
-                    last_used_secs: i as u64,
-                }).collect()
+                saved
+                    .history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, cmd)| HistoryEntry {
+                        cmd: cmd.clone(),
+                        count: 1,
+                        last_used_secs: i as u64,
+                    })
+                    .collect()
             } else {
                 saved.history_entries.clone()
             },
@@ -265,6 +302,7 @@ pub(crate) fn build_initial_state(
         cursor_blink_last: std::time::Instant::now(),
         cursor_blink_phase: true,
         mouse_btn_held: None,
+        shell_services: Box::new(crate::shell::SystemShell::new()),
     };
 
     state.active_theme_idx = state
@@ -277,7 +315,12 @@ pub(crate) fn build_initial_state(
         .font
         .family
         .as_ref()
-        .and_then(|family| state.available_fonts.iter().position(|f| &f.family == family))
+        .and_then(|family| {
+            state
+                .available_fonts
+                .iter()
+                .position(|f| &f.family == family)
+        })
         .unwrap_or(0);
 
     state
@@ -287,11 +330,7 @@ pub(crate) fn build_initial_state(
 
 /// Execute the selected item from the tab context menu.
 /// `tab_idx` is the tab the menu was opened for; `item` is 0-3.
-pub(crate) fn execute_context_menu_item(
-    state: &mut GpuRuntimeState,
-    tab_idx: usize,
-    item: usize,
-) {
+pub(crate) fn execute_context_menu_item(state: &mut GpuRuntimeState, tab_idx: usize, item: usize) {
     match item {
         0 => state.add_new_tab(),
         1 => state.close_tab(tab_idx),

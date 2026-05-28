@@ -97,4 +97,42 @@ mod tests {
         assert!(s2.version > s1.version);
         assert!(!s2.changed_ranges.is_empty());
     }
+
+    #[test]
+    fn shell_highlighter_empty_input_yields_no_ranges() {
+        assert!(ShellLikeHighlighter.highlight("").is_empty());
+    }
+
+    #[test]
+    fn shell_highlighter_only_flags_after_command() {
+        let ranges = ShellLikeHighlighter.highlight("ls -la -h");
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(ranges[0].token, "command");
+        assert_eq!(ranges[1].token, "flag");
+        assert_eq!(ranges[2].token, "flag");
+    }
+
+    #[test]
+    fn shell_highlighter_args_are_args() {
+        let ranges = ShellLikeHighlighter.highlight("cp src dst");
+        assert_eq!(ranges[0].token, "command");
+        assert_eq!(ranges[1].token, "arg");
+        assert_eq!(ranges[2].token, "arg");
+    }
+
+    #[test]
+    fn shell_highlighter_ranges_match_substrings() {
+        let text = "git push origin";
+        let ranges = ShellLikeHighlighter.highlight(text);
+        for r in &ranges {
+            // The slice at the reported range must be the whitespace-delimited token.
+            assert!(!text[r.range.clone()].contains(char::is_whitespace));
+        }
+    }
+
+    #[test]
+    fn incremental_snapshot_starts_at_version_one() {
+        let s = ShellLikeHighlighter.highlight_incremental("ls", None);
+        assert_eq!(s.version, 1);
+    }
 }

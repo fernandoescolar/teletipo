@@ -1,21 +1,18 @@
-use crate::config::{save_config, SETTINGS_FIELDS};
 use crate::GpuRuntimeState;
+use crate::config::{SETTINGS_FIELDS, save_config};
+use crate::consts::SEARCH_MAX_VISIBLE;
 use render_wgpu::{SettingsItem, SettingsOverlay};
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};
-
-/// Maximum search dropdown rows visible at once.
-const SEARCH_MAX_VISIBLE: usize = 8;
 
 /// Returns the increment step for numeric fields, or `None` if the field is
 /// not numeric.
 fn numeric_step(section: &str, key: &str) -> Option<f32> {
     match (section, key) {
-        ("font",     "size")             => Some(0.5),
-        ("padding",  "horizontal")
-        | ("padding", "vertical")        => Some(1.0),
+        ("font", "size") => Some(0.5),
+        ("padding", "horizontal") | ("padding", "vertical") => Some(1.0),
         ("terminal", "scrollback_lines") => Some(500.0),
-        _                                => None,
+        _ => None,
     }
 }
 
@@ -41,12 +38,12 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
         // Font family and theme: searchable selectors (Enter = search mode, ← → = cycle).
         // Numeric fields: selectable so they display "← N →" and ← → increments.
         // Everything else: free-text via Enter.
-        let is_searchable = (field.section == "font" && field.key == "family")
-            || field.key == "theme";
-        let is_selectable = is_searchable
-            || numeric_step(field.section, field.key).is_some();
+        let is_searchable =
+            (field.section == "font" && field.key == "family") || field.key == "theme";
+        let is_selectable = is_searchable || numeric_step(field.section, field.key).is_some();
         let value = if field.section == "font" && field.key == "family" {
-            state.available_fonts
+            state
+                .available_fonts
                 .get(state.active_font_idx)
                 .map(|f| f.family.clone())
                 .unwrap_or_else(|| "(default)".to_owned())
@@ -68,19 +65,27 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
             let q = buf.to_lowercase();
             let field = &SETTINGS_FIELDS[state.settings.cursor];
             let matches: Vec<String> = if field.section == "font" && field.key == "family" {
-                state.available_fonts.iter()
+                state
+                    .available_fonts
+                    .iter()
                     .filter(|f| f.family.to_lowercase().contains(&q))
                     .map(|f| f.family.clone())
                     .collect()
             } else if field.key == "theme" {
-                state.available_themes.iter()
+                state
+                    .available_themes
+                    .iter()
                     .filter(|t| t.name.to_lowercase().contains(&q))
                     .map(|t| t.name.clone())
                     .collect()
             } else {
                 vec![]
             };
-            (matches, state.settings.search_selected, state.settings.search_scroll_offset)
+            (
+                matches,
+                state.settings.search_selected,
+                state.settings.search_scroll_offset,
+            )
         } else {
             (vec![], 0, 0)
         };
@@ -145,12 +150,12 @@ pub(crate) fn handle_settings_key(
                 }
             }
             Key::Character(_) | Key::Named(NamedKey::Space) => {
-                if let Some(text) = key_event.text.as_ref() {
-                    if let Some(ref mut buf) = state.settings.search_buf {
-                        buf.push_str(text.as_str());
-                        state.settings.search_selected = 0;
-                        state.settings.search_scroll_offset = 0;
-                    }
+                if let Some(text) = key_event.text.as_ref()
+                    && let Some(ref mut buf) = state.settings.search_buf
+                {
+                    buf.push_str(text.as_str());
+                    state.settings.search_selected = 0;
+                    state.settings.search_scroll_offset = 0;
                 }
             }
             _ => {}
@@ -189,17 +194,30 @@ pub(crate) fn handle_settings_key(
             if field.key == "theme" && !state.available_themes.is_empty() {
                 let n = state.available_themes.len();
                 let cur = state.active_theme_idx.unwrap_or(0);
-                let next = if is_right { (cur + 1) % n } else if cur == 0 { n - 1 } else { cur - 1 };
+                let next = if is_right {
+                    (cur + 1) % n
+                } else if cur == 0 {
+                    n - 1
+                } else {
+                    cur - 1
+                };
                 state.active_theme_idx = Some(next);
                 let tf = state.available_themes[next].clone();
                 apply_theme_file(&mut state.user_config, &tf);
                 state.settings.dirty = true;
-            } else if field.section == "font" && field.key == "family"
+            } else if field.section == "font"
+                && field.key == "family"
                 && !state.available_fonts.is_empty()
             {
                 let n = state.available_fonts.len();
                 let cur = state.active_font_idx;
-                let next = if is_right { (cur + 1) % n } else if cur == 0 { n - 1 } else { cur - 1 };
+                let next = if is_right {
+                    (cur + 1) % n
+                } else if cur == 0 {
+                    n - 1
+                } else {
+                    cur - 1
+                };
                 state.active_font_idx = next;
                 state.user_config.font.family = if next == 0 {
                     None
@@ -219,7 +237,10 @@ pub(crate) fn handle_settings_key(
                     // Fractional step (font size): keep one decimal place.
                     format!("{:.1}", (current + delta).max(0.0))
                 };
-                if state.user_config.set_field(field.section, field.key, &new_val) {
+                if state
+                    .user_config
+                    .set_field(field.section, field.key, &new_val)
+                {
                     state.settings.dirty = true;
                 }
             }
@@ -227,8 +248,8 @@ pub(crate) fn handle_settings_key(
         Key::Named(NamedKey::Enter) => {
             let idx = state.settings.cursor;
             let field = &SETTINGS_FIELDS[idx];
-            let is_searchable = (field.section == "font" && field.key == "family")
-                || field.key == "theme";
+            let is_searchable =
+                (field.section == "font" && field.key == "family") || field.key == "theme";
             if is_searchable {
                 // Activate type-to-filter search mode (font family and theme).
                 state.settings.search_buf = Some(String::new());
@@ -273,9 +294,10 @@ pub(crate) fn handle_settings_key(
         }
         Key::Character(_) | Key::Named(NamedKey::Space) => {
             if let Some(ref mut buf) = state.settings.edit_buf
-                && let Some(text) = key_event.text.as_ref() {
-                    buf.push_str(text.as_str());
-                }
+                && let Some(text) = key_event.text.as_ref()
+            {
+                buf.push_str(text.as_str());
+            }
         }
         _ => {}
     }
@@ -286,14 +308,23 @@ pub(crate) fn handle_settings_key(
 
 /// Count the number of items matching the current search buffer for the focused field.
 fn search_match_count(state: &GpuRuntimeState) -> usize {
-    let buf = state.settings.search_buf.as_deref().unwrap_or("").to_lowercase();
+    let buf = state
+        .settings
+        .search_buf
+        .as_deref()
+        .unwrap_or("")
+        .to_lowercase();
     let field = &SETTINGS_FIELDS[state.settings.cursor];
     if field.section == "font" && field.key == "family" {
-        state.available_fonts.iter()
+        state
+            .available_fonts
+            .iter()
             .filter(|f| f.family.to_lowercase().contains(&buf))
             .count()
     } else if field.key == "theme" {
-        state.available_themes.iter()
+        state
+            .available_themes
+            .iter()
             .filter(|t| t.name.to_lowercase().contains(&buf))
             .count()
     } else {
@@ -317,32 +348,47 @@ fn clamp_search_scroll(state: &mut GpuRuntimeState, n_matches: usize) {
 
 /// Confirm the currently highlighted search result for the focused field (font family or theme).
 fn confirm_search_selection(state: &mut GpuRuntimeState) {
-    let buf = state.settings.search_buf.as_deref().unwrap_or("").to_lowercase();
+    let buf = state
+        .settings
+        .search_buf
+        .as_deref()
+        .unwrap_or("")
+        .to_lowercase();
     let field = &SETTINGS_FIELDS[state.settings.cursor];
     if field.section == "font" && field.key == "family" {
-        let matches: Vec<String> = state.available_fonts.iter()
+        let matches: Vec<String> = state
+            .available_fonts
+            .iter()
             .filter(|f| f.family.to_lowercase().contains(&buf))
             .map(|f| f.family.clone())
             .collect();
-        if let Some(family) = matches.get(state.settings.search_selected) {
-            if let Some(idx) = state.available_fonts.iter().position(|f| &f.family == family) {
-                state.active_font_idx = idx;
-                state.user_config.font.family = if idx == 0 { None } else { Some(family.clone()) };
-                state.settings.dirty = true;
-            }
+        if let Some(family) = matches.get(state.settings.search_selected)
+            && let Some(idx) = state
+                .available_fonts
+                .iter()
+                .position(|f| &f.family == family)
+        {
+            state.active_font_idx = idx;
+            state.user_config.font.family = if idx == 0 { None } else { Some(family.clone()) };
+            state.settings.dirty = true;
         }
     } else if field.key == "theme" {
-        let matches: Vec<String> = state.available_themes.iter()
+        let matches: Vec<String> = state
+            .available_themes
+            .iter()
             .filter(|t| t.name.to_lowercase().contains(&buf))
             .map(|t| t.name.clone())
             .collect();
-        if let Some(theme_name) = matches.get(state.settings.search_selected) {
-            if let Some(idx) = state.available_themes.iter().position(|t| &t.name == theme_name) {
-                state.active_theme_idx = Some(idx);
-                let tf = state.available_themes[idx].clone();
-                apply_theme_file(&mut state.user_config, &tf);
-                state.settings.dirty = true;
-            }
+        if let Some(theme_name) = matches.get(state.settings.search_selected)
+            && let Some(idx) = state
+                .available_themes
+                .iter()
+                .position(|t| &t.name == theme_name)
+        {
+            state.active_theme_idx = Some(idx);
+            let tf = state.available_themes[idx].clone();
+            apply_theme_file(&mut state.user_config, &tf);
+            state.settings.dirty = true;
         }
     }
     state.settings.search_buf = None;
@@ -354,4 +400,3 @@ fn confirm_search_selection(state: &mut GpuRuntimeState) {
 pub(crate) fn apply_theme_file(cfg: &mut crate::config::UserConfig, tf: &crate::theme::ThemeFile) {
     cfg.active_theme = Some(tf.name.clone());
 }
-

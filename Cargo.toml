@@ -7,5 +7,30 @@ edition = "2024"
 members = ["crates/*"]
 resolver = "2"
 
+[workspace.dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
 [dependencies]
 app-cli = { path = "crates/app-cli" }
+tracing-subscriber = { workspace = true }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+bare_urls = "warn"
+invalid_codeblock_attributes = "warn"
+invalid_rust_codeblocks = "warn"
+
+[workspace.lints.clippy]
+# Surfaced as guidance, not blocking. Phase 2 tasks T4/T14 will reduce these.
+too_many_lines = "allow"
+cognitive_complexity = "allow"

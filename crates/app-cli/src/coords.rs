@@ -108,6 +108,7 @@ pub(crate) fn cursor_to_terminal_cell(
 /// Read the current working directory of an OS process.
 /// Returns `None` if the pid is no longer alive or the OS call fails.
 #[cfg(target_os = "macos")]
+#[allow(unsafe_code)] // macOS proc_pidinfo FFI
 pub(crate) fn read_child_cwd(pid: u32) -> Option<String> {
     // Use macOS proc_pidinfo(PROC_PIDVNODEPATHINFO) to get the cwd path.
     // Struct sizes (verified against <sys/proc_info.h>):
@@ -142,7 +143,10 @@ pub(crate) fn read_child_cwd(pid: u32) -> Option<String> {
         return None;
     }
     let path_bytes = &buf[PATH_OFFSET..PATH_OFFSET + MAXPATHLEN];
-    let end = path_bytes.iter().position(|&b| b == 0).unwrap_or(MAXPATHLEN);
+    let end = path_bytes
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(MAXPATHLEN);
     String::from_utf8(path_bytes[..end].to_vec())
         .ok()
         .filter(|s| !s.is_empty())
@@ -388,12 +392,18 @@ fn char_starts_with(chars: &[char], pos: usize, prefix: &[char]) -> bool {
 }
 
 fn is_link_boundary(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '(' | '[' | '<' | ':' | '=' | '"' | '\'' | ',' | ';' | '{' | '}')
+    matches!(
+        c,
+        ' ' | '\t' | '(' | '[' | '<' | ':' | '=' | '"' | '\'' | ',' | ';' | '{' | '}'
+    )
 }
 
 fn is_path_char(c: char) -> bool {
     c.is_alphanumeric()
-        || matches!(c, '/' | '.' | '_' | '-' | '+' | '~' | '@' | '%' | '&' | '=' | '?' | '#')
+        || matches!(
+            c,
+            '/' | '.' | '_' | '-' | '+' | '~' | '@' | '%' | '&' | '=' | '?' | '#'
+        )
 }
 
 fn scan_url_end(chars: &[char], start: usize) -> usize {
@@ -403,7 +413,10 @@ fn scan_url_end(chars: &[char], start: usize) -> usize {
     }
     // Trim trailing punctuation that typically trails the URL in prose.
     while end > start
-        && matches!(chars[end - 1], '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '>' | '\'' | '"')
+        && matches!(
+            chars[end - 1],
+            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '>' | '\'' | '"'
+        )
     {
         end -= 1;
     }
@@ -416,7 +429,12 @@ fn scan_path_end(chars: &[char], start: usize) -> usize {
         end += 1;
     }
     // Trim trailing punctuation.
-    while end > start && matches!(chars[end - 1], '.' | ',' | ':' | ';' | ')' | ']' | '\'' | '"') {
+    while end > start
+        && matches!(
+            chars[end - 1],
+            '.' | ',' | ':' | ';' | ')' | ']' | '\'' | '"'
+        )
+    {
         end -= 1;
     }
     end
@@ -450,7 +468,10 @@ fn scan_line_col_suffix(chars: &[char], start: usize) -> usize {
 pub(crate) fn replace_cursor_line(text: &str, cursor: usize, new_line: &str) -> (String, usize) {
     let cursor = cursor.min(text.len());
     let line_start = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let line_end = text[cursor..].find('\n').map(|i| cursor + i).unwrap_or(text.len());
+    let line_end = text[cursor..]
+        .find('\n')
+        .map(|i| cursor + i)
+        .unwrap_or(text.len());
     let new_text = format!("{}{}{}", &text[..line_start], new_line, &text[line_end..]);
     let new_cursor = line_start + new_line.len();
     (new_text, new_cursor)

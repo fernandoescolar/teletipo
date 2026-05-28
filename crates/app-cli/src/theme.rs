@@ -34,14 +34,14 @@ pub struct TerminalColors {
 /// The eight named ANSI colors in a single brightness tier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorSet {
-    pub black:   String,
-    pub red:     String,
-    pub green:   String,
-    pub yellow:  String,
-    pub blue:    String,
+    pub black: String,
+    pub red: String,
+    pub green: String,
+    pub yellow: String,
+    pub blue: String,
     pub magenta: String,
-    pub cyan:    String,
-    pub white:   String,
+    pub cyan: String,
+    pub white: String,
 }
 
 // ── Palette extraction ────────────────────────────────────────────────────────
@@ -86,7 +86,8 @@ pub fn themes_dir() -> Option<PathBuf> {
 }
 
 /// Load all valid `*.yaml`/`*.yml` files from the themes directory.
-/// Invalid or unreadable files are silently skipped.
+/// Files that fail to parse log a `tracing::warn!` with the offending path
+/// and are skipped.
 pub fn load_themes() -> Vec<ThemeFile> {
     let dir = match themes_dir() {
         Some(d) => d,
@@ -103,8 +104,21 @@ pub fn load_themes() -> Vec<ThemeFile> {
             s.ends_with(".yaml") || s.ends_with(".yml")
         })
         .filter_map(|e| {
-            let data = fs::read_to_string(e.path()).ok()?;
-            serde_yaml::from_str(&data).ok()
+            let path = e.path();
+            let data = match fs::read_to_string(&path) {
+                Ok(d) => d,
+                Err(err) => {
+                    tracing::warn!(path = %path.display(), error = %err, "failed to read theme file");
+                    return None;
+                }
+            };
+            match serde_yaml::from_str::<ThemeFile>(&data) {
+                Ok(t) => Some(t),
+                Err(err) => {
+                    tracing::warn!(path = %path.display(), error = %err, "failed to parse theme file");
+                    None
+                }
+            }
         })
         .collect();
 
@@ -132,7 +146,11 @@ pub fn install_default_themes() {
                     .and_then(|e| {
                         let n = e.file_name();
                         let s = n.to_string_lossy().into_owned();
-                        if s.ends_with(".yaml") || s.ends_with(".yml") { Some(()) } else { None }
+                        if s.ends_with(".yaml") || s.ends_with(".yml") {
+                            Some(())
+                        } else {
+                            None
+                        }
                     })
                     .is_some()
             })
@@ -151,12 +169,114 @@ pub fn install_default_themes() {
 
 /// Bundled default themes shipped with the binary.
 const BUNDLED_THEMES: &[(&str, &str)] = &[
-    ("catppuccin-mocha.yaml",  include_str!("../../../themes/catppuccin-mocha.yaml")),
-    ("dracula.yaml",           include_str!("../../../themes/dracula.yaml")),
-    ("gruvbox-dark.yaml",      include_str!("../../../themes/gruvbox-dark.yaml")),
-    ("nord.yaml",              include_str!("../../../themes/nord.yaml")),
-    ("one-dark.yaml",          include_str!("../../../themes/one-dark.yaml")),
-    ("rose-pine.yaml",         include_str!("../../../themes/rose-pine.yaml")),
-    ("solarized-dark.yaml",    include_str!("../../../themes/solarized-dark.yaml")),
-    ("tokyo-night.yaml",       include_str!("../../../themes/tokyo-night.yaml")),
+    (
+        "catppuccin-mocha.yaml",
+        include_str!("../../../themes/catppuccin-mocha.yaml"),
+    ),
+    ("dracula.yaml", include_str!("../../../themes/dracula.yaml")),
+    (
+        "gruvbox-dark.yaml",
+        include_str!("../../../themes/gruvbox-dark.yaml"),
+    ),
+    ("nord.yaml", include_str!("../../../themes/nord.yaml")),
+    (
+        "one-dark.yaml",
+        include_str!("../../../themes/one-dark.yaml"),
+    ),
+    (
+        "rose-pine.yaml",
+        include_str!("../../../themes/rose-pine.yaml"),
+    ),
+    (
+        "solarized-dark.yaml",
+        include_str!("../../../themes/solarized-dark.yaml"),
+    ),
+    (
+        "tokyo-night.yaml",
+        include_str!("../../../themes/tokyo-night.yaml"),
+    ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn color_set(prefix: &str) -> ColorSet {
+        ColorSet {
+            black: format!("#{prefix}0000"),
+            red: format!("#{prefix}1111"),
+            green: format!("#{prefix}2222"),
+            yellow: format!("#{prefix}3333"),
+            blue: format!("#{prefix}4444"),
+            magenta: format!("#{prefix}5555"),
+            cyan: format!("#{prefix}6666"),
+            white: format!("#{prefix}7777"),
+        }
+    }
+
+    fn sample_theme() -> ThemeFile {
+        ThemeFile {
+            name: "test".into(),
+            accent: "#ffffff".into(),
+            cursor: "#ffffff".into(),
+            background: "#000000".into(),
+            foreground: "#ffffff".into(),
+            details: "darker".into(),
+            terminal_colors: TerminalColors {
+                normal: color_set("00"),
+                bright: color_set("80"),
+            },
+        }
+    }
+
+    #[test]
+    fn palette_has_sixteen_entries() {
+        let palette = build_ansi_palette(&sample_theme());
+        assert_eq!(palette.len(), 16);
+    }
+
+    #[test]
+    fn palette_normal_then_bright_ordering() {
+        let palette = build_ansi_palette(&sample_theme());
+        // Normal black at index 0, bright black at index 8.
+        assert_eq!(palette[0][0], 0.0);
+        // Bright tier (prefix "80" → 0x80 = 128) should be brighter than normal tier.
+        assert!(palette[8][0] > palette[0][0]);
+    }
+
+    #[test]
+    fn invalid_color_string_falls_back_to_black() {
+        let mut tf = sample_theme();
+        tf.terminal_colors.normal.red = "not-a-color".into();
+        let palette = build_ansi_palette(&tf);
+        assert_eq!(palette[1], [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn default_details_is_darker() {
+        // Verify the serde default function used by ThemeFile.
+        assert_eq!(default_details(), "darker");
+    }
+
+    #[test]
+    fn theme_yaml_roundtrip_through_serde() {
+        let yaml = serde_yaml::to_string(&sample_theme()).expect("serialise");
+        let parsed: ThemeFile = serde_yaml::from_str(&yaml).expect("parse");
+        assert_eq!(parsed.name, "test");
+        assert_eq!(parsed.details, "darker");
+    }
+
+    #[test]
+    fn embedded_default_themes_parse() {
+        for (name, body) in BUNDLED_THEMES {
+            let parsed: Result<ThemeFile, _> = serde_yaml::from_str(body);
+            assert!(
+                parsed.is_ok(),
+                "theme '{name}' failed to parse: {:?}",
+                parsed.err()
+            );
+            let palette = build_ansi_palette(&parsed.unwrap());
+            assert_eq!(palette.len(), 16);
+        }
+    }
+}

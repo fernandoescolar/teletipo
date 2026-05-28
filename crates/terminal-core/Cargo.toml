@@ -10,3 +10,6 @@ thiserror = "2"
 
 [dev-dependencies]
 criterion = "0.5"
+
+[lints]
+workspace = true

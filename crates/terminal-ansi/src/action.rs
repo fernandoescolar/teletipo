@@ -9,10 +9,16 @@ pub enum Action {
     CursorDown(u16),
     CursorForward(u16),
     CursorBackward(u16),
-    CursorPosition { row: u16, col: u16 },
+    CursorPosition {
+        row: u16,
+        col: u16,
+    },
     SaveCursor,
     RestoreCursor,
-    SetScrollRegion { top: u16, bottom: u16 },
+    SetScrollRegion {
+        top: u16,
+        bottom: u16,
+    },
     InsertChars(u16),
     DeleteChars(u16),
     InsertLines(u16),

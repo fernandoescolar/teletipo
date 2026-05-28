@@ -47,9 +47,15 @@ pub fn ansi_cell_tuple_with_palette(
         fg = fg.map(|[r, g, b]| [r * 0.55, g * 0.55, b * 0.55]);
     }
     let mut style_bits: u8 = 0;
-    if cell.style.bold        { style_bits |= STYLE_BOLD; }
-    if cell.style.italic      { style_bits |= STYLE_ITALIC; }
-    if cell.style.strikethrough { style_bits |= STYLE_STRIKETHROUGH; }
+    if cell.style.bold {
+        style_bits |= STYLE_BOLD;
+    }
+    if cell.style.italic {
+        style_bits |= STYLE_ITALIC;
+    }
+    if cell.style.strikethrough {
+        style_bits |= STYLE_STRIKETHROUGH;
+    }
     (cell.ch, fg, bg, style_bits)
 }
 
@@ -58,16 +64,16 @@ pub fn ansi_cell_tuple_with_palette(
 /// * 232–255: the 24-step embedded grayscale ramp
 pub fn ansi_indexed_to_rgb(idx: u8) -> [f32; 3] {
     match idx {
-        0  => [0.000, 0.000, 0.000],
-        1  => [0.502, 0.000, 0.000],
-        2  => [0.000, 0.502, 0.000],
-        3  => [0.502, 0.502, 0.000],
-        4  => [0.000, 0.000, 0.502],
-        5  => [0.502, 0.000, 0.502],
-        6  => [0.000, 0.502, 0.502],
-        7  => [0.753, 0.753, 0.753],
-        8  => [0.502, 0.502, 0.502],
-        9  => [1.000, 0.333, 0.333],
+        0 => [0.000, 0.000, 0.000],
+        1 => [0.502, 0.000, 0.000],
+        2 => [0.000, 0.502, 0.000],
+        3 => [0.502, 0.502, 0.000],
+        4 => [0.000, 0.000, 0.502],
+        5 => [0.502, 0.000, 0.502],
+        6 => [0.000, 0.502, 0.502],
+        7 => [0.753, 0.753, 0.753],
+        8 => [0.502, 0.502, 0.502],
+        9 => [1.000, 0.333, 0.333],
         10 => [0.333, 1.000, 0.333],
         11 => [1.000, 1.000, 0.333],
         12 => [0.333, 0.333, 1.000],
@@ -76,9 +82,21 @@ pub fn ansi_indexed_to_rgb(idx: u8) -> [f32; 3] {
         15 => [1.000, 1.000, 1.000],
         16..=231 => {
             let i = idx - 16;
-            let r = if i / 36 == 0 { 0.0 } else { (i / 36) as f32 / 5.0 };
-            let g = if (i / 6).is_multiple_of(6) { 0.0 } else { ((i / 6) % 6) as f32 / 5.0 };
-            let b = if i.is_multiple_of(6) { 0.0 } else { (i % 6) as f32 / 5.0 };
+            let r = if i / 36 == 0 {
+                0.0
+            } else {
+                (i / 36) as f32 / 5.0
+            };
+            let g = if (i / 6).is_multiple_of(6) {
+                0.0
+            } else {
+                ((i / 6) % 6) as f32 / 5.0
+            };
+            let b = if i.is_multiple_of(6) {
+                0.0
+            } else {
+                (i % 6) as f32 / 5.0
+            };
             [r, g, b]
         }
         232..=255 => {

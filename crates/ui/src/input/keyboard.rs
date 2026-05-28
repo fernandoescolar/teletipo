@@ -1,15 +1,21 @@
 use crate::actions::{EditorCmd, UiAction};
 use crate::state::UiState;
-use render_wgpu::AppWindowEvent;
+use crate::tab_backend::TabBackend;
+use platform_abstraction::AppWindowEvent;
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};
 
-pub(super) fn map_keyboard_event(state: &UiState, event: &AppWindowEvent) -> Vec<UiAction> {
+pub(super) fn map_keyboard_event<B: TabBackend>(
+    state: &UiState<B>,
+    event: &AppWindowEvent,
+) -> Vec<UiAction> {
     let AppWindowEvent::KeyboardInput(key_event) = event else {
-        if let AppWindowEvent::ImeCommit(text) = event {
-            if !text.is_empty() && text != "\r" && text != "\n" {
-                return vec![UiAction::EditorInsert(text.clone())];
-            }
+        if let AppWindowEvent::ImeCommit(text) = event
+            && !text.is_empty()
+            && text != "\r"
+            && text != "\n"
+        {
+            return vec![UiAction::EditorInsert(text.clone())];
         }
         return Vec::new();
     };

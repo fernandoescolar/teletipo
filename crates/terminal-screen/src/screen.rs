@@ -1,10 +1,11 @@
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::cell::{Cell, CellStyle};
-use crate::color::{ansi_cell_tuple_with_palette, AnsiColor};
-use crate::grid::{reflow_grid, Grid};
 use crate::StyledChars;
+use crate::cell::{Cell, CellStyle};
+use crate::color::{AnsiColor, ansi_cell_tuple_with_palette};
+use crate::grid::{Grid, reflow_grid};
 
 #[derive(Debug, Clone)]
 pub struct Screen {
@@ -19,6 +20,10 @@ pub struct Screen {
     dirty_rows: Vec<bool>,
     full_redraw: bool,
     version: u64,
+    /// Cached result of `dump_text()` for the current `version`.
+    text_cache: RefCell<Option<(u64, String)>>,
+    /// Cached result of `dump_ansi()` for the current `version`.
+    ansi_cache: RefCell<Option<(u64, String)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +122,8 @@ impl Screen {
             dirty_rows: vec![true; rows],
             full_redraw: true,
             version: 1,
+            text_cache: RefCell::new(None),
+            ansi_cache: RefCell::new(None),
         }
     }
 
@@ -149,6 +156,13 @@ impl Screen {
     /// Returns whether the alternate screen buffer is currently active.
     pub fn is_alternate_screen(&self) -> bool {
         self.use_alternate
+    }
+
+    /// Monotonic version counter: incremented on every write to the screen.
+    /// Callers can compare against a previously stored value to check whether
+    /// the screen content has changed since the last snapshot.
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     pub fn put_char(&mut self, ch: char) {
@@ -354,7 +368,10 @@ impl Screen {
                 4 => self.current_style.underline = true,
                 7 => self.current_style.reverse = true,
                 9 => self.current_style.strikethrough = true,
-                22 => { self.current_style.bold = false; self.current_style.dim = false; }
+                22 => {
+                    self.current_style.bold = false;
+                    self.current_style.dim = false;
+                }
                 23 => self.current_style.italic = false,
                 24 => self.current_style.underline = false,
                 27 => self.current_style.reverse = false,
@@ -393,9 +410,7 @@ impl Screen {
                     _ => {}
                 },
                 49 => self.current_style.bg = AnsiColor::Default,
-                90..=97 => {
-                    self.current_style.fg = AnsiColor::Indexed((params[i] - 90 + 8) as u8)
-                }
+                90..=97 => self.current_style.fg = AnsiColor::Indexed((params[i] - 90 + 8) as u8),
                 100..=107 => {
                     self.current_style.bg = AnsiColor::Indexed((params[i] - 100 + 8) as u8)
                 }
@@ -618,13 +633,29 @@ impl Screen {
     }
 
     pub fn dump_text(&self) -> String {
-        self.active_grid().dump_text()
+        let mut cache = self.text_cache.borrow_mut();
+        if let Some((cached_version, ref text)) = *cache
+            && cached_version == self.version
+        {
+            return text.clone();
+        }
+        let text = self.active_grid().dump_text();
+        *cache = Some((self.version, text.clone()));
+        text
     }
 
     /// Encodes the scrollback + visible grid as a string of ANSI SGR escape
     /// sequences so that fg/bg colors and text attributes are preserved when
     /// fed back through the terminal parser on next launch.
     pub fn dump_ansi(&self) -> String {
+        {
+            let cache = self.ansi_cache.borrow();
+            if let Some((cached_version, ref text)) = *cache
+                && cached_version == self.version
+            {
+                return text.clone();
+            }
+        }
         let grid = &self.primary;
         let cols = grid.cols;
         let mut out = String::new();
@@ -646,6 +677,7 @@ impl Screen {
             }
         }
 
+        *self.ansi_cache.borrow_mut() = Some((self.version, out.clone()));
         out
     }
 
@@ -653,10 +685,7 @@ impl Screen {
         self.dump_styled_at_offset_with_palette(0, None)
     }
 
-    pub fn dump_styled_at_offset(
-        &self,
-        scroll_offset: usize,
-    ) -> StyledChars {
+    pub fn dump_styled_at_offset(&self, scroll_offset: usize) -> StyledChars {
         self.dump_styled_at_offset_with_palette(scroll_offset, None)
     }
 

@@ -4,9 +4,16 @@ use crate::components::ModifierState;
 pub enum EditorCmd {
     Backspace,
     DeleteForward,
-    MoveLeft { extend_selection: bool },
-    MoveRight { extend_selection: bool },
-    SetCursor { offset: usize, extend_selection: bool },
+    MoveLeft {
+        extend_selection: bool,
+    },
+    MoveRight {
+        extend_selection: bool,
+    },
+    SetCursor {
+        offset: usize,
+        extend_selection: bool,
+    },
     Undo,
     Redo,
     Clear,
@@ -42,11 +49,20 @@ pub enum UiAction {
     NewTab,
     CloseTab(usize),
     SwitchTab(usize),
-    MoveTab { from: usize, to: usize },
+    MoveTab {
+        from: usize,
+        to: usize,
+    },
     DragTabStart(usize),
-    DragTabUpdate { cursor_x: f64 },
+    DragTabUpdate {
+        cursor_x: f64,
+    },
     DragTabEnd,
-    OpenTabContextMenu { tab: usize, x: f64, y: f64 },
+    OpenTabContextMenu {
+        tab: usize,
+        x: f64,
+        y: f64,
+    },
     CloseContextMenu,
     ContextMenuHover(Option<usize>),
     RenameTab(usize, String),
@@ -64,8 +80,14 @@ pub enum UiAction {
     ScrollTo(usize),
     EditorScrollBy(i32),
 
-    SelectionBegin { row: usize, col: usize },
-    SelectionUpdate { row: usize, col: usize },
+    SelectionBegin {
+        row: usize,
+        col: usize,
+    },
+    SelectionUpdate {
+        row: usize,
+        col: usize,
+    },
     SelectionEnd,
     ClearSelection,
     CopySelection,
@@ -89,7 +111,10 @@ pub enum UiAction {
         cell_w: f32,
         cell_h: f32,
     },
-    CursorMoved { x: f64, y: f64 },
+    CursorMoved {
+        x: f64,
+        y: f64,
+    },
     MouseWheel(f32),
     ModifiersChanged(ModifierState),
 }
