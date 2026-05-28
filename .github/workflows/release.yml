@@ -113,9 +113,24 @@ jobs:
 
       - name: Package
         run: |
-          mkdir -p dist
-          tar -czf dist/teletipo-linux-x86_64.tar.gz \
-            -C target/x86_64-unknown-linux-gnu/release teletipo
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG_DIR="dist/teletipo-linux-x86_64"
+          mkdir -p "$PKG_DIR"
+          mkdir -p "$PKG_DIR/share/icons/hicolor/128x128/apps"
+          mkdir -p "$PKG_DIR/share/applications"
+          cp target/x86_64-unknown-linux-gnu/release/teletipo "$PKG_DIR/teletipo"
+          cp docs/teletipo128x128.png "$PKG_DIR/share/icons/hicolor/128x128/apps/teletipo.png"
+          printf '%s\n' \
+            '[Desktop Entry]' \
+            'Type=Application' \
+            'Name=Teletipo' \
+            "Comment=Teletipo Terminal v${VERSION}" \
+            'Exec=teletipo' \
+            'Icon=teletipo' \
+            'Terminal=false' \
+            'Categories=System;TerminalEmulator;' \
+            > "$PKG_DIR/share/applications/teletipo.desktop"
+          tar -czf dist/teletipo-linux-x86_64.tar.gz -C dist teletipo-linux-x86_64
 
       - uses: actions/upload-artifact@v4
         with:
@@ -142,9 +157,12 @@ jobs:
 
       - name: Package
         run: |
-          mkdir -p dist
-          cd target/x86_64-pc-windows-gnu/release
-          zip -9 "$GITHUB_WORKSPACE/dist/teletipo-windows-x86_64.zip" teletipo.exe
+          PKG_DIR="dist/teletipo-windows-x86_64"
+          mkdir -p "$PKG_DIR"
+          cp target/x86_64-pc-windows-gnu/release/teletipo.exe "$PKG_DIR/teletipo.exe"
+          cp docs/teletipo128x128.png "$PKG_DIR/teletipo.png"
+          cd "$PKG_DIR"
+          zip -9 "$GITHUB_WORKSPACE/dist/teletipo-windows-x86_64.zip" teletipo.exe teletipo.png
 
       - uses: actions/upload-artifact@v4
         with:
