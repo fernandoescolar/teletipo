@@ -206,6 +206,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                             }
                         }
                 }
+                "a" => {
+                    let end = state.tab().app.editor_snapshot().len();
+                    state.tab_mut().app.set_editor_cursor(0, false);
+                    state.tab_mut().app.set_editor_cursor(end, true);
+                }
                 "t" => state.add_new_tab(),
                 "w" => {
                     let idx = state.active_tab;
@@ -374,11 +379,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             }
         }
         Key::Named(NamedKey::Home) => {
-            state.tab_mut().app.set_editor_cursor(0, false);
+            let extend = state.shift_down;
+            state.tab_mut().app.set_editor_cursor(0, extend);
         }
         Key::Named(NamedKey::End) => {
+            let extend = state.shift_down;
             let end = state.tab().app.editor_snapshot().len();
-            state.tab_mut().app.set_editor_cursor(end, false);
+            state.tab_mut().app.set_editor_cursor(end, extend);
         }
         Key::Named(NamedKey::Space) => {
             state.tab_mut().app.insert_editor_input(" ");
