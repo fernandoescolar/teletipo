@@ -1,0 +1,10 @@
+[package]
+name = "ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+app-orchestrator = { path = "../app-orchestrator" }
+render-wgpu = { path = "../render-wgpu" }
+platform-abstraction = { path = "../platform-abstraction" }
+terminal-pty = { path = "../terminal-pty" }
