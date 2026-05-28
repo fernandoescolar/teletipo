@@ -285,6 +285,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         bell_active: state.bell_flash_until.map_or(false, |t| t > std::time::Instant::now()),
         terminal_cursor_row: state.tabs[active].app.terminal_cursor_pos().0,
         terminal_cursor_col: state.tabs[active].app.terminal_cursor_pos().1,
+        terminal_fullscreen: state.tabs[active].was_terminal_fullscreen,
         suggestion_dropdown: {
             if let Some(idx) = state.tabs[active].suggestion_index {
                 let prefix = state.tabs[active]

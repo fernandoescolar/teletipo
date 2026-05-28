@@ -191,6 +191,11 @@ impl TerminalSession {
     pub fn cursor_pos(&self) -> (usize, usize) {
         (self.screen.cursor_row(), self.screen.cursor_col())
     }
+
+    /// Returns whether the terminal is currently using the alternate screen.
+    pub fn is_alternate_screen(&self) -> bool {
+        self.screen.is_alternate_screen()
+    }
 }
 
 #[cfg(test)]
@@ -227,6 +232,16 @@ mod tests {
 
         session.feed(b"\x1b[?1049l");
         assert!(session.snapshot_text().contains("main"));
+    }
+
+    #[test]
+    fn alternate_screen_accessor_toggles() {
+        let mut session = TerminalSession::new(2, 8).expect("session");
+        assert!(!session.is_alternate_screen());
+        session.feed(b"\x1b[?1049h");
+        assert!(session.is_alternate_screen());
+        session.feed(b"\x1b[?1049l");
+        assert!(!session.is_alternate_screen());
     }
 
     #[test]

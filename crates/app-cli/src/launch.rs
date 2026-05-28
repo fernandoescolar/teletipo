@@ -196,6 +196,8 @@ pub(crate) fn build_initial_state(
             history_index: None,
             saved_input: String::new(),
             split_ratio: saved.split_ratio,
+            was_terminal_fullscreen: false,
+            pre_fullscreen_split_ratio: saved.split_ratio,
             selection_anchor: None,
             selection_anchor_scroll: 0,
             selection_end: None,

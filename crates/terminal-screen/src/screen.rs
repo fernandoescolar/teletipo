@@ -146,6 +146,11 @@ impl Screen {
         self.active_grid().cursor_col
     }
 
+    /// Returns whether the alternate screen buffer is currently active.
+    pub fn is_alternate_screen(&self) -> bool {
+        self.use_alternate
+    }
+
     pub fn put_char(&mut self, ch: char) {
         let style = self.current_style;
         if self.use_alternate {
@@ -791,6 +796,16 @@ mod tests {
 
         screen.set_alternate_screen(false);
         assert!(screen.dump_text().contains('x'));
+    }
+
+    #[test]
+    fn alternate_screen_accessor_tracks_toggle() {
+        let mut screen = Screen::new(2, 4);
+        assert!(!screen.is_alternate_screen());
+        screen.set_alternate_screen(true);
+        assert!(screen.is_alternate_screen());
+        screen.set_alternate_screen(false);
+        assert!(!screen.is_alternate_screen());
     }
 
     #[test]

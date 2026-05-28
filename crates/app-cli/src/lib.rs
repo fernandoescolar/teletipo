@@ -132,6 +132,7 @@ impl GpuRuntimeState {
         let active = self.active_tab;
         let mut dead_tabs: Vec<usize> = Vec::new();
         let mut exit_codes: Vec<(usize, i32)> = Vec::new();
+        let mut resize_tabs: Vec<usize> = Vec::new();
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             let Some(mut pty) = tab.pty.take() else { continue };
             let had_data = tab.app.pump_pty_once(&mut pty).map(|n| n > 0).unwrap_or(false);
@@ -148,6 +149,20 @@ impl GpuRuntimeState {
                 self.bell_flash_until =
                     Some(Instant::now() + std::time::Duration::from_millis(150));
             }
+            let now_fullscreen = tab.app.is_alternate_screen();
+            if now_fullscreen != tab.was_terminal_fullscreen {
+                tab.was_terminal_fullscreen = now_fullscreen;
+                if now_fullscreen {
+                    tab.pre_fullscreen_split_ratio = tab.split_ratio;
+                    tab.split_ratio = 1.0;
+                    tab.scroll_offset = 0;
+                    tab.is_selecting = false;
+                    tab.is_selecting_editor = false;
+                } else {
+                    tab.split_ratio = tab.pre_fullscreen_split_ratio.clamp(0.2, 0.85);
+                }
+                resize_tabs.push(i);
+            }
             if let Some(code) = tab.app.take_last_exit_code() {
                 exit_codes.push((i, code));
             }
@@ -161,6 +176,21 @@ impl GpuRuntimeState {
                 self.commit_pending_cmd(idx);
             } else {
                 self.tabs[idx].pending_cmd = None;
+            }
+        }
+        if !resize_tabs.is_empty() {
+            let tab_bar_h = self.tab_bar_h();
+            let available_h = self.window_height as f32 - tab_bar_h;
+            let pad_h = self.user_config.padding.horizontal as f32;
+            let pad_v = self.user_config.padding.vertical as f32;
+            let cols = ((self.window_width as f32 - 2.0 * pad_h) / self.cell_w).max(1.0) as u16;
+            for i in resize_tabs {
+                if i >= self.tabs.len() {
+                    continue;
+                }
+                let term_h = (available_h * self.tabs[i].split_ratio - 2.0 * pad_v).max(self.cell_h);
+                let rows = (term_h / self.cell_h).max(1.0) as u16;
+                self.resize_tab(i, rows, cols);
             }
         }
         // Close tabs whose shell exited; if it is the last tab, quit the app.
@@ -337,6 +367,8 @@ impl GpuRuntimeState {
             history_index: None,
             saved_input: String::new(),
             split_ratio,
+            was_terminal_fullscreen: false,
+            pre_fullscreen_split_ratio: split_ratio,
             selection_anchor: None,
             selection_anchor_scroll: 0,
             selection_end: None,

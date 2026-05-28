@@ -174,6 +174,7 @@ mod tests {
             bell_active: false,
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
+            terminal_fullscreen: false,
         }
     }
 
@@ -217,6 +218,7 @@ mod tests {
             bell_active: false,
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
+            terminal_fullscreen: false,
         });
         assert_eq!(renderer.frames(), 1);
     }
@@ -266,6 +268,7 @@ mod tests {
             bell_active: false,
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
+            terminal_fullscreen: false,
         });
         assert_eq!(renderer.frames(), 1);
         assert_eq!(renderer.atlas_len(), 0);
@@ -307,6 +310,7 @@ mod tests {
             bell_active: false,
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
+            terminal_fullscreen: false,
         });
         assert!(renderer.frames() >= 1);
         assert!(renderer.stats().frame_count >= 1);
@@ -347,6 +351,7 @@ mod tests {
             bell_active: false,
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
+            terminal_fullscreen: false,
         };
 
         let only_row_0 = snapshot_to_cell_quads(
@@ -433,6 +438,7 @@ mod tests {
             bell_active: false,
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
+            terminal_fullscreen: false,
         };
         let size = PhysicalSize::new(1280u32, 720u32);
         let verts = build_panel_vertices(size, &snapshot, 0.0, 8.4, 16.8, 0.0, 0.0);
@@ -476,6 +482,7 @@ mod tests {
             bell_active: false,
             terminal_cursor_row: 0,
             terminal_cursor_col: 0,
+            terminal_fullscreen: false,
         };
         let (pos, size) = snapshot_to_ime_area(&snapshot, PhysicalSize::new(1280u32, 720u32));
         assert!(pos.y > 500.0, "IME y={:.1} should be in the editor half", pos.y);

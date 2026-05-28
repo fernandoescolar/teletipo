@@ -10,7 +10,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     let AppWindowEvent::KeyboardInput(key_event) = &event else {
         if let AppWindowEvent::ImeCommit(text) = event
             && !text.is_empty() && text != "\r" && text != "\n" {
-                state.tab_mut().app.insert_editor_input(text.as_str());
+                if state.tab().app.is_alternate_screen() {
+                    state.send_terminal_input(text.as_bytes());
+                } else {
+                    state.tab_mut().app.insert_editor_input(text.as_str());
+                }
             }
         return;
     };
@@ -22,6 +26,86 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     if state.settings.open {
         settings::handle_settings_key(state, key_event);
         return;
+    }
+
+    // In alternate-screen fullscreen mode (vim/less/htop), route typing and
+    // navigation keys directly to the terminal PTY instead of the command editor.
+    if state.tab().app.is_alternate_screen() && !state.super_down {
+        match &key_event.logical_key {
+            // Keep settings shortcut available even in fullscreen mode.
+            Key::Character(ch) if state.ctrl_down && ch.as_str() == "," => {}
+            Key::Named(NamedKey::Escape) => {
+                state.send_terminal_input(b"\x1b");
+                return;
+            }
+            Key::Named(NamedKey::Tab) => {
+                state.send_terminal_input(b"\t");
+                return;
+            }
+            Key::Named(NamedKey::Enter) => {
+                state.send_terminal_input(b"\r");
+                return;
+            }
+            Key::Named(NamedKey::Backspace) => {
+                state.send_terminal_input(b"\x7f");
+                return;
+            }
+            Key::Named(NamedKey::Delete) => {
+                state.send_terminal_input(b"\x1b[3~");
+                return;
+            }
+            Key::Named(NamedKey::ArrowUp) => {
+                state.send_terminal_input(b"\x1b[A");
+                return;
+            }
+            Key::Named(NamedKey::ArrowDown) => {
+                state.send_terminal_input(b"\x1b[B");
+                return;
+            }
+            Key::Named(NamedKey::ArrowRight) => {
+                state.send_terminal_input(b"\x1b[C");
+                return;
+            }
+            Key::Named(NamedKey::ArrowLeft) => {
+                state.send_terminal_input(b"\x1b[D");
+                return;
+            }
+            Key::Named(NamedKey::Home) => {
+                state.send_terminal_input(b"\x1b[H");
+                return;
+            }
+            Key::Named(NamedKey::End) => {
+                state.send_terminal_input(b"\x1b[F");
+                return;
+            }
+            Key::Named(NamedKey::Space) => {
+                state.send_terminal_input(b" ");
+                return;
+            }
+            Key::Character(ch) if state.ctrl_down => {
+                if let Some(c) = ch.as_str().chars().next() {
+                    let lo = c.to_ascii_lowercase();
+                    if lo.is_ascii_lowercase() {
+                        state.send_terminal_input(&[lo as u8 - b'a' + 1]);
+                    } else if c == '[' {
+                        state.send_terminal_input(b"\x1b");
+                    } else if c == '\\' {
+                        state.send_terminal_input(b"\x1c");
+                    } else if c == ']' {
+                        state.send_terminal_input(b"\x1d");
+                    }
+                }
+                return;
+            }
+            Key::Character(_) => {
+                if let Some(text) = key_event.text.as_ref()
+                    && text != "\n" && text != "\r" && text != "\r\n" {
+                        state.send_terminal_input(text.as_bytes());
+                    }
+                return;
+            }
+            _ => {}
+        }
     }
 
     // Any key other than Tab/Shift+Tab ends the suggestion-cycling session so

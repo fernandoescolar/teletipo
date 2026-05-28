@@ -211,6 +211,11 @@ impl App {
     pub fn terminal_cursor_pos(&self) -> (usize, usize) {
         self.terminal.cursor_pos()
     }
+
+    /// Returns whether the terminal currently uses the alternate screen buffer.
+    pub fn is_alternate_screen(&self) -> bool {
+        self.terminal.is_alternate_screen()
+    }
 }
 
 #[cfg(test)]

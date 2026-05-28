@@ -27,6 +27,10 @@ pub(crate) struct TabState {
     pub(crate) saved_input: String,
     /// Fraction of window height used by the terminal pane (0 < r < 1).
     pub(crate) split_ratio: f32,
+    /// Whether this tab is currently presenting terminal fullscreen mode.
+    pub(crate) was_terminal_fullscreen: bool,
+    /// Split ratio from before entering fullscreen, restored when exiting.
+    pub(crate) pre_fullscreen_split_ratio: f32,
     /// Terminal text selection anchor (row, col) and the scroll_offset at the
     /// time the selection point was recorded.  Rows must be adjusted by the
     /// scroll delta when rendering or copying.

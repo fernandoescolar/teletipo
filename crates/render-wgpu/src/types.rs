@@ -75,6 +75,8 @@ pub struct RenderSnapshot {
     /// Used to draw the cursor block/underline/bar at the correct cell.
     pub terminal_cursor_row: usize,
     pub terminal_cursor_col: usize,
+    /// Whether terminal fullscreen mode is active (alternate screen apps).
+    pub terminal_fullscreen: bool,
 }
 
 /// Visual state for the suggestion cycling dropdown shown above the editor.

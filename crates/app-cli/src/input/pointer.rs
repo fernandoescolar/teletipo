@@ -49,6 +49,10 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         }
 
         if state.dragging_separator {
+            if state.tab().app.is_alternate_screen() {
+                state.dragging_separator = false;
+                return true;
+            }
             let available_h = state.window_height as f64 - tab_bar_h;
             let new_ratio = (*y - tab_bar_h) / available_h;
             state.tab_mut().split_ratio = (new_ratio as f32).clamp(0.2, 0.85);
@@ -201,8 +205,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             let split_ratio = state.tab().split_ratio;
             let available_h = state.window_height as f64 - tab_bar_h;
             let sep_y_px = tab_bar_h + available_h * split_ratio as f64;
+            let fullscreen = state.tab().app.is_alternate_screen();
 
-            if (state.cursor_y - sep_y_px).abs() < 6.0 {
+            if !fullscreen && (state.cursor_y - sep_y_px).abs() < 6.0 {
                 state.dragging_separator = true;
                 return true;
             }
@@ -221,7 +226,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 return true;
             }
 
-            if state.cursor_x >= sb_left && state.cursor_y > term_bottom {
+            if !fullscreen && state.cursor_x >= sb_left && state.cursor_y > term_bottom {
                 let edit_h_px = state.window_height as f64 - term_bottom;
                 if edit_h_px > 0.0 {
                     let frac = (state.cursor_y - term_bottom) / edit_h_px;
@@ -289,7 +294,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 state.tab_mut().selection_end = Some(cell);
                 state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
                 state.tab_mut().is_selecting = true;
-            } else if state.cursor_y > term_bottom {
+            } else if !fullscreen && state.cursor_y > term_bottom {
                 let edit_top_px = term_bottom + 2.0;
                 let editor_scroll_offset = state.tab().editor_scroll_offset;
                 let pad_h_f = state.user_config.padding.horizontal as f64;
