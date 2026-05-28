@@ -218,6 +218,7 @@ mod tests {
             font: FontConfig::default(),
             theme: ColorTheme::default(),
             initial_size: None,
+            initial_position: None,
         });
 
         renderer.render(&RenderSnapshot {

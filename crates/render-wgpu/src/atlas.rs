@@ -87,6 +87,7 @@ pub(crate) fn load_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
 pub(crate) const TEXT_ATLAS_SIZE: u32 = 1024;
 
 /// Rasterizes one glyph into the atlas and returns its cached descriptor.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn pack_glyph(
     queue: &wgpu::Queue,
     atlas_texture: &wgpu::Texture,

@@ -8,7 +8,7 @@ MAC_X64_TARGET := x86_64-apple-darwin
 LINUX_TARGET := x86_64-unknown-linux-gnu
 WINDOWS_TARGET := x86_64-pc-windows-gnu
 
-.PHONY: release release-macos release-linux release-windows clean
+.PHONY: release release-macos release-linux release-windows clean test lint perf
 
 release: release-macos release-linux release-windows
 
@@ -75,3 +75,12 @@ release-windows:
 
 clean:
 	rm -rf $(DIST)
+
+test:
+	cargo test --workspace
+
+lint:
+	cargo clippy --all -- -D warnings
+
+perf:
+	cargo bench --workspace

@@ -98,6 +98,19 @@ teletipo --exec "htop"
 | `Backspace` | Delete character before cursor |
 | `Delete` | Delete character after cursor |
 
+### Suggestions (autocomplete dropdown)
+
+Press `Tab` at the end of any line to open the suggestion popup, which shows history entries ranked by recency and frequency that match what you have typed so far. The selected entry is previewed in gray ghost text — nothing is written to the editor until you confirm.
+
+| Shortcut | Action |
+|---|---|
+| `Tab` | Open popup (first suggestion) · confirm highlighted entry |
+| `Shift + Tab` | Open popup (last suggestion) · cycle backward |
+| `↑` / `↓` | Navigate up / down through the list |
+| `Enter` | Confirm highlighted entry and submit the command |
+| `Escape` | Dismiss popup (editor text unchanged) |
+| typing / `Backspace` | Refilter the list live as you edit the prefix |
+
 ### Copy & paste
 
 | Shortcut | Action |
@@ -125,8 +138,8 @@ teletipo --exec "htop"
 |---|---|
 | `Ctrl + A – Z` | `^A` – `^Z` (control characters) |
 | `Ctrl + [` | `ESC` |
-| `Escape` | `ESC` |
-| `Tab` | Tab (with current editor content forwarded for shell completion) |
+| `Escape` | `ESC` (or dismiss suggestion popup — see above) |
+| `Tab` | Open/confirm suggestion popup (see above) |
 
 ### Mouse
 
@@ -137,6 +150,22 @@ teletipo --exec "htop"
 | Drag the split divider | Resize terminal / editor pane |
 | Drag the scrollbar | Scroll terminal or editor |
 | Right-click in terminal | Context menu |
+
+## File Locations
+
+Teletipo stores its files in the standard OS directories via the [`dirs`](https://crates.io/crates/dirs) crate.
+
+| What | File | macOS | Linux | Windows |
+|---|---|---|---|---|
+| Configuration | `config.toml` | `~/Library/Application Support/teletipo/` | `~/.config/teletipo/` | `%APPDATA%\teletipo\` |
+| Custom themes | `themes/*.yaml` | `~/Library/Application Support/teletipo/themes/` | `~/.config/teletipo/themes/` | `%APPDATA%\teletipo\themes\` |
+| Session & history | `session.json` | `~/Library/Application Support/teletipo/` | `~/.local/share/teletipo/` | `%LOCALAPPDATA%\teletipo\` |
+
+**Configuration** (`config.toml`) — font, font size, theme, padding, shell, and other settings. Created with defaults on first launch.
+
+**Custom themes** — drop any `*.yaml` theme file into the `themes/` directory and it will appear in the settings panel alongside the built-in themes.
+
+**Session & history** (`session.json`) — command history with frecency data, and terminal output snapshots. Written on exit, restored on next launch.
 
 ## Workspace Layout
 

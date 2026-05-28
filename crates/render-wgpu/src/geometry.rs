@@ -560,9 +560,31 @@ pub(crate) fn build_suggestion_dropdown_bg_verts(
         }
     }
 
+    // Scrollbar — shown only when there are more items than the visible window.
+    let total = dd.items.len();
+    if total > n_visible {
+        let sb_w_px = (cell_w_px * 0.35).max(3.0);
+        let sb_x0_px = panel_x0_px + panel_w - sb_w_px;
+        let sb_x0 = sb_x0_px * px_x - 1.0;
+        let sb_x1 = (sb_x0_px + sb_w_px) * px_x - 1.0;
+        // Track.
+        let track_color = add_c(dd_bg, 0.08);
+        verts.extend_from_slice(&quad_verts(sb_x0, y_bot, sb_x1, y_top, track_color));
+        // Thumb.
+        let thumb_frac = n_visible as f32 / total as f32;
+        let thumb_h_px = panel_h * thumb_frac;
+        let max_scroll = (total - n_visible) as f32;
+        let scroll_frac = dd.scroll_offset as f32 / max_scroll;
+        let thumb_top_px = panel_y_top_px + scroll_frac * (panel_h - thumb_h_px);
+        let ty_top = 1.0 - thumb_top_px * px_y;
+        let ty_bot = 1.0 - (thumb_top_px + thumb_h_px) * px_y;
+        verts.extend_from_slice(&quad_verts(sb_x0, ty_bot, sb_x1, ty_top, dd_border));
+    }
+
     verts
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn editor_caret_verts(
     editor_text: &str,
     cursor_offset: usize,
@@ -604,6 +626,7 @@ pub(crate) fn editor_caret_verts(
     quad_verts(x0, y0, x1, y1, color)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_text_verts(
     text: &str,
     pane_top_px: f32,

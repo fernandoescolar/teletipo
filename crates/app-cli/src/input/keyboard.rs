@@ -1,4 +1,4 @@
-use crate::coords::{clamp_editor_scroll, editor_cursor_row_col, editor_row_col_to_offset, extract_selection};
+use crate::coords::{clamp_editor_scroll, current_line_prefix, cursor_at_line_end, editor_cursor_row_col, editor_row_col_to_offset, extract_selection, replace_cursor_line};
 use crate::settings;
 use crate::GpuRuntimeState;
 use arboard::Clipboard;
@@ -31,8 +31,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     let is_nav = matches!(&key_event.logical_key,
         Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown));
     let is_esc = matches!(&key_event.logical_key, Key::Named(NamedKey::Escape));
+    let is_enter = matches!(&key_event.logical_key, Key::Named(NamedKey::Enter));
     let cycling = state.tabs[state.active_tab].suggestion_index.is_some();
-    if !(is_tab || (is_nav && cycling) || (is_esc && cycling)) {
+    if !(is_tab || (is_nav && cycling) || (is_esc && cycling) || (is_enter && cycling)) {
         let active = state.active_tab;
         state.tabs[active].suggestion_prefix = None;
         state.tabs[active].suggestion_index = None;
@@ -41,29 +42,55 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     match &key_event.logical_key {
         Key::Named(NamedKey::Escape) => {
             if cycling {
-                // Dismiss the dropdown and restore the original prefix text.
-                let prefix = state.tabs[state.active_tab].suggestion_prefix.take().unwrap_or_default();
+                // Dismiss the dropdown; the editor already holds the original prefix.
+                state.tabs[state.active_tab].suggestion_prefix = None;
                 state.tabs[state.active_tab].suggestion_index = None;
-                state.tab_mut().app.editor_clear();
-                state.tab_mut().app.insert_editor_input(&prefix);
             } else {
                 state.send_terminal_input(b"\x1b");
             }
         }
         Key::Named(NamedKey::Tab) => {
-            let editor_text = state.tab().app.editor_snapshot();
-            let cursor = state.tab().app.editor_cursor_offset();
-            // Only engage when the cursor is at the very end of the input.
-            if cursor != editor_text.len() || editor_text.is_empty() {
+            // If the popup is already open and Tab (without Shift) is pressed,
+            // confirm the highlighted entry: fill the editor and close the dropdown.
+            if cycling && !state.shift_down {
+                let prefix = state.tabs[state.active_tab]
+                    .suggestion_prefix.clone().unwrap_or_default();
+                let idx = state.tabs[state.active_tab].suggestion_index.unwrap_or(0);
+                let matches = crate::suggestion_matches_frecency(
+                    &state.tabs[state.active_tab].history,
+                    &state.tabs[state.active_tab].history_entries,
+                    &prefix,
+                    &state.tabs[state.active_tab].cwd,
+                );
+                if let Some(full) = matches.get(idx).cloned() {
+                    let editor_text = state.tab().app.editor_snapshot();
+                    let cursor = state.tab().app.editor_cursor_offset();
+                    let (new_text, new_cursor) = replace_cursor_line(&editor_text, cursor, &full);
+                    state.tab_mut().app.editor_clear();
+                    state.tab_mut().app.insert_editor_input(&new_text);
+                    state.tab_mut().app.set_editor_cursor(new_cursor, false);
+                }
+                state.tabs[state.active_tab].suggestion_prefix = None;
+                state.tabs[state.active_tab].suggestion_index = None;
                 return;
             }
-            // The prefix we cycle through — either the saved cycling prefix
-            // (on subsequent Tab/Shift+Tab presses) or the current editor text
-            // (on the very first Tab press).
+
+            let editor_text = state.tab().app.editor_snapshot();
+            let cursor = state.tab().app.editor_cursor_offset();
+            // Only engage when the cursor sits at the end of its current line.
+            if !cursor_at_line_end(&editor_text, cursor) {
+                return;
+            }
+            // Reuse the saved cycling prefix (keeps the suggestion set stable
+            // across multiple Tab presses) or fall back to the current line text.
+            let line_prefix = current_line_prefix(&editor_text, cursor);
             let prefix = state.tabs[state.active_tab]
                 .suggestion_prefix
                 .clone()
-                .unwrap_or_else(|| editor_text.clone());
+                .unwrap_or_else(|| line_prefix.to_string());
+            if prefix.is_empty() {
+                return;
+            }
 
             let matches = crate::suggestion_matches_frecency(
                 &state.tabs[state.active_tab].history,
@@ -78,28 +105,22 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             let n = matches.len();
             let current_idx = state.tabs[state.active_tab].suggestion_index;
             let new_idx = if state.shift_down {
-                // Shift+Tab: cycle backward
+                // Shift+Tab: cycle backward.
                 match current_idx {
                     None | Some(0) => n - 1,
                     Some(i) => i - 1,
                 }
             } else {
-                // Tab: cycle forward
+                // Tab: cycle forward.
                 match current_idx {
                     None => 0,
                     Some(i) => (i + 1) % n,
                 }
             };
 
-            // Save the original prefix on first Tab press.
             state.tabs[state.active_tab].suggestion_prefix = Some(prefix);
             state.tabs[state.active_tab].suggestion_index = Some(new_idx);
-
-            // Fill the editor with the selected match so the user can submit it
-            // with Enter directly or keep cycling with Tab/Shift+Tab.
-            let full = matches[new_idx].clone();
-            state.tab_mut().app.editor_clear();
-            state.tab_mut().app.insert_editor_input(&full);
+            // Editor text is unchanged; ghost text displays the selected match in gray.
         }
 
         Key::Named(NamedKey::PageUp) => {
@@ -194,6 +215,28 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         }
 
         Key::Named(NamedKey::Enter) => {
+            if cycling && !state.shift_down {
+                // Confirm: fill the editor with the selected match before submitting.
+                let prefix = state.tabs[state.active_tab]
+                    .suggestion_prefix.clone().unwrap_or_default();
+                let idx = state.tabs[state.active_tab].suggestion_index.unwrap_or(0);
+                let matches = crate::suggestion_matches_frecency(
+                    &state.tabs[state.active_tab].history,
+                    &state.tabs[state.active_tab].history_entries,
+                    &prefix,
+                    &state.tabs[state.active_tab].cwd,
+                );
+                if let Some(full) = matches.get(idx).cloned() {
+                    let editor_text = state.tab().app.editor_snapshot();
+                    let cursor = state.tab().app.editor_cursor_offset();
+                    let (new_text, new_cursor) = replace_cursor_line(&editor_text, cursor, &full);
+                    state.tab_mut().app.editor_clear();
+                    state.tab_mut().app.insert_editor_input(&new_text);
+                    state.tab_mut().app.set_editor_cursor(new_cursor, false);
+                }
+                state.tabs[state.active_tab].suggestion_prefix = None;
+                state.tabs[state.active_tab].suggestion_index = None;
+            }
             if state.shift_down {
                 state.tab_mut().app.insert_editor_input("\n");
             } else {
@@ -203,6 +246,25 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         }
         Key::Named(NamedKey::Backspace) => {
             state.tab_mut().app.editor_backspace();
+            if cycling {
+                let active = state.active_tab;
+                let editor_text = state.tab().app.editor_snapshot();
+                let cursor = state.tab().app.editor_cursor_offset();
+                let new_prefix = current_line_prefix(&editor_text, cursor).to_string();
+                let matches = crate::suggestion_matches_frecency(
+                    &state.tabs[active].history,
+                    &state.tabs[active].history_entries,
+                    &new_prefix,
+                    &state.tabs[active].cwd,
+                );
+                if !matches.is_empty() && !new_prefix.is_empty() {
+                    state.tabs[active].suggestion_prefix = Some(new_prefix);
+                    state.tabs[active].suggestion_index = Some(0);
+                } else {
+                    state.tabs[active].suggestion_prefix = None;
+                    state.tabs[active].suggestion_index = None;
+                }
+            }
         }
         Key::Named(NamedKey::Delete) => {
             state.tab_mut().app.editor_delete_forward();
@@ -231,9 +293,6 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                     let idx = state.tabs[state.active_tab].suggestion_index.unwrap_or(0);
                     let new_idx = if idx == 0 { n - 1 } else { idx - 1 };
                     state.tabs[state.active_tab].suggestion_index = Some(new_idx);
-                    let full = matches[new_idx].clone();
-                    state.tab_mut().app.editor_clear();
-                    state.tab_mut().app.insert_editor_input(&full);
                 }
             } else {
                 let text = state.tab().app.editor_snapshot();
@@ -250,7 +309,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         }
         Key::Named(NamedKey::ArrowDown) => {
             if cycling {
-                // Navigate dropdown: move to the next item (Tab direction).
+                // Navigate dropdown: move to the next item.
                 let prefix = state.tabs[state.active_tab]
                     .suggestion_prefix.clone().unwrap_or_default();
                 let matches = crate::suggestion_matches_frecency(
@@ -264,9 +323,6 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                     let idx = state.tabs[state.active_tab].suggestion_index.unwrap_or(0);
                     let new_idx = (idx + 1) % n;
                     state.tabs[state.active_tab].suggestion_index = Some(new_idx);
-                    let full = matches[new_idx].clone();
-                    state.tab_mut().app.editor_clear();
-                    state.tab_mut().app.insert_editor_input(&full);
                 }
             } else {
                 let text = state.tab().app.editor_snapshot();
@@ -296,6 +352,25 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             if let Some(text) = key_event.text.as_ref()
                 && text != "\n" && text != "\r" && text != "\r\n" {
                     state.tab_mut().app.insert_editor_input(text.as_str());
+                    if cycling {
+                        let active = state.active_tab;
+                        let editor_text = state.tab().app.editor_snapshot();
+                        let cursor = state.tab().app.editor_cursor_offset();
+                        let new_prefix = current_line_prefix(&editor_text, cursor).to_string();
+                        let matches = crate::suggestion_matches_frecency(
+                            &state.tabs[active].history,
+                            &state.tabs[active].history_entries,
+                            &new_prefix,
+                            &state.tabs[active].cwd,
+                        );
+                        if !matches.is_empty() {
+                            state.tabs[active].suggestion_prefix = Some(new_prefix);
+                            state.tabs[active].suggestion_index = Some(0);
+                        } else {
+                            state.tabs[active].suggestion_prefix = None;
+                            state.tabs[active].suggestion_index = None;
+                        }
+                    }
                 }
         }
         _ => {}

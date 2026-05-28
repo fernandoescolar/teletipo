@@ -65,6 +65,7 @@ pub(crate) fn editor_cursor_row_col(text: &str, offset: usize) -> (usize, usize)
 /// Returns `None` if the cursor is outside the terminal pane or in the scrollbar area.
 /// Uses `term_row_count` to compute the bottom-alignment offset so the mapping
 /// matches what the renderer draws.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cursor_to_terminal_cell(
     cx: f64,
     cy: f64,
@@ -198,4 +199,30 @@ pub(crate) fn extract_selection(
         }
     }
     result
+}
+
+/// Returns the text of the line that contains `cursor`, from the line's start
+/// up to `cursor` (exclusive). Does not include the `'\n'`.
+pub(crate) fn current_line_prefix(text: &str, cursor: usize) -> &str {
+    let cursor = cursor.min(text.len());
+    let line_start = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    &text[line_start..cursor]
+}
+
+/// Returns `true` when `cursor` sits at the end of its line — i.e. the next
+/// byte is `'\n'` or `cursor` is at the very end of `text`.
+pub(crate) fn cursor_at_line_end(text: &str, cursor: usize) -> bool {
+    cursor == text.len() || text.as_bytes().get(cursor) == Some(&b'\n')
+}
+
+/// Replaces the content of the line containing `cursor` with `new_line`.
+/// Returns `(new_full_text, new_cursor)` where `new_cursor` points just after
+/// the end of the replaced content (ready for the next edit or confirmation).
+pub(crate) fn replace_cursor_line(text: &str, cursor: usize, new_line: &str) -> (String, usize) {
+    let cursor = cursor.min(text.len());
+    let line_start = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_end = text[cursor..].find('\n').map(|i| cursor + i).unwrap_or(text.len());
+    let new_text = format!("{}{}{}", &text[..line_start], new_line, &text[line_end..]);
+    let new_cursor = line_start + new_line.len();
+    (new_text, new_cursor)
 }

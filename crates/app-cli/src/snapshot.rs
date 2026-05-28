@@ -1,4 +1,4 @@
-use crate::coords::{read_child_cwd, shorten_cwd_label};
+use crate::coords::{current_line_prefix, cursor_at_line_end, read_child_cwd, shorten_cwd_label};
 use crate::settings::build_settings_overlay;
 use crate::theme;
 use crate::GpuRuntimeState;
@@ -86,21 +86,39 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     // entry (case-insensitive prefix match) that extends the current editor
     // text.  Not shown while Tab-cycling is active — the editor content
     // already shows the selected match in that case.
-    let editor_suggestion = if state.tabs[active].suggestion_index.is_some() {
-        // Cycling in progress: the editor holds the full selected match, so
-        // there is nothing to add as a ghost-text suffix.
-        String::new()
-    } else if !editor_text.is_empty() && editor_cursor_offset == editor_text.len() {
-        crate::suggestion_matches_frecency(
+    let editor_suggestion = if let Some(idx) = state.tabs[active].suggestion_index {
+        // Cycling in progress: the editor holds the prefix; display the selected
+        // match's completion as gray ghost text so the user sees a live preview.
+        let prefix = state.tabs[active]
+            .suggestion_prefix
+            .as_deref()
+            .unwrap_or_else(|| current_line_prefix(&editor_text, editor_cursor_offset));
+        let matches = crate::suggestion_matches_frecency(
             &state.tabs[active].history,
             &state.tabs[active].history_entries,
-            &editor_text,
+            prefix,
             &state.tabs[active].cwd,
-        )
-        .into_iter()
-        .next()
-        .map(|full| truncate_display(&full[editor_text.len()..], 80))
-        .unwrap_or_default()
+        );
+        matches
+            .get(idx)
+            .map(|full| truncate_display(&full[prefix.len()..], 80))
+            .unwrap_or_default()
+    } else if cursor_at_line_end(&editor_text, editor_cursor_offset) {
+        let prefix = current_line_prefix(&editor_text, editor_cursor_offset);
+        if prefix.is_empty() {
+            String::new()
+        } else {
+            crate::suggestion_matches_frecency(
+                &state.tabs[active].history,
+                &state.tabs[active].history_entries,
+                prefix,
+                &state.tabs[active].cwd,
+            )
+            .into_iter()
+            .next()
+            .map(|full| truncate_display(&full[prefix.len()..], 80))
+            .unwrap_or_default()
+        }
     } else {
         String::new()
     };
@@ -212,7 +230,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 let prefix = state.tabs[active]
                     .suggestion_prefix
                     .as_deref()
-                    .unwrap_or(editor_text.as_str());
+                    .unwrap_or_else(|| current_line_prefix(&editor_text, editor_cursor_offset));
                 let items = crate::suggestion_matches_frecency(
                     &state.tabs[active].history,
                     &state.tabs[active].history_entries,
