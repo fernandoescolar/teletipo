@@ -67,6 +67,14 @@ pub struct RenderSnapshot {
     pub terminal_links: Vec<TerminalLink>,
     /// When `true` the event loop should exit (e.g. last shell session ended).
     pub request_exit: bool,
+    /// DECSCUSR cursor shape: 0/1/2 = block, 3/4 = underline, 5/6 = bar.
+    pub cursor_shape: u16,
+    /// When `true`, briefly tint the terminal background as a visual BEL indicator.
+    pub bell_active: bool,
+    /// Terminal cursor position (row, col), 0-based, in the visible grid.
+    /// Used to draw the cursor block/underline/bar at the correct cell.
+    pub terminal_cursor_row: usize,
+    pub terminal_cursor_col: usize,
 }
 
 /// Visual state for the suggestion cycling dropdown shown above the editor.
@@ -105,6 +113,14 @@ pub struct SettingsOverlay {
     pub editing: Option<String>,
     /// One-shot flag: show a brief "Saved" confirmation.
     pub just_saved: bool,
+    /// When `Some`, the focused field is in search/filter mode (type-to-filter).
+    pub search_buf: Option<String>,
+    /// Filtered match list derived from `search_buf`.
+    pub search_matches: Vec<String>,
+    /// Index into `search_matches` of the currently highlighted result.
+    pub search_selected: usize,
+    /// First visible result index for scrolling the dropdown.
+    pub search_scroll_offset: usize,
 }
 
 /// A single row in the settings overlay.
@@ -114,6 +130,8 @@ pub struct SettingsItem {
     pub is_header: bool,
     /// `true` → value is cycled with ← → rather than free-text edited.
     pub is_selectable: bool,
+    /// `true` → pressing Enter activates type-to-filter search mode.
+    pub is_searchable: bool,
     /// Left column text.
     pub key: String,
     /// Right column text (empty for headers).
@@ -233,14 +251,14 @@ pub const fn default_ansi_palette() -> [[f32; 3]; 16] {
 
 #[derive(Debug, Clone)]
 pub struct FontConfig {
-    pub font_path: Option<String>,
+    pub font_family: Option<String>,
     pub font_size: f32,
 }
 
 impl Default for FontConfig {
     fn default() -> Self {
         Self {
-            font_path: None,
+            font_family: None,
             font_size: 14.0,
         }
     }

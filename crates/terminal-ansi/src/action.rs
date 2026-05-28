@@ -25,4 +25,12 @@ pub enum Action {
     /// Raw OSC (Operating System Command) sequence payload, e.g. "133;D;0"
     /// for shell integration exit-code reporting.
     Osc(String),
+    /// BEL character (0x07).
+    Bell,
+    /// Request cursor position report (`\x1b[6n`).
+    DeviceStatusReport,
+    /// DECSCUSR — set cursor shape.
+    /// 0/1 = blinking block, 2 = steady block, 3 = blinking underline,
+    /// 4 = steady underline, 5 = blinking bar, 6 = steady bar.
+    SetCursorShape(u16),
 }

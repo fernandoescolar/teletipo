@@ -141,6 +141,25 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             state.dragging_editor_scrollbar = false;
             state.tab_mut().is_selecting = false;
             state.tab_mut().is_selecting_editor = false;
+            // Send mouse release to PTY when mouse reporting is active.
+            let mouse_mode = state.tab().app.mouse_mode();
+            if mouse_mode != 0 {
+                let tab_bar_h = state.tab_bar_h() as f64;
+                let split_ratio = state.tab().split_ratio;
+                let term_row_count = state.tab().term_row_count;
+                let pad_h = state.user_config.padding.horizontal as f32;
+                let pad_v = state.user_config.padding.vertical as f32;
+                if let Some((row, col)) = cursor_to_terminal_cell(
+                    state.cursor_x, state.cursor_y,
+                    state.window_width, state.window_height,
+                    split_ratio, state.cell_w, state.cell_h,
+                    term_row_count, tab_bar_h as f32,
+                    pad_h, pad_v,
+                ) {
+                    let bytes = encode_mouse_btn(0, row, col, false, mouse_mode);
+                    state.send_terminal_input(&bytes);
+                }
+            }
         }
         if *btn_state == ElementState::Pressed {
             if state.tab_context_menu.is_some() {
@@ -256,6 +275,15 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 term_row_count, tab_bar_h as f32,
                 pad_h, pad_v,
             ) {
+                // If a mouse reporting mode is active, send the click to the PTY
+                // instead of starting a local text selection.
+                let mouse_mode = state.tab().app.mouse_mode();
+                if mouse_mode != 0 {
+                    let (row, col) = cell;
+                    let bytes = encode_mouse_btn(0, row, col, true, mouse_mode);
+                    state.send_terminal_input(&bytes);
+                    return true;
+                }
                 state.tab_mut().selection_anchor = Some(cell);
                 state.tab_mut().selection_anchor_scroll = state.tab().scroll_offset;
                 state.tab_mut().selection_end = Some(cell);
@@ -340,6 +368,35 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             }
         } else {
             let prev = state.tab().scroll_offset;
+            // When mouse reporting is active, send scroll events to the PTY
+            // instead of scrolling the local scrollback buffer.
+            let mouse_mode = state.tab().app.mouse_mode();
+            if mouse_mode != 0 {
+                let tab_bar_h_f = state.tab_bar_h() as f64;
+                let split_ratio = state.tab().split_ratio;
+                let term_row_count = state.tab().term_row_count;
+                let pad_h = state.user_config.padding.horizontal as f32;
+                let pad_v = state.user_config.padding.vertical as f32;
+                let term_bottom_for_scroll = tab_bar_h_f
+                    + (state.window_height as f64 - tab_bar_h_f) * split_ratio as f64;
+                if state.cursor_y < term_bottom_for_scroll {
+                    if let Some((row, col)) = cursor_to_terminal_cell(
+                        state.cursor_x, state.cursor_y,
+                        state.window_width, state.window_height,
+                        split_ratio, state.cell_w, state.cell_h,
+                        term_row_count, tab_bar_h_f as f32,
+                        pad_h, pad_v,
+                    ) {
+                        // Button 64 = scroll up, 65 = scroll down.
+                        let btn = if *delta_lines > 0.0 { 64u8 } else { 65u8 };
+                        for _ in 0..lines {
+                            let bytes = encode_mouse_btn(btn, row, col, true, mouse_mode);
+                            state.send_terminal_input(&bytes);
+                        }
+                        return true;
+                    }
+                }
+            }
             if *delta_lines > 0.0 {
                 let max_scroll = state.tab().app.scrollback_len();
                 state.tab_mut().scroll_offset = prev.saturating_add(lines).min(max_scroll);
@@ -358,6 +415,26 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     false
+}
+
+/// Encode a mouse button event for the PTY.
+///
+/// `button`: 0 = left, 1 = middle, 2 = right, 64/65 = scroll up/down.
+/// `row`, `col`: 0-based terminal grid coordinates.
+/// `pressed`: `true` for press, `false` for release.
+/// `mouse_mode`: the active reporting mode (1000/1002/1003 = X10, 1006 = SGR).
+fn encode_mouse_btn(button: u8, row: usize, col: usize, pressed: bool, mouse_mode: u16) -> Vec<u8> {
+    if mouse_mode == 1006 {
+        // SGR encoding: \x1b[<btn;col+1;row+1M  (press) or m (release)
+        let suffix = if pressed { 'M' } else { 'm' };
+        format!("\x1b[<{};{};{}{}", button, col + 1, row + 1, suffix).into_bytes()
+    } else {
+        // X10 encoding: limited to col/row <= 222 (byte value saturates at 255).
+        let b  = (button as u8).wrapping_add(32);
+        let cx = ((col + 1 + 32) as u8).min(255);
+        let cy = ((row + 1 + 32) as u8).min(255);
+        vec![0x1b, b'[', b'M', b, cx, cy]
+    }
 }
 
 /// Open a terminal link (URL or file path), stripping any `:line:col` suffix,

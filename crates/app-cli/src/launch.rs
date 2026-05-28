@@ -3,79 +3,42 @@ use crate::tab::{HistoryEntry, PersistentSession, TabSession, TabState};
 use crate::theme;
 use crate::GpuRuntimeState;
 use app_orchestrator::App;
+use fontdb::Database;
 use std::fs;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use terminal_pty::PortablePtySession;
 
 // ── Font discovery ────────────────────────────────────────────────────────────
 
-/// A font file discovered on the machine.
-pub(crate) struct FontFile {
-    /// Display name derived from the file stem (e.g. "Hack-Regular").
-    pub(crate) name: String,
-    /// Absolute path to the font file.
-    pub(crate) path: String,
+/// A font family discovered on the machine.
+pub(crate) struct FontEntry {
+    /// Display family name (e.g. "Hack", "Consolas", "DejaVu Sans Mono").
+    pub(crate) family: String,
 }
 
-/// Scan the platform's standard font directories and return every TTF/OTF/TTC
-/// file found, sorted by display name.  The first entry is always a synthetic
-/// "(default)" entry (empty path) so that index 0 means "no override".
-pub(crate) fn enumerate_fonts() -> Vec<FontFile> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
+/// Enumerate installed font family names. The first entry is always a
+/// synthetic "(default)" item so that index 0 means "no override".
+pub(crate) fn enumerate_font_families() -> Vec<FontEntry> {
+    let mut db = Database::new();
+    db.load_system_fonts();
 
-    #[cfg(target_os = "macos")]
-    {
-        dirs.push(PathBuf::from("/System/Library/Fonts"));
-        dirs.push(PathBuf::from("/Library/Fonts"));
-        if let Some(home) = dirs::home_dir() {
-            dirs.push(home.join("Library/Fonts"));
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        dirs.push(PathBuf::from("/usr/share/fonts"));
-        dirs.push(PathBuf::from("/usr/local/share/fonts"));
-        if let Some(home) = dirs::home_dir() {
-            dirs.push(home.join(".fonts"));
-            dirs.push(home.join(".local/share/fonts"));
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(win) = std::env::var("WINDIR") {
-            dirs.push(PathBuf::from(win).join("Fonts"));
-        }
-        if let Some(local) = dirs::data_local_dir() {
-            dirs.push(local.join("Microsoft").join("Windows").join("Fonts"));
-        }
-    }
-
-    let mut fonts: Vec<FontFile> = Vec::new();
-    for dir in &dirs {
-        scan_font_dir(dir, &mut fonts);
-    }
-    fonts.sort_by_key(|a| a.name.to_lowercase());
-    fonts.insert(0, FontFile { name: "(default)".to_owned(), path: String::new() });
-    fonts
-}
-
-fn scan_font_dir(dir: &PathBuf, out: &mut Vec<FontFile>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            scan_font_dir(&path, out);
-        } else if let Some(ext) = path.extension() {
-            let ext_lower = ext.to_string_lossy().to_lowercase();
-            if matches!(ext_lower.as_str(), "ttf" | "otf" | "ttc") {
-                let name = path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.to_string_lossy().into_owned());
-                out.push(FontFile { name, path: path.to_string_lossy().into_owned() });
+    let mut families: BTreeSet<String> = BTreeSet::new();
+    for face in db.faces() {
+        for (name, _) in &face.families {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() {
+                families.insert(trimmed.to_owned());
             }
         }
     }
+
+    let mut fonts: Vec<FontEntry> = families
+        .into_iter()
+        .map(|family| FontEntry { family })
+        .collect();
+    fonts.insert(0, FontEntry { family: "(default)".to_owned() });
+    fonts
 }
 
 // ── PTY spawning ──────────────────────────────────────────────────────────────
@@ -290,12 +253,13 @@ pub(crate) fn build_initial_state(
             theme::load_themes()
         },
         active_theme_idx: None,
-        available_fonts: enumerate_fonts(),
+        available_fonts: enumerate_font_families(),
         active_font_idx: 0,
         update_rx: Some(update_rx),
         pending_update: None,
         settings: crate::SettingsUiState::default(),
         should_exit: false,
+        bell_flash_until: None,
     };
 
     state.active_theme_idx = state
@@ -306,9 +270,9 @@ pub(crate) fn build_initial_state(
     state.active_font_idx = state
         .user_config
         .font
-        .path
+        .family
         .as_ref()
-        .and_then(|p| state.available_fonts.iter().position(|f| &f.path == p))
+        .and_then(|family| state.available_fonts.iter().position(|f| &f.family == family))
         .unwrap_or(0);
 
     state

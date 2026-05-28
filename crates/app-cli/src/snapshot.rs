@@ -254,17 +254,26 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         padding_v: state.user_config.padding.vertical,
         settings_overlay: build_settings_overlay(state),
         title_cwd: {
-            let home = std::env::var("HOME").unwrap_or_default();
-            let cwd = &state.tabs[state.active_tab].cwd;
-            if !home.is_empty() && cwd.starts_with(&home) {
-                format!("~{}", &cwd[home.len()..])
+            // OSC 0/2 window title takes priority; fall back to CWD path.
+            if let Some(title) = state.tabs[state.active_tab].app.window_title() {
+                title.to_owned()
             } else {
-                cwd.clone()
+                let home = std::env::var("HOME").unwrap_or_default();
+                let cwd = &state.tabs[state.active_tab].cwd;
+                if !home.is_empty() && cwd.starts_with(&home) {
+                    format!("~{}", &cwd[home.len()..])
+                } else {
+                    cwd.clone()
+                }
             }
         },
         editor_suggestion,
         terminal_links,
         request_exit: state.should_exit,
+        cursor_shape: state.tabs[active].app.cursor_shape(),
+        bell_active: state.bell_flash_until.map_or(false, |t| t > std::time::Instant::now()),
+        terminal_cursor_row: state.tabs[active].app.terminal_cursor_pos().0,
+        terminal_cursor_col: state.tabs[active].app.terminal_cursor_pos().1,
         suggestion_dropdown: {
             if let Some(idx) = state.tabs[active].suggestion_index {
                 let prefix = state.tabs[active]

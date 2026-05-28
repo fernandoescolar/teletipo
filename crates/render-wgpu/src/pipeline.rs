@@ -528,6 +528,22 @@ impl<'a> GpuState<'a> {
                     if ch != ' ' { self.ensure_glyph(ch); }
                 }
             }
+            // Pre-cache search buffer and match list characters.
+            if let Some(ref sbuf) = overlay.search_buf {
+                for ch in sbuf.chars() {
+                    if ch != ' ' { self.ensure_glyph(ch); }
+                }
+            }
+            for m in &overlay.search_matches {
+                for ch in m.chars() {
+                    if ch != ' ' { self.ensure_glyph(ch); }
+                }
+            }
+            // Fixed UI characters used in settings overlay rendering:
+            // ← → (arrows), ↑ ↓ (footer nav), ▶ (dropdown marker), ▌ (cursor hint).
+            for ch in ['\u{2190}', '\u{2192}', '\u{2191}', '\u{2193}', '\u{25b6}', '\u{258e}'] {
+                self.ensure_glyph(ch);
+            }
         }
 
         // Context menu item text — drawn with no scissor so it floats above everything.
@@ -582,13 +598,13 @@ impl<'a> GpuState<'a> {
                 let th = &snapshot.theme;
                 let win_w = self.size.width as f32;
                 let win_h = self.size.height as f32;
-                let title_h  = self.cell_h_px * 1.8;
-                let row_h    = self.cell_h_px * 1.3;
-                let footer_h = self.cell_h_px * 1.5;
-                let edit_h   = if overlay.editing.is_some() { self.cell_h_px * 1.4 } else { 0.0 };
+                let title_h  = self.cell_h_px * 2.2;
+                let row_h    = self.cell_h_px * 1.7;
+                let footer_h = self.cell_h_px * 1.9;
+                let edit_h   = if overlay.editing.is_some() { self.cell_h_px * 1.8 } else { 0.0 };
                 let n_items  = overlay.items.len() as f32;
                 let panel_h  = title_h + n_items * row_h + edit_h + footer_h;
-                let panel_w  = (self.cell_w_px * 54.0).min(win_w * 0.88).max(self.cell_w_px * 30.0);
+                let panel_w  = (self.cell_w_px * 72.0).min(win_w * 0.92).max(self.cell_w_px * 40.0);
                 let panel_x0 = (win_w - panel_w) / 2.0;
                 let panel_y0 = (win_h - panel_h) / 2.0;
 
@@ -603,16 +619,64 @@ impl<'a> GpuState<'a> {
                 // Rows
                 let key_col  = panel_x0 + self.cell_w_px * 1.5;
                 let val_col  = panel_x0 + panel_w * 0.50;
+
+                // Pre-compute the flat (non-header) item index of the focused row.
+                // This lets us skip rendering text for rows that are physically covered
+                // by the search dropdown, which otherwise bleeds through the opaque BG
+                // (all text is accumulated in one draw call, so order matters).
+                let pre_focused_flat = {
+                    let mut ec = 0usize;
+                    let mut fi = 0usize;
+                    for (idx, itm) in overlay.items.iter().enumerate() {
+                        if !itm.is_header {
+                            if ec == overlay.cursor { fi = idx; break; }
+                            ec += 1;
+                        }
+                    }
+                    fi
+                };
+                // Flat indices [pre_focused_flat+1 .. pre_focused_flat+n_visible] are
+                // covered by the dropdown and must not have their text rendered.
+                const SEARCH_MAX_VISIBLE: usize = 8;
+                let search_cover_end = if overlay.search_buf.is_some() {
+                    let n_vis = overlay.search_matches.len()
+                        .saturating_sub(overlay.search_scroll_offset)
+                        .min(SEARCH_MAX_VISIBLE);
+                    pre_focused_flat + n_vis
+                } else {
+                    0
+                };
+
                 let mut editable_idx = 0usize;
+                let mut focused_flat_idx = 0usize;
                 for (i, item) in overlay.items.iter().enumerate() {
                     let row_y = panel_y0 + title_h + i as f32 * row_h + (row_h - self.cell_h_px) / 2.0;
                     if item.is_header {
+                        // Skip section headers covered by the search dropdown.
+                        if overlay.search_buf.is_some()
+                            && i > pre_focused_flat
+                            && i <= search_cover_end
+                        {
+                            continue;
+                        }
                         add_text_verts(&item.key, row_y, key_col,
                             th.separator_focused,
                             &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
                             &mut text_verts, 0);
                     } else {
-                        let (key_color, val_color) = if editable_idx == overlay.cursor {
+                        let is_focused = editable_idx == overlay.cursor;
+                        if is_focused { focused_flat_idx = i; }
+                        // Increment before the potential early-continue so the cursor
+                        // mapping stays correct even for visually-skipped rows.
+                        editable_idx += 1;
+                        // Skip rows hidden under the search dropdown.
+                        if overlay.search_buf.is_some()
+                            && i > pre_focused_flat
+                            && i <= search_cover_end
+                        {
+                            continue;
+                        }
+                        let (key_color, val_color) = if is_focused {
                             (th.text, th.cursor)
                         } else {
                             ({ let [r,g,b,_]=th.text; [r*0.85,g*0.85,b*0.85,1.0_f32] },
@@ -621,19 +685,53 @@ impl<'a> GpuState<'a> {
                         add_text_verts(&item.key, row_y, key_col, key_color,
                             &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
                             &mut text_verts, 0);
-                        // When editing this row show the live buffer; otherwise show stored value.
-                        // For selectable (← →) fields wrap the value with arrow hints.
+
+                        // Build the display value string for the right column.
+                        // Priority: active search > searchable hint > arrows (numeric) > freetext hint > plain value.
+                        let search_val_buf: Option<String> =
+                            if item.is_searchable && is_focused && overlay.search_buf.is_some() {
+                                // Show the live search buffer with a "/" prompt and block cursor.
+                                let sbuf = overlay.search_buf.as_deref().unwrap_or("");
+                                Some(format!("/ {}\u{258e}", sbuf))
+                            } else {
+                                None
+                            };
+                        // Searchable fields (theme, font family): show "value /" to signal
+                        // that Enter opens a live search. No arrows — it's a picker, not an incrementor.
+                        let searchable_hint: Option<String> =
+                            if item.is_searchable && search_val_buf.is_none() {
+                                Some(format!("{} /", item.value))
+                            } else {
+                                None
+                            };
+                        // Numeric selectable fields show ← value → at all times (focused or not).
                         let arrows_buf: Option<String> =
-                            if item.is_selectable
-                                && !(editable_idx == overlay.cursor && overlay.editing.is_some())
+                            if item.is_selectable && !item.is_searchable
+                                && search_val_buf.is_none()
+                                && !(is_focused && overlay.editing.is_some())
                             {
                                 Some(format!("\u{2190} {} \u{2192}", item.value))
                             } else {
                                 None
                             };
-                        let display_val: &str = if let Some(ref s) = arrows_buf {
+                        // Free-text fields get a dim cursor hint when focused and not yet editing.
+                        let freetext_hint: Option<String> =
+                            if !item.is_selectable && !item.is_searchable
+                                && is_focused && overlay.editing.is_none()
+                            {
+                                Some(format!("{}\u{258e}", item.value))
+                            } else {
+                                None
+                            };
+                        let display_val: &str = if let Some(ref s) = search_val_buf {
                             s.as_str()
-                        } else if editable_idx == overlay.cursor {
+                        } else if let Some(ref s) = searchable_hint {
+                            s.as_str()
+                        } else if let Some(ref s) = arrows_buf {
+                            s.as_str()
+                        } else if let Some(ref s) = freetext_hint {
+                            s.as_str()
+                        } else if is_focused {
                             if let Some(ref buf) = overlay.editing { buf.as_str() } else { &item.value }
                         } else {
                             &item.value
@@ -641,22 +739,64 @@ impl<'a> GpuState<'a> {
                         add_text_verts(display_val, row_y, val_col, val_color,
                             &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
                             &mut text_verts, 0);
-                        editable_idx += 1;
                     }
                 }
 
-                // Footer help text.
-                let footer_y = panel_y0 + title_h + n_items * row_h + edit_h
-                    + (footer_h - self.cell_h_px) / 2.0;
-                let footer_text = if overlay.editing.is_some() {
-                    "  Enter: confirm   Esc: cancel"
-                } else {
-                    "  \u{2191}\u{2193} navigate   \u{2190}\u{2192} cycle   Enter: edit   Cmd+S: save   Esc: close"
-                };
-                add_text_verts(footer_text, footer_y, panel_x0,
-                    { let [r,g,b,_]=th.text; [r*0.55,g*0.55,b*0.55,0.90_f32] },
-                    &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
-                    &mut text_verts, 0);
+                // Footer help text — hidden when the search dropdown is open to avoid
+                // it bleeding through the dropdown (footer y falls inside the dropdown area
+                // when the focused item is in the lower half of the panel).
+                if overlay.search_buf.is_none() {
+                    let footer_y = panel_y0 + title_h + n_items * row_h + edit_h
+                        + (footer_h - self.cell_h_px) / 2.0;
+                    let footer_text = if overlay.editing.is_some() {
+                        "  Enter: confirm   Esc: cancel"
+                    } else {
+                        "  \u{2191}\u{2193} navigate   \u{2190}\u{2192} change   Enter: edit/search   Esc: close & save"
+                    };
+                    add_text_verts(footer_text, footer_y, panel_x0,
+                        { let [r,g,b,_]=th.text; [r*0.55,g*0.55,b*0.55,0.90_f32] },
+                        &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                        &mut text_verts, 0);
+                }
+
+                // Search dropdown text — rendered on top of the dropdown background.
+                if overlay.search_buf.is_some() {
+                    const SEARCH_MAX_VISIBLE: usize = 8;
+                    let n_visible = overlay.search_matches.len()
+                        .saturating_sub(overlay.search_scroll_offset)
+                        .min(SEARCH_MAX_VISIBLE);
+                    let visible_end = overlay.search_scroll_offset + n_visible;
+                    let vis_sel = overlay.search_selected.saturating_sub(overlay.search_scroll_offset);
+                    let drop_top_px = panel_y0 + title_h + (focused_flat_idx + 1) as f32 * row_h;
+                    for (i, match_str) in overlay.search_matches[overlay.search_scroll_offset..visible_end].iter().enumerate() {
+                        let item_y = drop_top_px + i as f32 * row_h + (row_h - self.cell_h_px) / 2.0;
+                        let is_sel = i == vis_sel;
+                        let color = if is_sel {
+                            th.text
+                        } else {
+                            let [r, g, b, _] = th.text;
+                            // Dim non-selected items significantly for clear contrast with selected.
+                            [r * 0.60, g * 0.60, b * 0.60, 1.0]
+                        };
+                        // ▶ marker on the selected row; matching-width indent on others.
+                        let labeled = if is_sel {
+                            format!("\u{25b6} {}", match_str)
+                        } else {
+                            format!("  {}", match_str)
+                        };
+                        add_text_verts(&labeled, item_y, key_col, color,
+                            &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                            &mut text_verts, 0);
+                    }
+                    // "no results" hint when the query matched nothing.
+                    if overlay.search_matches.is_empty() {
+                        let item_y = drop_top_px + (row_h - self.cell_h_px) / 2.0;
+                        add_text_verts("(no results)", item_y, key_col,
+                            { let [r,g,b,_]=th.text; [r*0.45, g*0.45, b*0.45, 0.70] },
+                            &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                            &mut text_verts, 0);
+                    }
+                }
         }
 
         let total_vert_count = (text_verts.len() / 8) as u32;
@@ -674,7 +814,8 @@ impl<'a> GpuState<'a> {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: self.theme.terminal_bg[0] as f64,
+                            r: (self.theme.terminal_bg[0] as f64
+                                + if snapshot.bell_active { 0.12 } else { 0.0 }).min(1.0),
                             g: self.theme.terminal_bg[1] as f64,
                             b: self.theme.terminal_bg[2] as f64,
                             a: 1.0,

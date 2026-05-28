@@ -151,6 +151,56 @@ Press `Tab` at the end of any line to open the suggestion popup, which shows his
 | Drag the scrollbar | Scroll terminal or editor |
 | Right-click in terminal | Context menu |
 
+## Settings
+
+Open the settings panel with `Cmd+,` (or `Ctrl+,`). All changes are saved automatically when you close the panel with `Escape`.
+
+### Navigation
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move focus between settings fields |
+| `←` / `→` | Cycle through selectable values (theme, font family) or increment/decrement numeric fields |
+| `Enter` | Open search mode for searchable fields (theme, font family); open direct-edit mode for all other fields |
+| `Escape` | Close panel and save; or cancel the current edit / search without saving |
+| `Cmd + S` | Save the current field edit immediately |
+
+### Fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `theme` | Selector | `tokyo-night` | Active color theme. Use `←`/`→` to cycle through built-in and custom themes, or press `Enter` to open a live search by typing part of the name. |
+| `font › size` | Numeric (±0.5 pt) | `16` | Font point size. Use `←`/`→` to increment by 0.5, or press `Enter` to type a value directly. |
+| `font › family` | Selector + Search | *(system default)* | Font family name, resolved via the system font database. Use `←`/`→` to cycle alphabetically, or press `Enter` then type to filter. Select a result with `↑`/`↓` and confirm with `Enter`. |
+| `padding › horizontal` | Numeric (±1 px) | `8` | Horizontal padding in pixels between the window edge and the terminal/editor content. Use `←`/`→` or press `Enter` to type directly. |
+| `padding › vertical` | Numeric (±1 px) | `8` | Vertical padding in pixels. Use `←`/`→` or press `Enter` to type directly. |
+| `terminal › shell` | Text | *(auto)* | Path to the shell executable (e.g. `/bin/zsh`). Leave empty to use the system default (`$SHELL`). Press `Enter` to edit, `Enter` again to confirm, `Escape` to cancel. |
+| `terminal › scrollback_lines` | Numeric (±500 lines) | `10000` | Number of lines to keep in the scrollback buffer. Use `←`/`→` to adjust in steps of 500, or press `Enter` to type a value directly. Set to `0` for the compiled-in default. |
+
+### Config file
+
+All settings are persisted in `config.toml` in your platform config directory (see [File Locations](#file-locations)). You can edit this file directly with any text editor — changes are picked up on next launch.
+
+```toml
+[font]
+size   = 16.0
+family = "JetBrains Mono"   # omit to use the system default
+
+[padding]
+horizontal = 8
+vertical   = 8
+
+[terminal]
+shell           = ""          # empty = $SHELL default
+scrollback_lines = 10000
+
+active_theme = "tokyo-night"
+```
+
+### Custom themes
+
+Drop any `*.yaml` file into the `themes/` config directory and it will appear immediately in the theme selector. See the bundled theme files in the `themes/` folder for the format reference.
+
 ## File Locations
 
 Teletipo stores its files in the standard OS directories via the [`dirs`](https://crates.io/crates/dirs) crate.

@@ -176,6 +176,41 @@ impl App {
     pub fn take_last_exit_code(&mut self) -> Option<i32> {
         self.terminal.take_last_exit_code()
     }
+
+    /// Active mouse reporting mode (0 = off, 1000/1002/1003/1006).
+    pub fn mouse_mode(&self) -> u16 {
+        self.terminal.mouse_mode()
+    }
+
+    /// Whether bracketed paste mode (DEC 2004) is active.
+    pub fn bracketed_paste(&self) -> bool {
+        self.terminal.bracketed_paste()
+    }
+
+    /// Drains pending PTY response strings (e.g. cursor-position reports).
+    pub fn drain_pending_responses(&mut self) -> Vec<String> {
+        self.terminal.drain_pending_responses()
+    }
+
+    /// Current cursor shape (DECSCUSR value).
+    pub fn cursor_shape(&self) -> u16 {
+        self.terminal.cursor_shape()
+    }
+
+    /// Window title set by OSC 0/2, if any.
+    pub fn window_title(&self) -> Option<&str> {
+        self.terminal.window_title()
+    }
+
+    /// Returns `true` and clears the flag if a BEL was received since the last call.
+    pub fn take_bell(&mut self) -> bool {
+        self.terminal.take_bell()
+    }
+
+    /// Returns the terminal cursor position as `(row, col)`, 0-based.
+    pub fn terminal_cursor_pos(&self) -> (usize, usize) {
+        self.terminal.cursor_pos()
+    }
 }
 
 #[cfg(test)]

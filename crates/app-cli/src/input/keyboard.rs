@@ -204,7 +204,14 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                         && let Ok(text) = cb.get_text() {
                             let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
                             if !normalized.is_empty() {
-                                state.tab_mut().app.insert_editor_input(&normalized);
+                                if state.tab().app.bracketed_paste() {
+                                    let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
+                                    let Some(mut pty) = state.tab_mut().pty.take() else { return };
+                                    let _ = state.tab_mut().app.send_pty_input(&mut pty, bracketed.as_bytes());
+                                    state.tab_mut().pty = Some(pty);
+                                } else {
+                                    state.tab_mut().app.insert_editor_input(&normalized);
+                                }
                             }
                         }
                 }

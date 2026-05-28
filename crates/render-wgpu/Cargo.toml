@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 fontdue = "0.7"
+fontdb = "0.23"
 pollster = "0.3"
 wgpu = "0.19"
 winit = "0.29"

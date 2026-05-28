@@ -62,6 +62,7 @@ impl Parser {
                 }
                 b'\n' => actions.push(Action::Linefeed),
                 b'\r' => actions.push(Action::CarriageReturn),
+                0x07 => actions.push(Action::Bell),
                 0x08 => actions.push(Action::Backspace),
                 0x09 => actions.push(Action::HorizontalTab),
                 0x20..=0x7e => actions.push(Action::Print(byte as char)),
@@ -184,6 +185,22 @@ impl Parser {
                 if let Some(mode) = params.first() {
                     actions.push(Action::DecPrivateModeReset(*mode));
                 }
+            }
+            b'n' if !has_private_prefix => {
+                if params.first().copied() == Some(6) {
+                    actions.push(Action::DeviceStatusReport);
+                }
+            }
+            b'q' if !has_private_prefix => {
+                // DECSCUSR: \x1b[N q — the space before 'q' is an intermediate byte.
+                // Strip all intermediate bytes (0x20-0x2F) so parse_params sees just the digit.
+                let numeric: Vec<u8> = param_slice
+                    .iter()
+                    .copied()
+                    .filter(|b| !matches!(b, 0x20..=0x2F))
+                    .collect();
+                let shape_params = parse_params(&numeric);
+                actions.push(Action::SetCursorShape(first_or(&shape_params, 0)));
             }
             _ => {}
         }
@@ -519,5 +536,52 @@ mod tests {
         let mut parser = Parser::new();
         let actions = parser.advance(&[0xEE, 0x1b, b'[', b'2', b'J']);
         assert_eq!(actions, vec![Action::EraseInDisplay(2)]);
+    }
+
+    #[test]
+    fn parses_bell() {
+        let mut parser = Parser::new();
+        let actions = parser.advance(b"\x07");
+        assert_eq!(actions, vec![Action::Bell]);
+    }
+
+    #[test]
+    fn parses_dsr_cursor_position() {
+        let mut parser = Parser::new();
+        let actions = parser.advance(b"\x1b[6n");
+        assert_eq!(actions, vec![Action::DeviceStatusReport]);
+    }
+
+    #[test]
+    fn dsr_only_fires_on_param_6() {
+        // \x1b[5n is the "status report" query (device OK), not cursor pos — must not fire DSR.
+        let mut parser = Parser::new();
+        let actions = parser.advance(b"\x1b[5n");
+        assert!(actions.is_empty(), "unexpected actions: {actions:?}");
+    }
+
+    #[test]
+    fn parses_set_cursor_shape() {
+        for shape in 0u16..=6 {
+            let mut parser = Parser::new();
+            let input = format!("\x1b[{shape} q");
+            let actions = parser.advance(input.as_bytes());
+            assert_eq!(actions, vec![Action::SetCursorShape(shape)], "shape={shape}");
+        }
+    }
+
+    #[test]
+    fn parses_dec_private_mode_mouse_and_paste() {
+        let mut parser = Parser::new();
+        let actions = parser.advance(b"\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?2004h");
+        assert_eq!(
+            actions,
+            vec![
+                Action::DecPrivateModeSet(1000),
+                Action::DecPrivateModeSet(1002),
+                Action::DecPrivateModeSet(1006),
+                Action::DecPrivateModeSet(2004),
+            ]
+        );
     }
 }

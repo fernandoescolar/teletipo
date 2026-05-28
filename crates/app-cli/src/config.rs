@@ -9,13 +9,13 @@ use serde::{Deserialize, Serialize};
 pub struct FontCfg {
     /// Font point size (e.g. 14.0).
     pub size: f32,
-    /// Absolute path to a TTF/OTF font file. `None` = use the built-in default.
-    pub path: Option<String>,
+    /// Font family name (e.g. "Hack", "Consolas"). `None` = use default.
+    pub family: Option<String>,
 }
 
 impl Default for FontCfg {
     fn default() -> Self {
-        Self { size: 14.0, path: None }
+        Self { size: 14.0, family: None }
     }
 }
 
@@ -28,11 +28,27 @@ pub struct PaddingCfg {
     pub vertical: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalCfg {
+    /// Shell executable path.  `None` = auto-detect from environment.
+    pub shell: Option<String>,
+    /// Number of scrollback lines kept per session (0 = built-in default).
+    pub scrollback_lines: u32,
+}
+
+impl Default for TerminalCfg {
+    fn default() -> Self {
+        Self { shell: None, scrollback_lines: 0 }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UserConfig {
     pub font:         FontCfg,
     pub padding:      PaddingCfg,
+    pub terminal:     TerminalCfg,
     /// Name of the active preset theme file (`None` = default colors).
     pub active_theme: Option<String>,
 }
@@ -42,11 +58,13 @@ pub struct UserConfig {
 /// Static descriptor of every editable setting.
 pub const SETTINGS_FIELDS: &[SettingsDef] = &[
     // "theme" key is the theme picker — cycled with ← →, not free-text edited.
-    SettingsDef { section: "theme",   key: "theme" },
-    SettingsDef { section: "font",    key: "size" },
-    SettingsDef { section: "font",    key: "path" },
-    SettingsDef { section: "padding", key: "horizontal" },
-    SettingsDef { section: "padding", key: "vertical" },
+    SettingsDef { section: "theme",    key: "theme" },
+    SettingsDef { section: "font",     key: "size" },
+    SettingsDef { section: "font",     key: "family" },
+    SettingsDef { section: "padding",  key: "horizontal" },
+    SettingsDef { section: "padding",  key: "vertical" },
+    SettingsDef { section: "terminal", key: "shell" },
+    SettingsDef { section: "terminal", key: "scrollback_lines" },
 ];
 
 pub struct SettingsDef {
@@ -60,13 +78,22 @@ impl UserConfig {
     /// Return the current string value of `section.key`.
     pub fn get_field(&self, section: &str, key: &str) -> String {
         match (section, key) {
-            ("theme",   "theme")       => self.active_theme.clone()
-                                              .unwrap_or_else(|| "(none)".to_owned()),
-            ("font",    "size")        => format!("{}", self.font.size),
-            ("font",    "path")        => self.font.path.clone()
-                                              .unwrap_or_else(|| "(default)".to_owned()),
-            ("padding", "horizontal")  => format!("{}", self.padding.horizontal),
-            ("padding", "vertical")    => format!("{}", self.padding.vertical),
+            ("theme",    "theme")            => self.active_theme.clone()
+                                                   .unwrap_or_else(|| "(none)".to_owned()),
+            ("font",     "size")             => format!("{}", self.font.size),
+            ("font",     "family")           => self.font.family.clone()
+                                                   .unwrap_or_else(|| "(default)".to_owned()),
+            ("padding",  "horizontal")       => format!("{}", self.padding.horizontal),
+            ("padding",  "vertical")         => format!("{}", self.padding.vertical),
+            ("terminal", "shell")            => self.terminal.shell.clone()
+                                                   .unwrap_or_else(|| "(auto)".to_owned()),
+            ("terminal", "scrollback_lines") => {
+                if self.terminal.scrollback_lines == 0 {
+                    "(default)".to_owned()
+                } else {
+                    format!("{}", self.terminal.scrollback_lines)
+                }
+            }
             _ => String::new(),
         }
     }
@@ -81,8 +108,8 @@ impl UserConfig {
                     && v > 4.0 && v < 80.0 { self.font.size = v; return true; }
                 false
             }
-            ("font", "path") => {
-                self.font.path = if value.is_empty() || value == "(default)" {
+            ("font", "family") => {
+                self.font.family = if value.is_empty() || value == "(default)" {
                     None
                 } else {
                     Some(value.to_owned())
@@ -97,6 +124,23 @@ impl UserConfig {
             ("padding", "vertical") => {
                 if let Ok(v) = value.parse::<u32>()
                     && v <= 100 { self.padding.vertical = v; return true; }
+                false
+            }
+            ("terminal", "shell") => {
+                self.terminal.shell = if value.is_empty() || value == "(auto)" {
+                    None
+                } else {
+                    Some(value.to_owned())
+                };
+                true
+            }
+            ("terminal", "scrollback_lines") => {
+                if value.is_empty() || value == "(default)" {
+                    self.terminal.scrollback_lines = 0;
+                    return true;
+                }
+                if let Ok(v) = value.parse::<u32>()
+                    && v <= 500_000 { self.terminal.scrollback_lines = v; return true; }
                 false
             }
             _ => false,
@@ -150,13 +194,19 @@ fn write_default_config(path: &std::path::Path) {
 [font]
 # Point size of the monospace font.
 size = 14.0
-# Absolute path to a TTF/OTF font file.  Comment out to use the built-in default.
-# path = "/path/to/YourFont.ttf"
+# Font family name. Comment out to use the built-in default.
+# family = "Hack"
 
 [padding]
 # Physical-pixel inset of the terminal text grid from the window edges.
 horizontal = 0
 vertical   = 0
+
+[terminal]
+# Shell executable. Comment out to auto-detect from $SHELL / system default.
+# shell = "/bin/zsh"
+# Scrollback lines per session (0 = built-in default).
+# scrollback_lines = 10000
 "##;
     let _ = fs::write(path, content);
 }

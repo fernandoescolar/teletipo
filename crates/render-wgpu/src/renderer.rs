@@ -170,6 +170,10 @@ mod tests {
             suggestion_dropdown: None,
             terminal_links: vec![],
             request_exit: false,
+            cursor_shape: 0,
+            bell_active: false,
+            terminal_cursor_row: 0,
+            terminal_cursor_col: 0,
         }
     }
 
@@ -209,6 +213,10 @@ mod tests {
             suggestion_dropdown: None,
             terminal_links: vec![],
             request_exit: false,
+            cursor_shape: 0,
+            bell_active: false,
+            terminal_cursor_row: 0,
+            terminal_cursor_col: 0,
         });
         assert_eq!(renderer.frames(), 1);
     }
@@ -254,6 +262,10 @@ mod tests {
             suggestion_dropdown: None,
             terminal_links: vec![],
             request_exit: false,
+            cursor_shape: 0,
+            bell_active: false,
+            terminal_cursor_row: 0,
+            terminal_cursor_col: 0,
         });
         assert_eq!(renderer.frames(), 1);
         assert_eq!(renderer.atlas_len(), 0);
@@ -291,6 +303,10 @@ mod tests {
             suggestion_dropdown: None,
             terminal_links: vec![],
             request_exit: false,
+            cursor_shape: 0,
+            bell_active: false,
+            terminal_cursor_row: 0,
+            terminal_cursor_col: 0,
         });
         assert!(renderer.frames() >= 1);
         assert!(renderer.stats().frame_count >= 1);
@@ -327,6 +343,10 @@ mod tests {
             suggestion_dropdown: None,
             terminal_links: vec![],
             request_exit: false,
+            cursor_shape: 0,
+            bell_active: false,
+            terminal_cursor_row: 0,
+            terminal_cursor_col: 0,
         };
 
         let only_row_0 = snapshot_to_cell_quads(
@@ -409,10 +429,14 @@ mod tests {
             suggestion_dropdown: None,
             terminal_links: vec![],
             request_exit: false,
+            cursor_shape: 0,
+            bell_active: false,
+            terminal_cursor_row: 0,
+            terminal_cursor_col: 0,
         };
         let size = PhysicalSize::new(1280u32, 720u32);
         let verts = build_panel_vertices(size, &snapshot, 0.0, 8.4, 16.8, 0.0, 0.0);
-        assert_eq!(verts.len(), 4 * 36);
+        assert_eq!(verts.len(), 5 * 36); // 3 panel bg quads + terminal cursor + editor caret
     }
 
     #[test]
@@ -448,6 +472,10 @@ mod tests {
             suggestion_dropdown: None,
             terminal_links: vec![],
             request_exit: false,
+            cursor_shape: 0,
+            bell_active: false,
+            terminal_cursor_row: 0,
+            terminal_cursor_col: 0,
         };
         let (pos, size) = snapshot_to_ime_area(&snapshot, PhysicalSize::new(1280u32, 720u32));
         assert!(pos.y > 500.0, "IME y={:.1} should be in the editor half", pos.y);

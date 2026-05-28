@@ -4,7 +4,7 @@ use terminal_core::TerminalSession;
 fn stress_large_pty_like_stream_stays_stable() {
     let mut session = TerminalSession::new(40, 120).expect("session");
 
-    for i in 0..20_000 {
+    for i in 0..100_000 {
         let line = format!("line-{i:05} value=abcdef1234567890\\n\\r");
         session.feed(line.as_bytes());
     }

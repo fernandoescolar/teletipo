@@ -288,6 +288,46 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
+    // Terminal cursor.
+    if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
+        let px_x = 2.0 / size.width as f32;
+        let px_y = 2.0 / size.height as f32;
+        let pane_top_px = term_top_offset_px;
+        let cr = snapshot.terminal_cursor_row;
+        let cc = snapshot.terminal_cursor_col;
+        let cx0_px = pad_h + cc as f32 * cell_w_px;
+        let cy_top_px = pane_top_px + pad_v + cr as f32 * cell_h_px;
+        let [tr, tg, tb, _] = theme.cursor;
+        let cursor_color = [tr, tg, tb, 0.85_f32];
+        match snapshot.cursor_shape {
+            // 0/1/2 = block
+            0..=2 => {
+                let x0 = cx0_px * px_x - 1.0;
+                let x1 = (cx0_px + cell_w_px) * px_x - 1.0;
+                let y1 = 1.0 - cy_top_px * px_y;
+                let y0 = 1.0 - (cy_top_px + cell_h_px) * px_y;
+                verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, cursor_color));
+            }
+            // 3/4 = underline — 2px bar at bottom of cell
+            3 | 4 => {
+                let x0 = cx0_px * px_x - 1.0;
+                let x1 = (cx0_px + cell_w_px) * px_x - 1.0;
+                let y_bot_px = cy_top_px + cell_h_px;
+                let y1 = 1.0 - (y_bot_px - 2.0) * px_y;
+                let y0 = 1.0 - y_bot_px * px_y;
+                verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, cursor_color));
+            }
+            // 5/6 = bar — 2px bar at left of cell
+            _ => {
+                let x0 = cx0_px * px_x - 1.0;
+                let x1 = (cx0_px + 2.0) * px_x - 1.0;
+                let y1 = 1.0 - cy_top_px * px_y;
+                let y0 = 1.0 - (cy_top_px + cell_h_px) * px_y;
+                verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, cursor_color));
+            }
+        }
+    }
+
     if size.width > 0 && snapshot.scrollback_lines > 0 {
         let sb_w_ndc = 2.0 * SCROLLBAR_W_PX / size.width as f32;
         let sb_left = 1.0 - sb_w_ndc;
@@ -453,13 +493,13 @@ pub(crate) fn build_settings_overlay_bg_verts(
     // Full-screen dim.
     verts.extend_from_slice(&quad_verts(-1.0, -1.0, 1.0, 1.0, dim));
 
-    let title_h  = cell_h_px * 1.8;
-    let row_h    = cell_h_px * 1.3;
-    let footer_h = cell_h_px * 1.5;
-    let edit_h   = if overlay.editing.is_some() { cell_h_px * 1.4 } else { 0.0 };
+    let title_h  = cell_h_px * 2.2;
+    let row_h    = cell_h_px * 1.7;
+    let footer_h = cell_h_px * 1.9;
+    let edit_h   = if overlay.editing.is_some() { cell_h_px * 1.8 } else { 0.0 };
     let n_items  = overlay.items.len() as f32;
     let panel_h  = title_h + n_items * row_h + edit_h + footer_h;
-    let panel_w  = (cell_w_px * 54.0).min(win_w * 0.88).max(cell_w_px * 30.0);
+    let panel_w  = (cell_w_px * 72.0).min(win_w * 0.92).max(cell_w_px * 40.0);
 
     let panel_x0 = (win_w - panel_w) / 2.0;
     let panel_y0 = (win_h - panel_h) / 2.0;
@@ -505,6 +545,81 @@ pub(crate) fn build_settings_overlay_bg_verts(
         let ey_top = 1.0 - edit_y_top_px * px_y;
         let ey_bot = 1.0 - (edit_y_top_px + edit_h) * px_y;
         verts.extend_from_slice(&quad_verts(x0, ey_bot, x1, ey_top, ov_edit));
+    }
+
+    // Search dropdown: a floating list below the focused item when search mode is active.
+    if overlay.search_buf.is_some() {
+        const SEARCH_MAX_VISIBLE: usize = 8;
+        const SEARCH_BG:     [f32; 4] = [0.15, 0.19, 0.30, 1.0];   // fully opaque, clearly distinct
+        const SEARCH_BORDER: [f32; 4] = [0.35, 0.50, 0.82, 1.0];
+        const SEARCH_SEL:    [f32; 4] = [0.22, 0.34, 0.62, 1.0];
+
+        // Find the flat item index of the focused editable field.
+        let focused_flat = {
+            let mut ec = 0usize;
+            let mut fi = 0usize;
+            for (i, item) in overlay.items.iter().enumerate() {
+                if !item.is_header {
+                    if ec == overlay.cursor { fi = i; break; }
+                    ec += 1;
+                }
+            }
+            fi
+        };
+
+        // Show at least 1 row even when there are no matches (for "(no results)" hint).
+        let n_visible = overlay.search_matches.len()
+            .saturating_sub(overlay.search_scroll_offset)
+            .min(SEARCH_MAX_VISIBLE)
+            .max(1);
+        {
+            let drop_row_h = row_h;
+            let drop_h    = n_visible as f32 * drop_row_h;
+            // Position dropdown flush below the focused item.
+            let drop_top_px = panel_y0 + title_h + (focused_flat + 1) as f32 * row_h;
+
+            let dx0 = x0;
+            let dx1 = x1;
+            let dy_top = 1.0 - drop_top_px * px_y;
+            let dy_bot = 1.0 - (drop_top_px + drop_h) * px_y;
+
+            // Border.
+            verts.extend_from_slice(&quad_verts(
+                dx0 - px_x, dy_bot - px_y,
+                dx1 + px_x, dy_top + px_y,
+                SEARCH_BORDER,
+            ));
+            // Background.
+            verts.extend_from_slice(&quad_verts(dx0, dy_bot, dx1, dy_top, SEARCH_BG));
+
+            // Highlight selected row (only when there are actual matches).
+            let vis_sel = overlay.search_selected.saturating_sub(overlay.search_scroll_offset);
+            if !overlay.search_matches.is_empty() && vis_sel < n_visible {
+                let sel_top_px = drop_top_px + vis_sel as f32 * drop_row_h;
+                let sy_top = 1.0 - sel_top_px * px_y;
+                let sy_bot = 1.0 - (sel_top_px + drop_row_h) * px_y;
+                verts.extend_from_slice(&quad_verts(dx0, sy_bot, dx1, sy_top, SEARCH_SEL));
+            }
+
+            // Scrollbar (when there are more real results than the visible window).
+            let total = overlay.search_matches.len();
+            if total > SEARCH_MAX_VISIBLE {
+                let sb_w_px  = (cell_w_px * 0.35).max(3.0);
+                let sb_x0_px = (panel_x0 + panel_w - sb_w_px).max(panel_x0);
+                let sb_x0 = sb_x0_px * px_x - 1.0;
+                let sb_x1 = (sb_x0_px + sb_w_px) * px_x - 1.0;
+                let track_c = add_c(mix_c(theme.terminal_bg, theme.separator_focused, 0.15), 0.12);
+                verts.extend_from_slice(&quad_verts(sb_x0, dy_bot, sb_x1, dy_top, track_c));
+                let thumb_frac  = n_visible as f32 / total as f32;
+                let thumb_h_px  = drop_h * thumb_frac;
+                let max_scroll  = (total - n_visible) as f32;
+                let scroll_frac = overlay.search_scroll_offset as f32 / max_scroll;
+                let thumb_t_px  = drop_top_px + scroll_frac * (drop_h - thumb_h_px);
+                let ty_top = 1.0 - thumb_t_px * px_y;
+                let ty_bot = 1.0 - (thumb_t_px + thumb_h_px) * px_y;
+                verts.extend_from_slice(&quad_verts(sb_x0, ty_bot, sb_x1, ty_top, SEARCH_BORDER));
+            }
+        }
     }
 
     verts

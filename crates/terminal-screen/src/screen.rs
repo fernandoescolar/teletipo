@@ -136,6 +136,16 @@ impl Screen {
         }
     }
 
+    /// Returns the current cursor row (0-based) in the active grid.
+    pub fn cursor_row(&self) -> usize {
+        self.active_grid().cursor_row
+    }
+
+    /// Returns the current cursor column (0-based) in the active grid.
+    pub fn cursor_col(&self) -> usize {
+        self.active_grid().cursor_col
+    }
+
     pub fn put_char(&mut self, ch: char) {
         let style = self.current_style;
         if self.use_alternate {

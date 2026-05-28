@@ -42,44 +42,46 @@ pub(crate) struct CachedGlyph {
     pub height_px: f32,
 }
 
-/// Tries to load raw font bytes from the configured path or OS fallbacks.
+/// Tries to load raw font bytes from the configured family or system fallbacks.
 pub(crate) fn load_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
-    if let Some(ref path) = config.font_path {
-        match std::fs::read(path) {
-            Ok(bytes) => return Some(bytes),
-            Err(e) => eprintln!("render-wgpu: cannot load font '{path}': {e}, trying fallback"),
-        }
+    fn query_bytes_by_family(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(family)],
+            ..fontdb::Query::default()
+        };
+        let id = db.query(&query)?;
+        db.with_face_data(id, |data, _| data.to_vec())
     }
 
-    let home = std::env::var("HOME").unwrap_or_default();
+    fn query_monospace_bytes(db: &fontdb::Database) -> Option<Vec<u8>> {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Monospace],
+            ..fontdb::Query::default()
+        };
+        let id = db.query(&query)?;
+        db.with_face_data(id, |data, _| data.to_vec())
+    }
 
-    let owned_candidates: Vec<String> = if cfg!(target_os = "macos") {
-        vec![
-            format!("{home}/Library/Fonts/HackNerdFontMono-Regular.ttf"),
-            format!("{home}/Library/Fonts/HackNerdFont-Regular.ttf"),
-            "/Library/Fonts/HackNerdFontMono-Regular.ttf".into(),
-            "/Library/Fonts/HackNerdFont-Regular.ttf".into(),
-            "/System/Library/Fonts/Monaco.ttf".into(),
-            "/Library/Fonts/Courier New.ttf".into(),
-            "/System/Library/Fonts/Supplemental/Courier New.ttf".into(),
-        ]
-    } else if cfg!(target_os = "linux") {
-        vec![
-            "/usr/share/fonts/truetype/hack/Hack-Regular.ttf".into(),
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf".into(),
-            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf".into(),
-            "/usr/share/fonts/TTF/DejaVuSansMono.ttf".into(),
-            "/usr/share/fonts/noto/NotoMono-Regular.ttf".into(),
-        ]
-    } else {
-        vec![]
-    };
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
 
-    for path in &owned_candidates {
-        if let Ok(bytes) = std::fs::read(path) {
+    if let Some(ref family) = config.font_family {
+        if let Some(bytes) = query_bytes_by_family(&db, family) {
+            return Some(bytes);
+        }
+        eprintln!("render-wgpu: cannot load font family '{family}', trying fallback");
+    }
+
+    for family in ["Hack", "DejaVu Sans Mono", "Consolas", "Courier New", "Menlo"] {
+        if let Some(bytes) = query_bytes_by_family(&db, family) {
             return Some(bytes);
         }
     }
+
+    if let Some(bytes) = query_monospace_bytes(&db) {
+        return Some(bytes);
+    }
+
     eprintln!("render-wgpu: no system font found — text will not be rendered");
     None
 }

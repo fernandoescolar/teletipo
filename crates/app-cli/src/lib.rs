@@ -8,7 +8,7 @@ mod tab;
 mod theme;
 pub mod updater;
 use config::UserConfig;
-use launch::{build_initial_state, FontFile, load_session, save_session, spawn_pty};
+use launch::{build_initial_state, FontEntry, load_session, save_session, spawn_pty};
 use app_orchestrator::App;
 use clap::Parser;
 use platform_abstraction::default_shell;
@@ -41,6 +41,12 @@ struct SettingsUiState {
     edit_buf: Option<String>,
     dirty: bool,
     just_saved: bool,
+    /// When `Some`, the focused searchable field is in type-to-filter mode.
+    search_buf: Option<String>,
+    /// Highlighted index within the current `search_matches` list.
+    search_selected: usize,
+    /// First visible index in the search dropdown (scroll offset).
+    search_scroll_offset: usize,
 }
 
 struct GpuRuntimeState {
@@ -87,10 +93,10 @@ struct GpuRuntimeState {
     /// Index into `available_themes` of the currently active preset, or `None`
     /// when the user is using custom colors.
     active_theme_idx: Option<usize>,
-    /// All font files discovered at startup (index 0 = "(default)").
-    available_fonts: Vec<FontFile>,
+    /// All font families discovered at startup (index 0 = "(default)").
+    available_fonts: Vec<FontEntry>,
     /// Index into `available_fonts` of the currently selected font.
-    /// 0 means "(default)", i.e. no font path override.
+    /// 0 means "(default)", i.e. no font family override.
     active_font_idx: usize,
     /// Receiver for the background update-check result (consumed once after the
     /// check completes; set to `None` afterwards).
@@ -101,6 +107,9 @@ struct GpuRuntimeState {
     settings: SettingsUiState,
     /// Set to `true` when the last shell session ends so the window closes.
     should_exit: bool,
+    /// When `Some`, flash the terminal background as a visual BEL indicator
+    /// until the contained `Instant`.
+    bell_flash_until: Option<Instant>,
 }
 
 impl GpuRuntimeState {
@@ -126,10 +135,18 @@ impl GpuRuntimeState {
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             let Some(mut pty) = tab.pty.take() else { continue };
             let had_data = tab.app.pump_pty_once(&mut pty).map(|n| n > 0).unwrap_or(false);
+            // Send any pending DSR responses (e.g. \x1b[row;colR) back to the PTY.
+            for response in tab.app.drain_pending_responses() {
+                let _ = tab.app.send_pty_input(&mut pty, response.as_bytes());
+            }
             let is_dead = pty.try_wait().ok().flatten().is_some();
             tab.pty = Some(pty);
             if i == active && had_data {
                 active_had_data = true;
+            }
+            if tab.app.take_bell() {
+                self.bell_flash_until =
+                    Some(Instant::now() + std::time::Duration::from_millis(150));
             }
             if let Some(code) = tab.app.take_last_exit_code() {
                 exit_codes.push((i, code));
@@ -401,9 +418,9 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) {
         session,
         update_rx,
     )));
-    let (initial_font_path, initial_font_size) = {
+    let (initial_font_family, initial_font_size) = {
         let s = state.borrow();
-        (s.user_config.font.path.clone(), s.user_config.font.size)
+        (s.user_config.font.family.clone(), s.user_config.font.size)
     };
     let state_for_frames = Rc::clone(&state);
     let state_for_events = Rc::clone(&state);
@@ -421,7 +438,7 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) {
             initial_size: Some((window_width, window_height)),
             initial_position: window_pos,
             font: FontConfig {
-                font_path: initial_font_path,
+                font_family: initial_font_family,
                 font_size: initial_font_size,
             },
             ..RenderConfig::default()
