@@ -86,6 +86,47 @@ pub(crate) fn load_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
     None
 }
 
+/// Tries to load the **bold** variant of the configured font family (or system fallbacks).
+/// Falls back gracefully so callers can treat `None` as "use regular font for bold".
+pub(crate) fn load_bold_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
+    fn query_bold_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(family)],
+            weight: fontdb::Weight::BOLD,
+            ..fontdb::Query::default()
+        };
+        let id = db.query(&query)?;
+        db.with_face_data(id, |data, _| data.to_vec())
+    }
+
+    fn query_bold_monospace_bytes(db: &fontdb::Database) -> Option<Vec<u8>> {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Monospace],
+            weight: fontdb::Weight::BOLD,
+            ..fontdb::Query::default()
+        };
+        let id = db.query(&query)?;
+        db.with_face_data(id, |data, _| data.to_vec())
+    }
+
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+
+    if let Some(ref family) = config.font_family {
+        if let Some(bytes) = query_bold_bytes(&db, family) {
+            return Some(bytes);
+        }
+    }
+
+    for family in ["Hack", "DejaVu Sans Mono", "Consolas", "Courier New", "Menlo"] {
+        if let Some(bytes) = query_bold_bytes(&db, family) {
+            return Some(bytes);
+        }
+    }
+
+    query_bold_monospace_bytes(&db)
+}
+
 pub(crate) const TEXT_ATLAS_SIZE: u32 = 1024;
 
 /// Rasterizes one glyph into the atlas and returns its cached descriptor.

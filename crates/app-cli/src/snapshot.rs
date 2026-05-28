@@ -61,6 +61,16 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     if had_data {
         let active = state.active_tab;
         state.tabs[active].scroll_offset = 0;
+        // Reset cursor blink to visible whenever terminal output arrives.
+        state.cursor_blink_last = std::time::Instant::now();
+        state.cursor_blink_phase = true;
+    }
+
+    // Advance cursor blink: toggle every 500 ms.
+    const BLINK_HALF_MS: u128 = 500;
+    if state.cursor_blink_last.elapsed().as_millis() >= BLINK_HALF_MS {
+        state.cursor_blink_phase = !state.cursor_blink_phase;
+        state.cursor_blink_last = std::time::Instant::now();
     }
 
     let active = state.active_tab;
@@ -71,11 +81,13 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         scroll_offset,
         active_palette.as_ref(),
     );
-    let terminal_text: String = styled.iter().map(|(ch, _, _)| *ch).collect();
+    let terminal_text: String = styled.iter().map(|(ch, _, _, _)| *ch).collect();
     let terminal_fg_colors: Vec<Option<[f32; 3]>> =
-        styled.iter().map(|(_, fg, _)| *fg).collect();
+        styled.iter().map(|(_, fg, _, _)| *fg).collect();
     let terminal_bg_colors: Vec<Option<[f32; 3]>> =
-        styled.iter().map(|(_, _, bg)| *bg).collect();
+        styled.iter().map(|(_, _, bg, _)| *bg).collect();
+    let terminal_styles: Vec<u8> =
+        styled.iter().map(|(_, _, _, s)| *s).collect();
     state.tabs[active].last_terminal_text = terminal_text.clone();
     state.tabs[active].term_row_count = terminal_text.lines().count().max(1);
     // Underline only the link the cursor is currently hovering over.
@@ -240,6 +252,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         terminal_text,
         terminal_fg_colors,
         terminal_bg_colors,
+        terminal_styles,
         editor_text: editor_text.clone(),
         editor_cursor_offset,
         scroll_offset,
@@ -283,6 +296,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         request_exit: state.should_exit,
         cursor_shape: state.tabs[active].app.cursor_shape(),
         bell_active: state.bell_flash_until.map_or(false, |t| t > std::time::Instant::now()),
+        cursor_blink_on: state.cursor_blink_phase,
         terminal_cursor_row: state.tabs[active].app.terminal_cursor_pos().0,
         terminal_cursor_col: state.tabs[active].app.terminal_cursor_pos().1,
         terminal_fullscreen: state.tabs[active].was_terminal_fullscreen,

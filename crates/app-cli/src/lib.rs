@@ -110,6 +110,13 @@ struct GpuRuntimeState {
     /// When `Some`, flash the terminal background as a visual BEL indicator
     /// until the contained `Instant`.
     bell_flash_until: Option<Instant>,
+    /// Time the cursor blink half-cycle last toggled.
+    cursor_blink_last: Instant,
+    /// `true` = cursor visible (on-phase); `false` = cursor hidden (off-phase).
+    cursor_blink_phase: bool,
+    /// Which mouse button (0=left, 1=mid, 2=right) is currently held, for
+    /// motion-reporting passthrough to the PTY (modes 1002/1003).
+    mouse_btn_held: Option<u8>,
 }
 
 impl GpuRuntimeState {
@@ -145,7 +152,7 @@ impl GpuRuntimeState {
             if i == active && had_data {
                 active_had_data = true;
             }
-            if tab.app.take_bell() {
+            if tab.app.take_bell() && self.user_config.terminal.bell {
                 self.bell_flash_until =
                     Some(Instant::now() + std::time::Duration::from_millis(150));
             }

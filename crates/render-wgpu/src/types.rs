@@ -21,6 +21,8 @@ pub struct RenderSnapshot {
     pub terminal_text: String,
     pub terminal_fg_colors: Vec<Option<[f32; 3]>>,
     pub terminal_bg_colors: Vec<Option<[f32; 3]>>,
+    /// Style bits per terminal character: bit 0 = bold, bit 1 = italic, bit 2 = strikethrough.
+    pub terminal_styles: Vec<u8>,
     pub editor_text: String,
     pub editor_cursor_offset: usize,
     pub scroll_offset: usize,
@@ -71,6 +73,8 @@ pub struct RenderSnapshot {
     pub cursor_shape: u16,
     /// When `true`, briefly tint the terminal background as a visual BEL indicator.
     pub bell_active: bool,
+    /// When `false`, the cursor should be invisible this frame (blink-off half-cycle).
+    pub cursor_blink_on: bool,
     /// Terminal cursor position (row, col), 0-based, in the visible grid.
     /// Used to draw the cursor block/underline/bar at the correct cell.
     pub terminal_cursor_row: usize,

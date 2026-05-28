@@ -35,11 +35,13 @@ pub struct TerminalCfg {
     pub shell: Option<String>,
     /// Number of scrollback lines kept per session (0 = built-in default).
     pub scrollback_lines: u32,
+    /// Show a visual bell flash on BEL (0x07).  Default: `true`.
+    pub bell: bool,
 }
 
 impl Default for TerminalCfg {
     fn default() -> Self {
-        Self { shell: None, scrollback_lines: 0 }
+        Self { shell: None, scrollback_lines: 0, bell: true }
     }
 }
 
@@ -65,6 +67,7 @@ pub const SETTINGS_FIELDS: &[SettingsDef] = &[
     SettingsDef { section: "padding",  key: "vertical" },
     SettingsDef { section: "terminal", key: "shell" },
     SettingsDef { section: "terminal", key: "scrollback_lines" },
+    SettingsDef { section: "terminal", key: "bell" },
 ];
 
 pub struct SettingsDef {
@@ -94,6 +97,7 @@ impl UserConfig {
                     format!("{}", self.terminal.scrollback_lines)
                 }
             }
+            ("terminal", "bell") => if self.terminal.bell { "on".to_owned() } else { "off".to_owned() },
             _ => String::new(),
         }
     }
@@ -142,6 +146,13 @@ impl UserConfig {
                 if let Ok(v) = value.parse::<u32>()
                     && v <= 500_000 { self.terminal.scrollback_lines = v; return true; }
                 false
+            }
+            ("terminal", "bell") => {
+                match value.to_lowercase().as_str() {
+                    "on"  | "true"  | "1" => { self.terminal.bell = true;  true }
+                    "off" | "false" | "0" => { self.terminal.bell = false; true }
+                    _ => false,
+                }
             }
             _ => false,
         }

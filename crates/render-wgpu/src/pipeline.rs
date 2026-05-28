@@ -5,7 +5,7 @@ use wgpu::SurfaceError;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::atlas::{load_font_bytes, pack_glyph, CachedGlyph, TEXT_ATLAS_SIZE};
+use crate::atlas::{load_bold_font_bytes, load_font_bytes, pack_glyph, CachedGlyph, TEXT_ATLAS_SIZE};
 use crate::geometry::{
     add_text_verts, build_panel_vertices, build_settings_overlay_bg_verts,
     build_suggestion_dropdown_bg_verts, floats_as_bytes,
@@ -30,6 +30,8 @@ pub(crate) struct GpuState<'a> {
     pub(crate) cell_w_px: f32,
     pub(crate) cell_h_px: f32,
     glyph_cache: HashMap<char, CachedGlyph>,
+    bold_font: Option<fontdue::Font>,
+    bold_glyph_cache: HashMap<char, CachedGlyph>,
     atlas_alloc_x: u32,
     atlas_alloc_y: u32,
     atlas_row_h: u32,
@@ -267,6 +269,24 @@ impl<'a> GpuState<'a> {
             }
         }
 
+        // Bold font: load and rasterize into the same atlas with a separate cache.
+        let bold_font_bytes = load_bold_font_bytes(&render_config.font);
+        let bold_font = bold_font_bytes.as_ref().and_then(|bytes| {
+            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+        });
+        let mut bold_glyph_cache: HashMap<char, CachedGlyph> = HashMap::new();
+        if let Some(ref bf) = bold_font {
+            for ch in ' '..='~' {
+                let (metrics, bitmap) = bf.rasterize(ch, font_size);
+                let cached = pack_glyph(
+                    &queue, &atlas_texture,
+                    &mut atlas_alloc_x, &mut atlas_alloc_y, &mut atlas_row_h,
+                    &metrics, &bitmap, cell_h_px,
+                );
+                bold_glyph_cache.insert(ch, cached);
+            }
+        }
+
         Ok(Self {
             surface,
             device,
@@ -284,6 +304,8 @@ impl<'a> GpuState<'a> {
             cell_w_px,
             cell_h_px,
             glyph_cache,
+            bold_font,
+            bold_glyph_cache,
             atlas_alloc_x,
             atlas_alloc_y,
             atlas_row_h,
@@ -302,6 +324,7 @@ impl<'a> GpuState<'a> {
             self.cell_w_px = f.metrics('M', new_size).advance_width;
         }
         self.glyph_cache.clear();
+        self.bold_glyph_cache.clear();
         self.atlas_alloc_x = 0;
         self.atlas_alloc_y = 0;
         self.atlas_row_h = 0;
@@ -447,7 +470,9 @@ impl<'a> GpuState<'a> {
         let mut text_verts: Vec<f32> = Vec::new();
 
         add_text_verts(&snapshot.terminal_text, term_top_px + pad_v, pad_h, self.theme.text,
-            &snapshot.terminal_fg_colors, &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
+            &snapshot.terminal_fg_colors, &snapshot.terminal_styles,
+            &self.glyph_cache, Some(&self.bold_glyph_cache),
+            self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
 
         if let Some(ref overlay_text) = snapshot.resize_overlay {
             let n_chars = overlay_text.chars().count() as f32;
@@ -456,7 +481,7 @@ impl<'a> GpuState<'a> {
             let x_start = (self.size.width as f32 - text_w_px) / 2.0;
             let y_start = (tab_bar_h + term_h_px) / 2.0 - self.cell_h_px / 2.0;
             add_text_verts(overlay_text, y_start, x_start, [1.0, 1.0, 1.0, 1.0],
-                &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
+                &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
         }
 
         let terminal_vert_count = (text_verts.len() / 8) as u32;
@@ -465,7 +490,7 @@ impl<'a> GpuState<'a> {
         let prefix_color = [0.40, 0.80, 1.00, 1.0_f32];
         if editor_skip == 0 {
             add_text_verts("\u{276f} ", edit_top_px + pad_v, pad_h, prefix_color,
-                &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
+                &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
         }
         let editor_hl = highlight_shell(&snapshot.editor_text);
         let mut padded_hl: Vec<Option<[f32; 3]>> = vec![None, None];
@@ -481,7 +506,7 @@ impl<'a> GpuState<'a> {
             format!("  {}{}", snapshot.editor_text, snapshot.editor_suggestion)
         };
         add_text_verts(&padded_editor, edit_top_px + pad_v, pad_h, self.theme.text,
-            &padded_hl, &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, editor_skip);
+            &padded_hl, &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, editor_skip);
 
         // Tab label text — rendered inside the tab bar region at the very top.
         // The rightmost (2 × cell_w) pixels are reserved for the "+" button.
@@ -503,17 +528,17 @@ impl<'a> GpuState<'a> {
                 };
                 // Label — left-padded, leaving room for the × button on the right.
                 add_text_verts(label, 0.0, tab_x0 + self.cell_w_px * 0.4, text_color,
-                    &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
+                    &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
                 // × close button at the right edge of the tab.
                 let close_x = tab_x1 - self.cell_w_px * 1.3;
                 let close_color = { let [r,g,b] = th.ansi_palette[9]; [r*0.80, g*0.65+0.20, b*0.65+0.20, 0.85_f32] };
                 add_text_verts("\u{d7}", 0.0, close_x, close_color,
-                    &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
+                    &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
             }
             // "+" button text on the far right.
             let add_x = self.size.width as f32 - add_btn_w + self.cell_w_px * 0.5;
             add_text_verts("+", 0.0, add_x, { let [r,g,b] = th.ansi_palette[10]; [r, g, b, 0.95_f32] },
-                &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
+                &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
         }
 
         // Pre-cache settings overlay characters.
@@ -564,7 +589,7 @@ impl<'a> GpuState<'a> {
                 // Vertically centre the text within each item row.
                 let y_item = my + i as f32 * menu_item_h + (menu_item_h - self.cell_h_px) * 0.5;
                 add_text_verts(item, y_item, mx + self.cell_w_px * 0.5, text_color,
-                    &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
+                    &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size, &mut text_verts, 0);
             }
         }
 
@@ -588,7 +613,7 @@ impl<'a> GpuState<'a> {
                     [r * 0.72, g * 0.72, b * 0.72, 0.9]
                 };
                 add_text_verts(item, row_y, pad_h + self.cell_w_px, color,
-                    &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                    &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size,
                     &mut text_verts, 0);
             }
         }
@@ -613,7 +638,7 @@ impl<'a> GpuState<'a> {
                 let title_y = panel_y0 + (title_h - self.cell_h_px) / 2.0;
                 add_text_verts(title_text, title_y, panel_x0 + self.cell_w_px,
                     th.text,
-                    &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                    &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size,
                     &mut text_verts, 0);
 
                 // Rows
@@ -661,7 +686,7 @@ impl<'a> GpuState<'a> {
                         }
                         add_text_verts(&item.key, row_y, key_col,
                             th.separator_focused,
-                            &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                            &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size,
                             &mut text_verts, 0);
                     } else {
                         let is_focused = editable_idx == overlay.cursor;
@@ -683,7 +708,7 @@ impl<'a> GpuState<'a> {
                              { let [r,g,b,_]=th.cursor; [r*0.75,g*0.85,b*0.85,0.85_f32] })
                         };
                         add_text_verts(&item.key, row_y, key_col, key_color,
-                            &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                            &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size,
                             &mut text_verts, 0);
 
                         // Build the display value string for the right column.
@@ -737,7 +762,7 @@ impl<'a> GpuState<'a> {
                             &item.value
                         };
                         add_text_verts(display_val, row_y, val_col, val_color,
-                            &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                            &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size,
                             &mut text_verts, 0);
                     }
                 }
@@ -755,7 +780,7 @@ impl<'a> GpuState<'a> {
                     };
                     add_text_verts(footer_text, footer_y, panel_x0,
                         { let [r,g,b,_]=th.text; [r*0.55,g*0.55,b*0.55,0.90_f32] },
-                        &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                        &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size,
                         &mut text_verts, 0);
                 }
 
@@ -785,7 +810,7 @@ impl<'a> GpuState<'a> {
                             format!("  {}", match_str)
                         };
                         add_text_verts(&labeled, item_y, key_col, color,
-                            &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                            &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size,
                             &mut text_verts, 0);
                     }
                     // "no results" hint when the query matched nothing.
@@ -793,7 +818,7 @@ impl<'a> GpuState<'a> {
                         let item_y = drop_top_px + (row_h - self.cell_h_px) / 2.0;
                         add_text_verts("(no results)", item_y, key_col,
                             { let [r,g,b,_]=th.text; [r*0.45, g*0.45, b*0.45, 0.70] },
-                            &[], &self.glyph_cache, self.cell_w_px, self.cell_h_px, self.size,
+                            &[], &[], &self.glyph_cache, None, self.cell_w_px, self.cell_h_px, self.size,
                             &mut text_verts, 0);
                     }
                 }

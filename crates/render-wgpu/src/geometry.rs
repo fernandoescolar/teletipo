@@ -243,6 +243,41 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
+    // Strikethrough decoration: a 1-pixel horizontal bar at 50% cell height.
+    if !snapshot.terminal_styles.is_empty()
+        && size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0
+    {
+        let px_x = 2.0 / size.width as f32;
+        let px_y = 2.0 / size.height as f32;
+        let pane_top_px = term_top_offset_px;
+        let mut char_idx = 0usize;
+        let mut row = 0usize;
+        let mut col = 0usize;
+        for ch in snapshot.terminal_text.chars() {
+            if ch == '\n' {
+                row += 1;
+                col = 0;
+                char_idx += 1;
+                continue;
+            }
+            let style = snapshot.terminal_styles.get(char_idx).copied().unwrap_or(0);
+            if style & 0b100 != 0 && ch != ' ' {
+                let fg_color = snapshot.terminal_fg_colors.get(char_idx)
+                    .copied().flatten()
+                    .map(|[r, g, b]| [r, g, b, 1.0_f32])
+                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                let x0 = (pad_h + col as f32 * cell_w_px) * px_x - 1.0;
+                let x1 = (pad_h + (col + 1) as f32 * cell_w_px) * px_x - 1.0;
+                let strike_y_px = pane_top_px + pad_v + row as f32 * cell_h_px + cell_h_px * 0.50;
+                let y_top_ndc = 1.0 - (strike_y_px - 1.0) * px_y;
+                let y_bot_ndc = 1.0 - (strike_y_px + 1.0) * px_y;
+                verts.extend_from_slice(&quad_verts(x0, y_bot_ndc, x1, y_top_ndc, fg_color));
+            }
+            char_idx += 1;
+            col += 1;
+        }
+    }
+
     if let Some((raw_sr, raw_sc, raw_er, raw_ec)) = snapshot.selection
         && size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
             let (sel_sr, sel_sc, sel_er, sel_ec) =
@@ -288,8 +323,9 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
-    // Terminal cursor.
-    if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
+    // Terminal cursor — hidden during the blink-off phase.
+    if snapshot.cursor_blink_on
+        && size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
         let px_x = 2.0 / size.width as f32;
         let px_y = 2.0 / size.height as f32;
         let pane_top_px = term_top_offset_px;
@@ -768,7 +804,13 @@ pub(crate) fn add_text_verts(
     x_start_px: f32,
     default_color: [f32; 4],
     fg_colors: &[Option<[f32; 3]>],
+    // Per-character style bits: bit 0 = bold, bit 1 = italic, bit 2 = strikethrough.
+    // Pass an empty slice when no style information is available.
+    styles: &[u8],
     glyph_cache: &HashMap<char, CachedGlyph>,
+    // Optional cache of bold-face glyphs. When `Some` and a character has the bold
+    // style bit set, the bold glyph is used; falls back to `glyph_cache` if not found.
+    bold_glyph_cache: Option<&HashMap<char, CachedGlyph>>,
     cell_w_px: f32,
     cell_h_px: f32,
     window_size: PhysicalSize<u32>,
@@ -800,7 +842,16 @@ pub(crate) fn add_text_verts(
             Some([cr, cg, cb]) => [cr, cg, cb, default_color[3]],
             None => default_color,
         };
-        if let Some(glyph) = glyph_cache.get(&ch)
+        let style = styles.get(char_idx).copied().unwrap_or(0);
+        let is_bold   = style & 0b001 != 0;
+        let is_italic = style & 0b010 != 0;
+        // Pick bold glyph cache when available, fall back to regular.
+        let cache = if is_bold {
+            bold_glyph_cache.and_then(|bc| bc.get(&ch)).or_else(|| glyph_cache.get(&ch))
+        } else {
+            glyph_cache.get(&ch)
+        };
+        if let Some(glyph) = cache
             && glyph.width_px > 0.0 && glyph.height_px > 0.0 {
                 let gx0 = x_start_px + col as f32 * cell_w_px + glyph.offset_x_px;
                 let gy0 = pane_top_px + visible_row as f32 * cell_h_px + glyph.offset_y_px;
@@ -809,12 +860,15 @@ pub(crate) fn add_text_verts(
                 let y1 = 1.0 - gy0 * px_y;
                 let y0 = 1.0 - (gy0 + glyph.height_px) * px_y;
                 let (u0, v0, u1, v1) = (glyph.u0, glyph.v0, glyph.u1, glyph.v1);
-                verts.extend_from_slice(&[x0, y1, u0, v0, r, g, b, a]);
-                verts.extend_from_slice(&[x1, y1, u1, v0, r, g, b, a]);
-                verts.extend_from_slice(&[x1, y0, u1, v1, r, g, b, a]);
-                verts.extend_from_slice(&[x0, y1, u0, v0, r, g, b, a]);
-                verts.extend_from_slice(&[x1, y0, u1, v1, r, g, b, a]);
-                verts.extend_from_slice(&[x0, y0, u0, v1, r, g, b, a]);
+                // Italic: shear the top of each glyph forward (to the right) by 20% of the
+                // cell height, giving a forward lean without loading a separate italic font.
+                let lean = if is_italic { cell_h_px * 0.20 * px_x } else { 0.0 };
+                verts.extend_from_slice(&[x0 + lean, y1, u0, v0, r, g, b, a]);
+                verts.extend_from_slice(&[x1 + lean, y1, u1, v0, r, g, b, a]);
+                verts.extend_from_slice(&[x1,        y0, u1, v1, r, g, b, a]);
+                verts.extend_from_slice(&[x0 + lean, y1, u0, v0, r, g, b, a]);
+                verts.extend_from_slice(&[x1,        y0, u1, v1, r, g, b, a]);
+                verts.extend_from_slice(&[x0,        y0, u0, v1, r, g, b, a]);
             }
         col += 1;
     }

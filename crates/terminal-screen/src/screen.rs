@@ -690,7 +690,7 @@ impl Screen {
                 }
             }
             if display_row + 1 < rows {
-                result.push(('\n', None, None));
+                result.push(('\n', None, None, 0u8));
             }
         }
         result

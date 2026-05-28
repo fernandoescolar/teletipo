@@ -1,4 +1,5 @@
 use crate::cell::Cell;
+use crate::{STYLE_BOLD, STYLE_ITALIC, STYLE_STRIKETHROUGH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnsiColor {
@@ -29,12 +30,12 @@ pub fn ansi_color_to_rgb_with_palette(
     }
 }
 
-/// Resolves a cell into `(char, fg_rgb, bg_rgb)` while applying an optional
+/// Resolves a cell into `(char, fg_rgb, bg_rgb, style_bits)` while applying an optional
 /// theme palette override for indexed colors.
 pub fn ansi_cell_tuple_with_palette(
     cell: &Cell,
     palette: Option<&[[f32; 3]; 16]>,
-) -> (char, Option<[f32; 3]>, Option<[f32; 3]>) {
+) -> (char, Option<[f32; 3]>, Option<[f32; 3]>, u8) {
     let (fg_color, bg_color) = if cell.style.reverse {
         (cell.style.bg, cell.style.fg)
     } else {
@@ -45,7 +46,11 @@ pub fn ansi_cell_tuple_with_palette(
     if cell.style.dim {
         fg = fg.map(|[r, g, b]| [r * 0.55, g * 0.55, b * 0.55]);
     }
-    (cell.ch, fg, bg)
+    let mut style_bits: u8 = 0;
+    if cell.style.bold        { style_bits |= STYLE_BOLD; }
+    if cell.style.italic      { style_bits |= STYLE_ITALIC; }
+    if cell.style.strikethrough { style_bits |= STYLE_STRIKETHROUGH; }
+    (cell.ch, fg, bg, style_bits)
 }
 
 /// * 0–15: the 16 standard ANSI/xterm colors

@@ -120,6 +120,33 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             state.tab_mut().app.set_editor_cursor(offset, true);
             clamp_editor_scroll(state);
         }
+
+        // Forward cursor motion to PTY when in fullscreen with motion reporting.
+        // Mode 1002: only when a mouse button is held (button-motion tracking).
+        // Mode 1003: always (any-event tracking).
+        let mouse_mode = state.tab().app.mouse_mode();
+        if state.tab().app.is_alternate_screen() && mouse_mode >= 1002 {
+            let should_send = mouse_mode == 1003
+                || (mouse_mode == 1002 && state.mouse_btn_held.is_some());
+            if should_send {
+                let tab_bar_h_f = state.tab_bar_h();
+                let split_ratio = state.tab().split_ratio;
+                let term_row_count = state.tab().term_row_count;
+                let pad_h = state.user_config.padding.horizontal as f32;
+                let pad_v = state.user_config.padding.vertical as f32;
+                if let Some((row, col)) = cursor_to_terminal_cell(
+                    state.cursor_x, state.cursor_y,
+                    state.window_width, state.window_height,
+                    split_ratio, state.cell_w, state.cell_h,
+                    term_row_count, tab_bar_h_f,
+                    pad_h, pad_v,
+                ) {
+                    let bytes = encode_mouse_motion(state.mouse_btn_held, row, col, mouse_mode);
+                    state.send_terminal_input(&bytes);
+                }
+            }
+        }
+
         return true;
     }
 
@@ -145,6 +172,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             state.dragging_editor_scrollbar = false;
             state.tab_mut().is_selecting = false;
             state.tab_mut().is_selecting_editor = false;
+            state.mouse_btn_held = None;
             // Send mouse release to PTY when mouse reporting is active.
             let mouse_mode = state.tab().app.mouse_mode();
             if mouse_mode != 0 {
@@ -287,6 +315,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     let (row, col) = cell;
                     let bytes = encode_mouse_btn(0, row, col, true, mouse_mode);
                     state.send_terminal_input(&bytes);
+                    state.mouse_btn_held = Some(0);
                     return true;
                 }
                 state.tab_mut().selection_anchor = Some(cell);
@@ -420,6 +449,24 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     false
+}
+
+/// Encode a cursor-motion event for the PTY (modes 1002/1003).
+///
+/// `held_btn`: the button currently held (0=left, 1=mid, 2=right) or `None` when
+/// reporting all-motion without a button (mode 1003).  The motion flag (bit 5 of
+/// the button code) is applied automatically.
+fn encode_mouse_motion(held_btn: Option<u8>, row: usize, col: usize, mouse_mode: u16) -> Vec<u8> {
+    // Button code: held button with motion bit (32) OR button 3 (release/none) + motion.
+    let btn_code = held_btn.map(|b| b + 32).unwrap_or(35);
+    if mouse_mode == 1006 {
+        format!("\x1b[<{};{};{}M", btn_code, col + 1, row + 1).into_bytes()
+    } else {
+        let b  = btn_code.wrapping_add(32);
+        let cx = ((col + 1 + 32) as u8).min(255);
+        let cy = ((row + 1 + 32) as u8).min(255);
+        vec![0x1b, b'[', b'M', b, cx, cy]
+    }
 }
 
 /// Encode a mouse button event for the PTY.

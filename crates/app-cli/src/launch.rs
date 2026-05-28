@@ -262,6 +262,9 @@ pub(crate) fn build_initial_state(
         settings: crate::SettingsUiState::default(),
         should_exit: false,
         bell_flash_until: None,
+        cursor_blink_last: std::time::Instant::now(),
+        cursor_blink_phase: true,
+        mouse_btn_held: None,
     };
 
     state.active_theme_idx = state
