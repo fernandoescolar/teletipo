@@ -570,8 +570,7 @@ pub(crate) fn build_settings_overlay_bg_verts(
         // Show at least 1 row even when there are no matches (for "(no results)" hint).
         let n_visible = overlay.search_matches.len()
             .saturating_sub(overlay.search_scroll_offset)
-            .min(SEARCH_MAX_VISIBLE)
-            .max(1);
+            .clamp(1, SEARCH_MAX_VISIBLE);
         {
             let drop_row_h = row_h;
             let drop_h    = n_visible as f32 * drop_row_h;

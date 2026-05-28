@@ -70,10 +70,8 @@ impl TerminalSession {
                 Action::DecPrivateModeReset(mode) => {
                     match mode {
                         1049 => self.screen.set_alternate_screen(false),
-                        1000 | 1002 | 1003 | 1006 => {
-                            if self.mouse_mode == mode {
-                                self.mouse_mode = 0;
-                            }
+                        1000 | 1002 | 1003 | 1006 if self.mouse_mode == mode => {
+                            self.mouse_mode = 0;
                         }
                         2004 => self.bracketed_paste = false,
                         _ => {}

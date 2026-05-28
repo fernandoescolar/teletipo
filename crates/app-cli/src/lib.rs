@@ -121,9 +121,9 @@ impl GpuRuntimeState {
         &mut self.tabs[self.active_tab]
     }
 
-    /// Height of the tab bar in pixels (always one cell row — tab bar is always visible).
+    /// Height of the tab bar in pixels. Hidden when only one tab is open.
     fn tab_bar_h(&self) -> f32 {
-        self.cell_h
+        if self.tabs.len() > 1 { self.cell_h } else { 0.0 }
     }
 
     /// Pump PTY output for ALL tabs; returns `true` if the active tab received data.

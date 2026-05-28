@@ -201,12 +201,19 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 state.tabs[i].cwd = new_cwd;
             }
     }
-    let tab_labels: Vec<String> = state.tabs.iter()
-        .map(|t| shorten_cwd_label(&t.cwd, 16))
-        .collect();
+    let tab_labels: Vec<String> = if state.tabs.len() > 1 {
+        state.tabs.iter()
+            .map(|t| shorten_cwd_label(&t.cwd, 16))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let active_tab = state.active_tab;
 
     let tab_drag_insert_before = state.tab_drag.and_then(|_| {
+        if state.tabs.len() <= 1 {
+            return None;
+        }
         if (state.cursor_x - state.tab_drag_start_x).abs() > 5.0 {
             let n = state.tabs.len();
             let add_btn_w = state.cell_w as f64 * 2.0;
@@ -218,12 +225,16 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         }
     });
 
-    let tab_context_menu = state.tab_context_menu.map(|(tab_idx, x_px, y_px)| TabContextMenu {
-        tab_idx,
-        x_px: x_px as f32,
-        y_px: y_px as f32,
-        hovered_item: state.tab_context_hover,
-    });
+    let tab_context_menu = if state.tabs.len() > 1 {
+        state.tab_context_menu.map(|(tab_idx, x_px, y_px)| TabContextMenu {
+            tab_idx,
+            x_px: x_px as f32,
+            y_px: y_px as f32,
+            hovered_item: state.tab_context_hover,
+        })
+    } else {
+        None
+    };
 
     RenderSnapshot {
         terminal_text,

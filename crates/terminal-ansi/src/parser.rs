@@ -186,11 +186,10 @@ impl Parser {
                     actions.push(Action::DecPrivateModeReset(*mode));
                 }
             }
-            b'n' if !has_private_prefix => {
-                if params.first().copied() == Some(6) {
+            b'n' if !has_private_prefix
+                && params.first().copied() == Some(6) => {
                     actions.push(Action::DeviceStatusReport);
                 }
-            }
             b'q' if !has_private_prefix => {
                 // DECSCUSR: \x1b[N q — the space before 'q' is an intermediate byte.
                 // Strip all intermediate bytes (0x20-0x2F) so parse_params sees just the digit.
