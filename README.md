@@ -39,13 +39,19 @@ cargo build --release
 
 ## Auto-update
 
-Teletipo updates itself automatically. Every time it launches, a background thread checks GitHub Releases for a newer version. If one is found the new binary is downloaded and replaces the current one silently — no prompts, no flags. When the update is complete a brief overlay appears in the terminal window:
+Teletipo updates itself automatically. Every time it launches, a background thread checks GitHub Releases for a newer version. Release archives are signed and verified before replacement. If one is found the new binary is downloaded and replaces the current one silently — no prompts, no flags. When the update is complete a brief overlay appears in the terminal window:
 
 ```
 Updated to vX.Y.Z — restart to apply
 ```
 
 Simply close and reopen Teletipo to start using the new version.
+
+If you ever need to roll back to the previous executable after a bad update, run:
+
+```bash
+teletipo update rollback
+```
 
 > The update check is non-blocking: the terminal is fully usable while the download happens in the background. If the check fails (no network, GitHub unreachable, etc.) the app starts normally with no error.
 

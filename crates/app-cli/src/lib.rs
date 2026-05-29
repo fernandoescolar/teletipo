@@ -158,8 +158,8 @@ pub(crate) struct OverlayState {
     pub(crate) tab_context_menu: Option<(usize, f64, f64)>,
     /// Currently highlighted item inside the open context menu (0-3).
     pub(crate) tab_context_hover: Option<usize>,
-    /// Set to `Some(version)` once a newer release is detected on GitHub.
-    pub(crate) pending_update: Option<String>,
+    /// Status banner for the last background update check.
+    pub(crate) pending_update: Option<UpdateBanner>,
     /// When `Some`, flash the terminal background as a visual BEL indicator
     /// until the contained `Instant`.
     pub(crate) bell_flash_until: Option<Instant>,
@@ -167,6 +167,12 @@ pub(crate) struct OverlayState {
     pub(crate) cursor_blink_last: Instant,
     /// `true` = cursor visible (on-phase); `false` = cursor hidden (off-phase).
     pub(crate) cursor_blink_phase: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum UpdateBanner {
+    Available(String),
+    Failed(String),
 }
 
 impl Default for OverlayState {
@@ -214,7 +220,7 @@ struct GpuRuntimeState {
     themes_fonts: ThemeFontState,
     /// Receiver for the background update-check result (consumed once after the
     /// check completes; set to `None` afterwards).
-    update_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
+    update_rx: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
     /// Settings overlay interaction state.
     settings: SettingsUiState,
     /// Set to `true` when the last shell session ends so the window closes.
@@ -597,7 +603,9 @@ impl GpuRuntimeState {
     }
 }
 
-pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) -> std::process::ExitCode {
+pub fn run(
+    update_rx: std::sync::mpsc::Receiver<Result<Option<String>, String>>,
+) -> std::process::ExitCode {
     let cli = Cli::parse();
     if let Some(cmd) = cli.command {
         return commands::dispatch(cmd);

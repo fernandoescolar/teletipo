@@ -173,7 +173,7 @@ pub(crate) fn build_initial_state(
     exec: Option<&str>,
     shell: &str,
     session: PersistentSession,
-    update_rx: std::sync::mpsc::Receiver<Option<String>>,
+    update_rx: std::sync::mpsc::Receiver<Result<Option<String>, String>>,
 ) -> anyhow::Result<GpuRuntimeState> {
     let (rows, cols) = sanitize_terminal_size(rows, cols);
     let window_width = session.window_width;

@@ -22,6 +22,8 @@ pub(crate) enum Commands {
     Config(ConfigArgs),
     /// Inspect installed colour themes.
     Themes(ThemesArgs),
+    /// Manage application updates.
+    Update(UpdateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -46,10 +48,22 @@ pub(crate) struct ThemesArgs {
     pub action: ThemesAction,
 }
 
+#[derive(Debug, Args)]
+pub(crate) struct UpdateArgs {
+    #[command(subcommand)]
+    pub action: UpdateAction,
+}
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum ThemesAction {
     /// List installed themes (one name per line).
     List,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum UpdateAction {
+    /// Roll back to the most recently saved backup executable.
+    Rollback,
 }
 
 /// Dispatch a parsed subcommand. Returns an `ExitCode` so `main` can exit with
@@ -63,6 +77,9 @@ pub(crate) fn dispatch(cmd: Commands) -> ExitCode {
         },
         Commands::Themes(args) => match args.action {
             ThemesAction::List => themes_list(),
+        },
+        Commands::Update(args) => match args.action {
+            UpdateAction::Rollback => update_rollback(),
         },
     }
 }
@@ -135,6 +152,23 @@ fn themes_list() -> ExitCode {
         eprintln!("themes directory: {}", d.display());
     }
     ExitCode::SUCCESS
+}
+
+fn update_rollback() -> ExitCode {
+    match crate::updater::rollback_latest_update() {
+        Ok(true) => {
+            println!("rolled back to previous executable");
+            ExitCode::SUCCESS
+        }
+        Ok(false) => {
+            eprintln!("no rollback backup found");
+            ExitCode::from(1)
+        }
+        Err(err) => {
+            eprintln!("failed to roll back update: {err}");
+            ExitCode::from(1)
+        }
+    }
 }
 
 fn print_summary(cfg: &UserConfig) {

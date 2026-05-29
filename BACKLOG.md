@@ -2,7 +2,7 @@
 
 | # | Sev | Area | Location | Evidence | Why it matters | Fix | Fixed |
 |---|-----|------|---------|----------|----------------|-----|-------|
-| **SEC-1** | P0 | Security / supply chain | updater.rs, main.rs | `Update::configure()...update().ok()?` then `tx.send(try_update()).ok();`. `self_update` 0.44 with `ureq`+`rustls`, no minisign/sha256/pin, no rollback | A tampered GitHub release or rustls-trusted MITM silently replaces the running binary | Sign artifacts (minisign or sigstore), verify sig+sha256 pre-swap, keep `<exe>.bak`, surface failures in UI | |
+| **SEC-1** | P0 | Security / supply chain | updater.rs, main.rs | `Update::configure()...update().ok()?` then `tx.send(try_update()).ok();`. `self_update` 0.44 with `ureq`+`rustls`, no minisign/sha256/pin, no rollback | A tampered GitHub release or rustls-trusted MITM silently replaces the running binary | Sign artifacts (minisign or sigstore), verify sig+sha256 pre-swap, keep `<exe>.bak`, surface failures in UI | Yes (T1) |
 | **SEC-2** | P0 | Security / DoS | launch.rs | `App::new(rows, cols).expect("valid terminal size")` with rows/cols from user-writable session JSON | Crafted file → panic or multi-GB `Vec<Cell>` allocation | Clamp 1..=1024/1..=4096; warn + fall back to defaults | Yes (T2) |
 | **SEC-3** | P0 | Security | Cargo.toml workspace lints `unsafe_code = "warn"`; cast at geometry.rs | `unsafe { slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*4) }` — preventable | One avoidable unsafe in a 1.3k-line file; policy is too permissive | `unsafe_code = "forbid"`, allow per-file in `window.rs`/`coords.rs`, replace cast with `bytemuck::cast_slice` | Yes (T3; enforced as `deny` to allow scoped FFI exceptions) |
 | **LIC-1** | P0 | Legal | repo root | No LICENSE; no per-crate `license` field | Code is "all rights reserved" by default; CI publishes binaries but grants no rights to users | Add MIT OR Apache-2.0 + per-crate metadata | Yes (T13) |
@@ -35,7 +35,7 @@ Full per-task detail (steps, AC, tests, risks) lives in plan.md. Summary:
 
 | ID | Title | Type | Pri | Effort | Covers | Is done |
 |----|-------|------|-----|--------|--------|--------|
-| **T1**  | Sign & verify auto-update artifacts (minisign + sha256 + rollback + UI surfacing) | security | P0 | M | SEC-1 | |
+| **T1**  | Sign & verify auto-update artifacts (minisign + sha256 + rollback + UI surfacing) | security | P0 | M | SEC-1 | Yes |
 | **T2**  | Validate untrusted session + config bounds; clamp font/padding/scrollback | security | P0 | S | SEC-2, REL-1 (config silence) | Yes |
 | **T3**  | `unsafe_code = "forbid"` workspace-wide; replace geometry cast with `bytemuck` | security | P0 | S | SEC-3 | Yes |
 | **T4**  | Replace `let _ =` / `.ok();` with `tracing` + PTY status surfacing in UI | reliability | P0 | M | REL-1, REL-3 | |

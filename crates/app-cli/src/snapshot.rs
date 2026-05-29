@@ -48,8 +48,15 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     // Poll the background update-check thread (once; then drop the receiver).
     if let Some(ref rx) = state.update_rx {
         match rx.try_recv() {
-            Ok(result) => {
-                state.overlays.pending_update = result;
+            Ok(Ok(Some(version))) => {
+                state.overlays.pending_update = Some(crate::UpdateBanner::Available(version));
+                state.update_rx = None;
+            }
+            Ok(Ok(None)) => {
+                state.update_rx = None;
+            }
+            Ok(Err(err)) => {
+                state.overlays.pending_update = Some(crate::UpdateBanner::Failed(err));
                 state.update_rx = None;
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -186,8 +193,13 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let selection_end_scroll = state.tabs[active].selection_end_scroll;
     let current_scroll = state.tabs[active].scroll_offset;
 
-    let resize_overlay = if let Some(ref v) = state.overlays.pending_update {
-        Some(format!("Updated to v{v} \u{2014} restart to apply"))
+    let resize_overlay = if let Some(ref banner) = state.overlays.pending_update {
+        Some(match banner {
+            crate::UpdateBanner::Available(v) => {
+                format!("Updated to v{v} \u{2014} restart to apply")
+            }
+            crate::UpdateBanner::Failed(err) => format!("Update failed: {err}"),
+        })
     } else if let Some((ref t, cols, rows)) = state.overlays.last_resize {
         if t.elapsed().as_secs_f32() < 1.0 {
             Some(format!("{cols}\u{d7}{rows}"))
