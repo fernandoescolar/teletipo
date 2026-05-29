@@ -103,11 +103,10 @@ release-windows:
 	cross build --release -p $(APP) --target $(WINDOWS_TARGET)
 	mkdir -p $(DIST)/$(APP)-windows-x86_64
 	cp target/$(WINDOWS_TARGET)/release/$(APP).exe $(DIST)/$(APP)-windows-x86_64/$(APP).exe
-	cp docs/teletipo128x128.png $(DIST)/$(APP)-windows-x86_64/teletipo.png
 	cp $(INSTALLER_DIR)/install.ps1 $(DIST)/$(APP)-windows-x86_64/install.ps1
 	cp $(INSTALLER_DIR)/uninstall.ps1 $(DIST)/$(APP)-windows-x86_64/uninstall.ps1
 	cp $(INSTALLER_DIR)/README-install.txt $(DIST)/$(APP)-windows-x86_64/README-install.txt
-	cd $(DIST)/$(APP)-windows-x86_64 && zip -9 $(PWD)/$(DIST)/$(APP)-windows-x86_64.zip $(APP).exe teletipo.png install.ps1 uninstall.ps1 README-install.txt
+	cd $(DIST)/$(APP)-windows-x86_64 && zip -9 $(PWD)/$(DIST)/$(APP)-windows-x86_64.zip $(APP).exe install.ps1 uninstall.ps1 README-install.txt
 
 release-installers:
 	mkdir -p $(DIST)

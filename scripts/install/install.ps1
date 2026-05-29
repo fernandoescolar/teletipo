@@ -44,26 +44,27 @@ function Add-TeletipoUserPathEntry {
     }
 }
 
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Internal helper in non-interactive installer script.')]
 function New-StartMenuShortcut {
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param(
-        [string]$ExePath,
-        [string]$IconPath
+        [string]$ExePath
     )
 
     $programs = [Environment]::GetFolderPath("Programs")
+    $shortcutPath = Join-Path $programs "Teletipo.lnk"
+    if (-not $PSCmdlet.ShouldProcess($shortcutPath, "Create Start Menu shortcut")) {
+        return
+    }
+
     if (-not (Test-Path $programs)) {
         New-Item -ItemType Directory -Path $programs -Force | Out-Null
     }
 
-    $shortcutPath = Join-Path $programs "Teletipo.lnk"
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
     $shortcut.TargetPath = $ExePath
     $shortcut.WorkingDirectory = Split-Path $ExePath -Parent
-    if (Test-Path $IconPath) {
-        $shortcut.IconLocation = $IconPath
-    }
+    $shortcut.IconLocation = "$ExePath,0"
     $shortcut.Save()
 
     Write-TeletipoInfo "shortcut created: $shortcutPath"
@@ -137,20 +138,15 @@ try {
         throw "teletipo.exe not found"
     }
 
-    $iconCandidate = Get-ChildItem -Path $work -Filter "teletipo.png" -Recurse | Select-Object -First 1
-
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     Copy-Item $exeCandidate.FullName (Join-Path $InstallDir "teletipo.exe") -Force
-    if ($iconCandidate) {
-        Copy-Item $iconCandidate.FullName (Join-Path $InstallDir "teletipo.png") -Force
-    }
 
     if (-not $SkipAddToPath) {
         Add-TeletipoUserPathEntry -PathToAdd $InstallDir
     }
 
     if (-not $SkipShortcut) {
-        New-StartMenuShortcut -ExePath (Join-Path $InstallDir "teletipo.exe") -IconPath (Join-Path $InstallDir "teletipo.png")
+        New-StartMenuShortcut -ExePath (Join-Path $InstallDir "teletipo.exe")
     }
 
     Write-TeletipoInfo "installed in $InstallDir"

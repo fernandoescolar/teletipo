@@ -49,12 +49,12 @@ fn collect_all_commands() -> Vec<String> {
                 continue;
             };
             for entry in entries.filter_map(|e| e.ok()) {
-                if let Ok(meta) = entry.metadata() {
-                    if is_executable_path(&entry.path(), &meta) {
-                        let name = entry.file_name().to_string_lossy().into_owned();
-                        if !name.is_empty() && !name.contains('/') && !name.starts_with('.') {
-                            cmds.insert(name);
-                        }
+                if let Ok(meta) = entry.metadata()
+                    && is_executable_path(&entry.path(), &meta)
+                {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if !name.is_empty() && !name.contains('/') && !name.starts_with('.') {
+                        cmds.insert(name);
                     }
                 }
             }

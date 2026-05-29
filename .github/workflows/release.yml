@@ -173,12 +173,11 @@ jobs:
           PKG_DIR="dist/teletipo-windows-x86_64"
           mkdir -p "$PKG_DIR"
           cp target/x86_64-pc-windows-gnu/release/teletipo.exe "$PKG_DIR/teletipo.exe"
-          cp docs/teletipo128x128.png "$PKG_DIR/teletipo.png"
           cp scripts/install/install.ps1 "$PKG_DIR/install.ps1"
           cp scripts/install/uninstall.ps1 "$PKG_DIR/uninstall.ps1"
           cp scripts/install/README-install.txt "$PKG_DIR/README-install.txt"
           cd "$PKG_DIR"
-          zip -9 "$GITHUB_WORKSPACE/dist/teletipo-windows-x86_64.zip" teletipo.exe teletipo.png install.ps1 uninstall.ps1 README-install.txt
+          zip -9 "$GITHUB_WORKSPACE/dist/teletipo-windows-x86_64.zip" teletipo.exe install.ps1 uninstall.ps1 README-install.txt
 
       - uses: actions/upload-artifact@v4
         with:
