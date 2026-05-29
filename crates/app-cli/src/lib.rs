@@ -25,14 +25,15 @@ use launch::{
     FontEntry, build_app, build_initial_state, load_session, sanitize_terminal_size, save_session,
     spawn_pty,
 };
+use platform_abstraction::WindowControl;
 use platform_abstraction::default_shell;
 use render_wgpu::{FontConfig, RenderConfig, run_gpu_window_live_with_events_and_window};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 use tab::TabState;
-use ui::{InputRouter, TabPane, UiConfig, UiState};
 use tracing::{debug, warn};
+use ui::{InputRouter, TabPane, UiConfig, UiState};
 
 struct UiComponentBridge {
     state: UiState<TerminalBackend>,
@@ -61,6 +62,39 @@ impl UiComponentBridge {
         for action in actions {
             self.state.apply_action(action);
         }
+    }
+}
+
+#[derive(Clone)]
+struct EventCtx {
+    state: Rc<RefCell<GpuRuntimeState>>,
+    ui_bridge: Rc<RefCell<UiComponentBridge>>,
+}
+
+impl EventCtx {
+    fn new(state: Rc<RefCell<GpuRuntimeState>>, ui_bridge: Rc<RefCell<UiComponentBridge>>) -> Self {
+        Self { state, ui_bridge }
+    }
+
+    fn build_snapshot(&self) -> render_wgpu::RenderSnapshot {
+        let frame_start = Instant::now();
+        let mut state = self.state.borrow_mut();
+        let snapshot = snapshot::build_snapshot(&mut state);
+        ::metrics::histogram!("frame_us").record(frame_start.elapsed().as_secs_f64() * 1_000_000.0);
+        snapshot
+    }
+
+    fn handle_event(&self, event: render_wgpu::AppWindowEvent) {
+        self.ui_bridge.borrow_mut().handle_event(&event);
+        let mut state = self.state.borrow_mut();
+        input::handle_event(&mut state, event);
+    }
+
+    fn install_window(&self, window: Box<dyn WindowControl>) {
+        self.state
+            .borrow_mut()
+            .shell_services
+            .install_window(window);
     }
 }
 
@@ -655,20 +689,14 @@ pub fn run(
         _ => None,
     };
     let (rows, cols) = sanitize_terminal_size(cli.rows, cli.cols);
-    let state = match build_initial_state(
-        rows,
-        cols,
-        cli.exec.as_deref(),
-        &shell,
-        session,
-        update_rx,
-    ) {
-        Ok(state) => Rc::new(RefCell::new(state)),
-        Err(err) => {
-            tracing::error!(error = %err, "failed to initialize runtime state");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
+    let state =
+        match build_initial_state(rows, cols, cli.exec.as_deref(), &shell, session, update_rx) {
+            Ok(state) => Rc::new(RefCell::new(state)),
+            Err(err) => {
+                tracing::error!(error = %err, "failed to initialize runtime state");
+                return std::process::ExitCode::FAILURE;
+            }
+        };
     let ui_bridge = Rc::new(RefCell::new({
         let s = state.borrow();
         match UiComponentBridge::new(
@@ -709,30 +737,15 @@ pub fn run(
         let s = state.borrow();
         (s.user_config.font.family.clone(), s.user_config.font.size)
     };
-    let state_for_frames = Rc::clone(&state);
-    let state_for_events = Rc::clone(&state);
-    let state_for_window = Rc::clone(&state);
-    let bridge_for_events = Rc::clone(&ui_bridge);
+    let event_ctx = EventCtx::new(Rc::clone(&state), Rc::clone(&ui_bridge));
+    let event_ctx_for_frame = event_ctx.clone();
+    let event_ctx_for_events = event_ctx.clone();
+    let event_ctx_for_window = event_ctx;
 
     if let Err(err) = run_gpu_window_live_with_events_and_window(
-        move || {
-            let frame_start = Instant::now();
-            let mut state = state_for_frames.borrow_mut();
-            let snapshot = snapshot::build_snapshot(&mut state);
-            ::metrics::histogram!("frame_us").record(frame_start.elapsed().as_secs_f64() * 1_000_000.0);
-            snapshot
-        },
-        move |event| {
-            bridge_for_events.borrow_mut().handle_event(&event);
-            let mut state = state_for_events.borrow_mut();
-            input::handle_event(&mut state, event);
-        },
-        move |window| {
-            state_for_window
-                .borrow_mut()
-                .shell_services
-                .install_window(window);
-        },
+        move || event_ctx_for_frame.build_snapshot(),
+        move |event| event_ctx_for_events.handle_event(event),
+        move |window| event_ctx_for_window.install_window(window),
         RenderConfig {
             initial_size: Some((window_width, window_height)),
             initial_position: window_pos,
@@ -915,7 +928,10 @@ mod input_smoke_tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut snapshot = snapshot::build_snapshot(&mut state);
         while !snapshot.terminal_text.contains("hello from teletipo") {
-            assert!(Instant::now() < deadline, "timed out waiting for PTY output");
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for PTY output"
+            );
             std::thread::sleep(Duration::from_millis(20));
             snapshot = snapshot::build_snapshot(&mut state);
         }
