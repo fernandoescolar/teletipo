@@ -21,7 +21,7 @@ use app_orchestrator::App;
 use clap::Parser;
 use config::UserConfig;
 use launch::{
-    FontEntry, build_initial_state, load_session, sanitize_terminal_size, save_session,
+    FontEntry, build_app, build_initial_state, load_session, sanitize_terminal_size, save_session,
     spawn_pty,
 };
 use platform_abstraction::default_shell;
@@ -37,17 +37,21 @@ struct UiComponentBridge {
 }
 
 impl UiComponentBridge {
-    fn new(shell: String, config: UiConfig) -> Self {
+    fn new(shell: String, config: UiConfig) -> anyhow::Result<Self> {
         const DEFAULT_ROWS: usize = 24;
         const DEFAULT_COLS: usize = 80;
-        let app = App::new(DEFAULT_ROWS, DEFAULT_COLS).expect("valid app");
+        let app = build_app(DEFAULT_ROWS, DEFAULT_COLS)?;
         let initial_tab = TabPane::new(TerminalBackend::new(app, None), String::new());
         let tab_factory: Box<dyn Fn() -> TabPane<TerminalBackend>> = Box::new(|| {
-            let app = App::new(DEFAULT_ROWS, DEFAULT_COLS).expect("valid app");
+            let app = build_app(DEFAULT_ROWS, DEFAULT_COLS).unwrap_or_else(|err| {
+                tracing::error!(error = %err, "failed to create default tab app");
+                App::new(DEFAULT_ROWS, DEFAULT_COLS)
+                    .unwrap_or_else(|_| unreachable!("default app size must be valid"))
+            });
             TabPane::new(TerminalBackend::new(app, None), String::new())
         });
         let state = UiState::new(shell, config, initial_tab, tab_factory);
-        Self { state }
+        Ok(Self { state })
     }
 
     fn handle_event(&mut self, event: &render_wgpu::AppWindowEvent) {
@@ -503,7 +507,13 @@ impl GpuRuntimeState {
         );
         let cols = lm.cols();
         let rows = lm.term_rows(split_ratio);
-        let app = App::new(rows as usize, cols as usize).expect("valid size");
+        let app = match build_app(rows as usize, cols as usize) {
+            Ok(app) => app,
+            Err(err) => {
+                tracing::error!(error = %err, rows, cols, "failed to add tab");
+                return;
+            }
+        };
         let active_cwd = self.tab().cwd.clone();
         let (pty, integration) = spawn_pty(&self.shell, rows, cols, None, Some(&active_cwd))
             .map(|(p, i)| (Some(p), i))
@@ -605,17 +615,23 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) -> std::process
         _ => None,
     };
     let (rows, cols) = sanitize_terminal_size(cli.rows, cli.cols);
-    let state = Rc::new(RefCell::new(build_initial_state(
+    let state = match build_initial_state(
         rows,
         cols,
         cli.exec.as_deref(),
         &shell,
         session,
         update_rx,
-    )));
+    ) {
+        Ok(state) => Rc::new(RefCell::new(state)),
+        Err(err) => {
+            tracing::error!(error = %err, "failed to initialize runtime state");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     let ui_bridge = Rc::new(RefCell::new({
         let s = state.borrow();
-        UiComponentBridge::new(
+        match UiComponentBridge::new(
             shell.clone(),
             UiConfig {
                 padding_horizontal: s.user_config.padding.horizontal as f32,
@@ -641,7 +657,13 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) -> std::process
                     .map(|f| f.family.clone())
                     .collect(),
             },
-        )
+        ) {
+            Ok(bridge) => bridge,
+            Err(err) => {
+                tracing::error!(error = %err, "failed to initialize UI bridge");
+                return std::process::ExitCode::FAILURE;
+            }
+        }
     }));
     let (initial_font_family, initial_font_size) = {
         let s = state.borrow();

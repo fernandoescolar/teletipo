@@ -174,7 +174,7 @@ pub(crate) fn build_initial_state(
     shell: &str,
     session: PersistentSession,
     update_rx: std::sync::mpsc::Receiver<Option<String>>,
-) -> GpuRuntimeState {
+) -> anyhow::Result<GpuRuntimeState> {
     let (rows, cols) = sanitize_terminal_size(rows, cols);
     let window_width = session.window_width;
     let window_height = session.window_height;
@@ -195,7 +195,7 @@ pub(crate) fn build_initial_state(
 
     let mut tabs: Vec<TabState> = Vec::new();
     for (i, saved) in saved_tabs.into_iter().enumerate() {
-        let mut app = App::new(rows, cols).expect("valid terminal size");
+        let mut app = build_app(rows, cols)?;
         for line in saved.terminal_output.lines() {
             app.feed_terminal(line.as_bytes());
             app.feed_terminal(b"\r\n");
@@ -323,7 +323,7 @@ pub(crate) fn build_initial_state(
         })
         .unwrap_or(0);
 
-    state
+    Ok(state)
 }
 
 pub(crate) fn sanitize_terminal_size(rows: usize, cols: usize) -> (usize, usize) {
@@ -339,6 +339,18 @@ pub(crate) fn sanitize_terminal_size(rows: usize, cols: usize) -> (usize, usize)
         );
     }
     (safe_rows, safe_cols)
+}
+
+pub(crate) fn build_app(rows: usize, cols: usize) -> anyhow::Result<App> {
+    let (safe_rows, safe_cols) = sanitize_terminal_size(rows, cols);
+    App::new(safe_rows, safe_cols).map_err(|err| {
+        anyhow::anyhow!(
+            "failed to initialize app with terminal size {}x{}: {}",
+            safe_rows,
+            safe_cols,
+            err
+        )
+    })
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
