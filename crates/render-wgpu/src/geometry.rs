@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 
-use winit::dpi::PhysicalPosition;
+mod layout;
+mod snapshot;
+
+pub(crate) use layout::LayoutContext;
+pub use layout::snapshot_to_ime_area;
+pub(crate) use snapshot::snapshot_to_text_quads_in_bounds;
+pub use snapshot::{snapshot_to_cell_quads, snapshot_to_cell_quads_in_bounds};
+
 use winit::dpi::PhysicalSize;
 
 use crate::atlas::{CachedGlyph, ShapedGlyph};
-use crate::batch::CellQuad;
-use crate::types::{DamageRegion, PaneLayout, RenderSnapshot};
+use crate::types::RenderSnapshot;
 
 pub const SCROLLBAR_W_PX: f32 = 10.0;
 pub(crate) const EDITOR_PREFIX_COLS: usize = 2;
@@ -684,10 +690,11 @@ pub(crate) fn build_settings_overlay_bg_verts(
     cell_h_px: f32,
 ) -> Vec<f32> {
     let mut verts = Vec::new();
+    let ctx = LayoutContext::new(size, snapshot, cell_w_px, cell_h_px);
     let Some(ref overlay) = snapshot.settings_overlay else {
         return verts;
     };
-    if size.width == 0 || size.height == 0 || cell_w_px == 0.0 || cell_h_px == 0.0 {
+    if !ctx.has_grid() {
         return verts;
     }
 
@@ -725,10 +732,10 @@ pub(crate) fn build_settings_overlay_bg_verts(
         0.28,
     );
 
-    let px_x = 2.0 / size.width as f32;
-    let px_y = 2.0 / size.height as f32;
-    let win_w = size.width as f32;
-    let win_h = size.height as f32;
+    let px_x = ctx.px_x();
+    let px_y = ctx.px_y();
+    let win_w = ctx.window_width();
+    let win_h = ctx.window_height();
 
     // Full-screen dim.
     verts.extend_from_slice(&quad_verts(-1.0, -1.0, 1.0, 1.0, dim));
@@ -897,6 +904,7 @@ pub(crate) fn build_suggestion_dropdown_bg_verts(
     cell_h_px: f32,
     pad_h: f32,
 ) -> Vec<f32> {
+    let ctx = LayoutContext::new(size, snapshot, cell_w_px, cell_h_px);
     let Some(ref dd) = snapshot.suggestion_dropdown else {
         return Vec::new();
     };
@@ -929,17 +937,9 @@ pub(crate) fn build_suggestion_dropdown_bg_verts(
         0.25,
     );
 
-    let px_x = 2.0 / size.width as f32;
-    let px_y = 2.0 / size.height as f32;
-    let win_h = size.height as f32;
-
-    let tab_bar_h = if !snapshot.tab_labels.is_empty() {
-        cell_h_px
-    } else {
-        0.0
-    };
-    let available_h = win_h - tab_bar_h;
-    let edit_top_px = (tab_bar_h + snapshot.split_ratio * available_h + 2.0).round();
+    let px_x = ctx.px_x();
+    let px_y = ctx.px_y();
+    let edit_top_px = ctx.edit_top_px();
 
     let row_h = cell_h_px * 1.2;
     let n_visible = dd.items.len().saturating_sub(dd.scroll_offset).min(8);
@@ -1246,143 +1246,4 @@ pub(crate) fn add_text_verts_shaped(
             verts.extend_from_slice(&[x0, y0, u0, v1, r, g, b, va]);
         }
     }
-}
-
-pub fn snapshot_to_cell_quads(
-    snapshot: &RenderSnapshot,
-    damage: &DamageRegion,
-    cols_hint: usize,
-) -> Vec<CellQuad> {
-    snapshot_to_cell_quads_in_bounds(&snapshot.terminal_text, damage, cols_hint, (1.0, -1.0))
-}
-
-pub fn snapshot_to_cell_quads_in_bounds(
-    text: &str,
-    damage: &DamageRegion,
-    cols_hint: usize,
-    y_bounds: (f32, f32),
-) -> Vec<CellQuad> {
-    let lines: Vec<&str> = text.lines().collect();
-    let cols = cols_hint.max(1);
-    let cell_w = 2.0f32 / cols as f32;
-    let rows = lines.len().max(1);
-    let cell_h = (y_bounds.0 - y_bounds.1) / rows as f32;
-
-    let mut quads = Vec::new();
-    for (row, line) in lines.iter().enumerate() {
-        if !damage.full_redraw && !damage.dirty_rows.contains(&row) {
-            continue;
-        }
-
-        for (col, ch) in line.chars().enumerate() {
-            if ch == ' ' || ch == '\0' {
-                continue;
-            }
-
-            let x = -1.0 + col as f32 * cell_w;
-            let y = y_bounds.0 - (row as f32 + 1.0) * cell_h;
-            quads.push(CellQuad {
-                x,
-                y,
-                w: cell_w,
-                h: cell_h,
-                glyph: ch,
-            });
-        }
-    }
-    quads
-}
-
-#[cfg(test)]
-mod tests {
-    use super::snapshot_to_cell_quads_in_bounds;
-    use crate::types::DamageRegion;
-
-    #[test]
-    fn snapshot_to_cell_quads_in_bounds_matches_expected_layout() {
-        let damage = DamageRegion {
-            full_redraw: true,
-            dirty_rows: Vec::new(),
-        };
-
-        let quads = snapshot_to_cell_quads_in_bounds("ab\nc", &damage, 4, (1.0, -1.0));
-
-        assert_eq!(
-            quads,
-            vec![
-                crate::batch::CellQuad {
-                    x: -1.0,
-                    y: 0.0,
-                    w: 0.5,
-                    h: 1.0,
-                    glyph: 'a',
-                },
-                crate::batch::CellQuad {
-                    x: -0.5,
-                    y: 0.0,
-                    w: 0.5,
-                    h: 1.0,
-                    glyph: 'b',
-                },
-                crate::batch::CellQuad {
-                    x: -1.0,
-                    y: -1.0,
-                    w: 0.5,
-                    h: 1.0,
-                    glyph: 'c',
-                },
-            ]
-        );
-    }
-}
-
-pub(crate) fn snapshot_to_text_quads_in_bounds(
-    text: &str,
-    cols_hint: usize,
-    y_bounds: (f32, f32),
-) -> Vec<CellQuad> {
-    let full_redraw = DamageRegion {
-        full_redraw: true,
-        dirty_rows: Vec::new(),
-    };
-    snapshot_to_cell_quads_in_bounds(text, &full_redraw, cols_hint, y_bounds)
-}
-
-pub fn snapshot_to_ime_area(
-    snapshot: &RenderSnapshot,
-    window_size: PhysicalSize<u32>,
-) -> (PhysicalPosition<f64>, PhysicalSize<f64>) {
-    let layout = PaneLayout {
-        split_ratio: snapshot.split_ratio,
-    };
-    let (edit_y_top, edit_y_bottom) = layout.editor_bounds();
-
-    let cols: usize = 80;
-    let text = &snapshot.editor_text;
-    let clamped = snapshot.editor_cursor_offset.min(text.len());
-    let before = &text[..clamped];
-    let row = before.chars().filter(|&c| c == '\n').count();
-    let col = before
-        .rfind('\n')
-        .map(|i| clamped - i - 1)
-        .unwrap_or(clamped);
-
-    let lines = text.lines().count().max(1) as f64;
-    let cell_w_ndc = 2.0_f64 / cols as f64;
-    let cell_h_ndc = (edit_y_top - edit_y_bottom) as f64 / lines;
-
-    let ndc_x = -1.0 + col as f64 * cell_w_ndc;
-    let ndc_y = edit_y_top as f64 - (row as f64 + 1.0) * cell_h_ndc;
-
-    let w = window_size.width as f64;
-    let h = window_size.height as f64;
-    let screen_x = (ndc_x + 1.0) / 2.0 * w;
-    let screen_y = (1.0 - ndc_y) / 2.0 * h;
-    let char_w = cell_w_ndc / 2.0 * w;
-    let char_h = cell_h_ndc / 2.0 * h;
-
-    (
-        PhysicalPosition::new(screen_x, screen_y),
-        PhysicalSize::new(char_w.max(1.0), char_h.max(1.0)),
-    )
 }
