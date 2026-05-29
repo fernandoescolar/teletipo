@@ -41,7 +41,7 @@ Full per-task detail (steps, AC, tests, risks) lives in plan.md. Summary:
 | **T4**  | Replace `let _ =` / `.ok();` with `tracing` + PTY status surfacing in UI | reliability | P0 | M | REL-1, REL-3 | Yes (88d6511) |
 | **T5**  | Centralise fallible `build_app()` factory; remove 5 production `.expect()`s | reliability | P1 | S | REL-2 | Yes |
 | **T6**  | Tracing spans + `metrics` crate baseline (PTY/parse/frame/atlas/config/update) | observability | P1 | M | OBS-1 | Yes (d3dfebe) |
-| **T7**  | `TerminalParser` / `TerminalDisplay` traits; generic `TerminalSession` | modularity | P2 | M | MOD-3 | |
+| **T7**  | `TerminalParser` / `TerminalDisplay` traits; generic `TerminalSession` | modularity | P2 | M | MOD-3 | Yes |
 | **T8**  | Split `geometry.rs` into module + `LayoutContext` + snapshot tests | maintainability | P2 | M | MOD-1, TST-1 (geom) | |
 | **T9**  | Extract `app_cli::run` event handlers into named fns with `EventCtx` | maintainability | P2 | S | MOD-2 | |
 | **T10** | Move macOS FFI + `proc_pidinfo` behind `platform-abstraction` | modularity | P2 | M | MOD-4 | |

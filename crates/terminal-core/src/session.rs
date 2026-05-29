@@ -3,10 +3,205 @@ use terminal_screen::{DamageRegion, Screen, ScreenSnapshot, StyledChars};
 
 use crate::error::TerminalError;
 
+/// Abstracts the byte-to-action parser used by a terminal session.
+pub trait TerminalParser {
+    fn advance(&mut self, bytes: &[u8]) -> Vec<Action>;
+}
+
+impl TerminalParser for Parser {
+    fn advance(&mut self, bytes: &[u8]) -> Vec<Action> {
+        Parser::advance(self, bytes)
+    }
+}
+
+/// Abstracts the screen/grid backend used by a terminal session.
+pub trait TerminalDisplay {
+    fn put_char(&mut self, ch: char);
+    fn linefeed(&mut self);
+    fn carriage_return(&mut self);
+    fn backspace(&mut self);
+    fn horizontal_tab(&mut self);
+    fn cursor_up(&mut self, n: u16);
+    fn cursor_down(&mut self, n: u16);
+    fn cursor_forward(&mut self, n: u16);
+    fn cursor_backward(&mut self, n: u16);
+    fn cursor_position(&mut self, row: u16, col: u16);
+    fn save_cursor(&mut self);
+    fn restore_cursor(&mut self);
+    fn set_scroll_region(&mut self, top: u16, bottom: u16);
+    fn insert_chars(&mut self, n: u16);
+    fn delete_chars(&mut self, n: u16);
+    fn insert_lines(&mut self, n: u16);
+    fn delete_lines(&mut self, n: u16);
+    fn erase_in_display(&mut self, mode: u16);
+    fn erase_in_line(&mut self, mode: u16);
+    fn set_sgr(&mut self, params: &[u16]);
+    fn set_alternate_screen(&mut self, enabled: bool);
+    fn cursor_row(&self) -> usize;
+    fn cursor_col(&self) -> usize;
+    fn dump_text(&self) -> String;
+    fn dump_ansi(&self) -> String;
+    fn dump_styled(&self) -> StyledChars;
+    fn dump_styled_at_offset(&self, scroll_offset: usize) -> StyledChars;
+    fn dump_styled_at_offset_with_palette(
+        &self,
+        scroll_offset: usize,
+        palette: Option<&[[f32; 3]; 16]>,
+    ) -> StyledChars;
+    fn scrollback_len(&self) -> usize;
+    fn version(&self) -> u64;
+    fn resize(&mut self, rows: usize, cols: usize);
+    fn snapshot(&self) -> ScreenSnapshot;
+    fn take_damage(&mut self) -> DamageRegion;
+    fn is_alternate_screen(&self) -> bool;
+}
+
+impl TerminalDisplay for Screen {
+    fn put_char(&mut self, ch: char) {
+        Screen::put_char(self, ch)
+    }
+
+    fn linefeed(&mut self) {
+        Screen::linefeed(self)
+    }
+
+    fn carriage_return(&mut self) {
+        Screen::carriage_return(self)
+    }
+
+    fn backspace(&mut self) {
+        Screen::backspace(self)
+    }
+
+    fn horizontal_tab(&mut self) {
+        Screen::horizontal_tab(self)
+    }
+
+    fn cursor_up(&mut self, n: u16) {
+        Screen::cursor_up(self, n)
+    }
+
+    fn cursor_down(&mut self, n: u16) {
+        Screen::cursor_down(self, n)
+    }
+
+    fn cursor_forward(&mut self, n: u16) {
+        Screen::cursor_forward(self, n)
+    }
+
+    fn cursor_backward(&mut self, n: u16) {
+        Screen::cursor_backward(self, n)
+    }
+
+    fn cursor_position(&mut self, row: u16, col: u16) {
+        Screen::cursor_position(self, row, col)
+    }
+
+    fn save_cursor(&mut self) {
+        Screen::save_cursor(self)
+    }
+
+    fn restore_cursor(&mut self) {
+        Screen::restore_cursor(self)
+    }
+
+    fn set_scroll_region(&mut self, top: u16, bottom: u16) {
+        Screen::set_scroll_region(self, top, bottom)
+    }
+
+    fn insert_chars(&mut self, n: u16) {
+        Screen::insert_chars(self, n)
+    }
+
+    fn delete_chars(&mut self, n: u16) {
+        Screen::delete_chars(self, n)
+    }
+
+    fn insert_lines(&mut self, n: u16) {
+        Screen::insert_lines(self, n)
+    }
+
+    fn delete_lines(&mut self, n: u16) {
+        Screen::delete_lines(self, n)
+    }
+
+    fn erase_in_display(&mut self, mode: u16) {
+        Screen::erase_in_display(self, mode)
+    }
+
+    fn erase_in_line(&mut self, mode: u16) {
+        Screen::erase_in_line(self, mode)
+    }
+
+    fn set_sgr(&mut self, params: &[u16]) {
+        Screen::set_sgr(self, params)
+    }
+
+    fn set_alternate_screen(&mut self, enabled: bool) {
+        Screen::set_alternate_screen(self, enabled)
+    }
+
+    fn cursor_row(&self) -> usize {
+        Screen::cursor_row(self)
+    }
+
+    fn cursor_col(&self) -> usize {
+        Screen::cursor_col(self)
+    }
+
+    fn dump_text(&self) -> String {
+        Screen::dump_text(self)
+    }
+
+    fn dump_ansi(&self) -> String {
+        Screen::dump_ansi(self)
+    }
+
+    fn dump_styled(&self) -> StyledChars {
+        Screen::dump_styled(self)
+    }
+
+    fn dump_styled_at_offset(&self, scroll_offset: usize) -> StyledChars {
+        Screen::dump_styled_at_offset(self, scroll_offset)
+    }
+
+    fn dump_styled_at_offset_with_palette(
+        &self,
+        scroll_offset: usize,
+        palette: Option<&[[f32; 3]; 16]>,
+    ) -> StyledChars {
+        Screen::dump_styled_at_offset_with_palette(self, scroll_offset, palette)
+    }
+
+    fn scrollback_len(&self) -> usize {
+        Screen::scrollback_len(self)
+    }
+
+    fn version(&self) -> u64 {
+        Screen::version(self)
+    }
+
+    fn resize(&mut self, rows: usize, cols: usize) {
+        Screen::resize(self, rows, cols)
+    }
+
+    fn snapshot(&self) -> ScreenSnapshot {
+        Screen::snapshot(self)
+    }
+
+    fn take_damage(&mut self) -> DamageRegion {
+        Screen::take_damage(self)
+    }
+
+    fn is_alternate_screen(&self) -> bool {
+        Screen::is_alternate_screen(self)
+    }
+}
+
 #[derive(Debug)]
-pub struct TerminalSession {
-    parser: Parser,
-    screen: Screen,
+pub struct GenericTerminalSession<P = Parser, D = Screen> {
+    parser: P,
+    screen: D,
     last_exit_code: Option<i32>,
     mouse_mode: u16,
     bracketed_paste: bool,
@@ -17,7 +212,9 @@ pub struct TerminalSession {
     application_cursor_keys: bool,
 }
 
-impl TerminalSession {
+pub type TerminalSession = GenericTerminalSession<Parser, Screen>;
+
+impl GenericTerminalSession<Parser, Screen> {
     pub fn new(rows: usize, cols: usize) -> Result<Self, TerminalError> {
         if rows == 0 || cols == 0 {
             return Err(TerminalError::InvalidSize { rows, cols });
@@ -35,6 +232,27 @@ impl TerminalSession {
             bell_pending: false,
             application_cursor_keys: false,
         })
+    }
+}
+
+impl<P, D> GenericTerminalSession<P, D>
+where
+    P: TerminalParser,
+    D: TerminalDisplay,
+{
+    pub fn with_components(parser: P, screen: D) -> Self {
+        Self {
+            parser,
+            screen,
+            last_exit_code: None,
+            mouse_mode: 0,
+            bracketed_paste: false,
+            pending_responses: Vec::new(),
+            cursor_shape: 0,
+            window_title: None,
+            bell_pending: false,
+            application_cursor_keys: false,
+        }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
@@ -216,12 +434,162 @@ impl TerminalSession {
 
 #[cfg(test)]
 mod tests {
-    use super::TerminalSession;
+    use std::sync::Arc;
+
+    use terminal_ansi::Action;
+    use terminal_screen::{DamageRegion, ScreenSnapshot, StyledChars};
+
+    use super::{GenericTerminalSession, TerminalDisplay, TerminalParser, TerminalSession};
 
     /// Construct a `TerminalSession` with the given dimensions for testing.
     /// Panics if construction fails (invalid size).
     fn make_session(rows: usize, cols: usize) -> TerminalSession {
         TerminalSession::new(rows, cols).expect("make_session: valid size")
+    }
+
+    #[derive(Default)]
+    struct FakeParser;
+
+    impl TerminalParser for FakeParser {
+        fn advance(&mut self, _bytes: &[u8]) -> Vec<Action> {
+            vec![
+                Action::Print('x'),
+                Action::DecPrivateModeSet(1049),
+                Action::DecPrivateModeReset(1049),
+                Action::Bell,
+            ]
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeDisplay {
+        text: String,
+        alternate: bool,
+    }
+
+    impl TerminalDisplay for FakeDisplay {
+        fn put_char(&mut self, ch: char) {
+            self.text.push(ch);
+        }
+
+        fn linefeed(&mut self) {}
+
+        fn carriage_return(&mut self) {}
+
+        fn backspace(&mut self) {}
+
+        fn horizontal_tab(&mut self) {}
+
+        fn cursor_up(&mut self, _n: u16) {}
+
+        fn cursor_down(&mut self, _n: u16) {}
+
+        fn cursor_forward(&mut self, _n: u16) {}
+
+        fn cursor_backward(&mut self, _n: u16) {}
+
+        fn cursor_position(&mut self, _row: u16, _col: u16) {}
+
+        fn save_cursor(&mut self) {}
+
+        fn restore_cursor(&mut self) {}
+
+        fn set_scroll_region(&mut self, _top: u16, _bottom: u16) {}
+
+        fn insert_chars(&mut self, _n: u16) {}
+
+        fn delete_chars(&mut self, _n: u16) {}
+
+        fn insert_lines(&mut self, _n: u16) {}
+
+        fn delete_lines(&mut self, _n: u16) {}
+
+        fn erase_in_display(&mut self, _mode: u16) {}
+
+        fn erase_in_line(&mut self, _mode: u16) {}
+
+        fn set_sgr(&mut self, _params: &[u16]) {}
+
+        fn set_alternate_screen(&mut self, enabled: bool) {
+            self.alternate = enabled;
+        }
+
+        fn cursor_row(&self) -> usize {
+            0
+        }
+
+        fn cursor_col(&self) -> usize {
+            0
+        }
+
+        fn dump_text(&self) -> String {
+            self.text.clone()
+        }
+
+        fn dump_ansi(&self) -> String {
+            self.text.clone()
+        }
+
+        fn dump_styled(&self) -> StyledChars {
+            self.text
+                .chars()
+                .map(|ch| (ch, None, None, 0))
+                .collect()
+        }
+
+        fn dump_styled_at_offset(&self, _scroll_offset: usize) -> StyledChars {
+            self.dump_styled()
+        }
+
+        fn dump_styled_at_offset_with_palette(
+            &self,
+            _scroll_offset: usize,
+            _palette: Option<&[[f32; 3]; 16]>,
+        ) -> StyledChars {
+            self.dump_styled()
+        }
+
+        fn scrollback_len(&self) -> usize {
+            0
+        }
+
+        fn version(&self) -> u64 {
+            1
+        }
+
+        fn resize(&mut self, _rows: usize, _cols: usize) {}
+
+        fn snapshot(&self) -> ScreenSnapshot {
+            ScreenSnapshot {
+                text: Arc::new(self.text.clone()),
+                version: 1,
+                rows: 1,
+                cols: 1,
+            }
+        }
+
+        fn take_damage(&mut self) -> DamageRegion {
+            DamageRegion {
+                full_redraw: false,
+                dirty_rows: Vec::new(),
+                version: 1,
+            }
+        }
+
+        fn is_alternate_screen(&self) -> bool {
+            self.alternate
+        }
+    }
+
+    #[test]
+    fn generic_session_accepts_fake_components() {
+        let mut session = GenericTerminalSession::with_components(FakeParser, FakeDisplay::default());
+
+        session.feed(b"hello");
+
+        assert_eq!(session.snapshot_text(), "x");
+        assert!(!session.is_alternate_screen());
+        assert!(session.take_bell());
     }
 
     #[test]
