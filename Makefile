@@ -7,10 +7,11 @@ MAC_ARM_TARGET := aarch64-apple-darwin
 MAC_X64_TARGET := x86_64-apple-darwin
 LINUX_TARGET := x86_64-unknown-linux-gnu
 WINDOWS_TARGET := x86_64-pc-windows-gnu
+INSTALLER_DIR := scripts/install
 
-.PHONY: release release-macos release-linux release-windows clean test lint perf
+.PHONY: release release-macos release-linux release-windows release-installers verify-installers clean test lint perf
 
-release: release-macos release-linux release-windows
+release: release-macos release-linux release-windows release-installers
 
 release-macos:
 	mkdir -p $(DIST)
@@ -59,19 +60,69 @@ release-macos:
 		'</dict>' \
 		'</plist>' > $(DIST)/$(MAC_BUNDLE)/Contents/Info.plist
 	cp $(DIST)/$(APP)-macos-universal $(DIST)/$(APP)
-	tar -czf $(DIST)/$(APP)-macos-universal.tar.gz -C $(DIST) $(APP)
+	mkdir -p $(DIST)/$(APP)-macos-universal
+	cp $(DIST)/$(APP) $(DIST)/$(APP)-macos-universal/$(APP)
+	cp $(INSTALLER_DIR)/install.sh $(DIST)/$(APP)-macos-universal/install.sh
+	cp $(INSTALLER_DIR)/uninstall.sh $(DIST)/$(APP)-macos-universal/uninstall.sh
+	cp $(INSTALLER_DIR)/README-install.txt $(DIST)/$(APP)-macos-universal/README-install.txt
+	tar -czf $(DIST)/$(APP)-macos-universal.tar.gz -C $(DIST) $(APP)-macos-universal
 	rm -f $(DIST)/$(APP)
-	tar -czf $(DIST)/$(APP)-macos-app.tar.gz -C $(DIST) $(MAC_BUNDLE)
+	mkdir -p $(DIST)/$(APP)-macos-app
+	cp -R $(DIST)/$(MAC_BUNDLE) $(DIST)/$(APP)-macos-app/$(MAC_BUNDLE)
+	cp $(INSTALLER_DIR)/install.sh $(DIST)/$(APP)-macos-app/install.sh
+	cp $(INSTALLER_DIR)/uninstall.sh $(DIST)/$(APP)-macos-app/uninstall.sh
+	cp $(INSTALLER_DIR)/README-install.txt $(DIST)/$(APP)-macos-app/README-install.txt
+	tar -czf $(DIST)/$(APP)-macos-app.tar.gz -C $(DIST) $(APP)-macos-app
 
 release-linux:
 	mkdir -p $(DIST)
 	cross build --release -p $(APP) --target $(LINUX_TARGET)
-	tar -czf $(DIST)/$(APP)-linux-x86_64.tar.gz -C target/$(LINUX_TARGET)/release $(APP)
+	mkdir -p $(DIST)/$(APP)-linux-x86_64
+	cp target/$(LINUX_TARGET)/release/$(APP) $(DIST)/$(APP)-linux-x86_64/$(APP)
+	cp docs/teletipo128x128.png $(DIST)/$(APP)-linux-x86_64/teletipo.png
+	mkdir -p $(DIST)/$(APP)-linux-x86_64/share/icons/hicolor/128x128/apps
+	mkdir -p $(DIST)/$(APP)-linux-x86_64/share/applications
+	cp docs/teletipo128x128.png $(DIST)/$(APP)-linux-x86_64/share/icons/hicolor/128x128/apps/teletipo.png
+	printf '%s\n' \
+		'[Desktop Entry]' \
+		'Type=Application' \
+		'Name=Teletipo' \
+		'Comment=Teletipo Terminal' \
+		'Exec=teletipo' \
+		'Icon=teletipo' \
+		'Terminal=false' \
+		'Categories=System;TerminalEmulator;' \
+		> $(DIST)/$(APP)-linux-x86_64/share/applications/teletipo.desktop
+	cp $(INSTALLER_DIR)/install.sh $(DIST)/$(APP)-linux-x86_64/install.sh
+	cp $(INSTALLER_DIR)/uninstall.sh $(DIST)/$(APP)-linux-x86_64/uninstall.sh
+	cp $(INSTALLER_DIR)/README-install.txt $(DIST)/$(APP)-linux-x86_64/README-install.txt
+	tar -czf $(DIST)/$(APP)-linux-x86_64.tar.gz -C $(DIST) $(APP)-linux-x86_64
 
 release-windows:
 	mkdir -p $(DIST)
 	cross build --release -p $(APP) --target $(WINDOWS_TARGET)
-	cd target/$(WINDOWS_TARGET)/release && zip -9 $(PWD)/$(DIST)/$(APP)-windows-x86_64.zip $(APP).exe
+	mkdir -p $(DIST)/$(APP)-windows-x86_64
+	cp target/$(WINDOWS_TARGET)/release/$(APP).exe $(DIST)/$(APP)-windows-x86_64/$(APP).exe
+	cp docs/teletipo128x128.png $(DIST)/$(APP)-windows-x86_64/teletipo.png
+	cp $(INSTALLER_DIR)/install.ps1 $(DIST)/$(APP)-windows-x86_64/install.ps1
+	cp $(INSTALLER_DIR)/uninstall.ps1 $(DIST)/$(APP)-windows-x86_64/uninstall.ps1
+	cp $(INSTALLER_DIR)/README-install.txt $(DIST)/$(APP)-windows-x86_64/README-install.txt
+	cd $(DIST)/$(APP)-windows-x86_64 && zip -9 $(PWD)/$(DIST)/$(APP)-windows-x86_64.zip $(APP).exe teletipo.png install.ps1 uninstall.ps1 README-install.txt
+
+release-installers:
+	mkdir -p $(DIST)
+	cp $(INSTALLER_DIR)/install.sh $(DIST)/install.sh
+	cp $(INSTALLER_DIR)/install.ps1 $(DIST)/install.ps1
+	cp $(INSTALLER_DIR)/README-install.txt $(DIST)/README-install.txt
+
+verify-installers:
+	sh -n $(INSTALLER_DIR)/install.sh
+	sh -n $(INSTALLER_DIR)/uninstall.sh
+	@if command -v pwsh >/dev/null 2>&1; then \
+		pwsh -NoProfile -Command "Get-Command Invoke-ScriptAnalyzer -ErrorAction SilentlyContinue | Out-Null; if ($$?) { Invoke-ScriptAnalyzer -Path '$(INSTALLER_DIR)/install.ps1' -EnableExit; Invoke-ScriptAnalyzer -Path '$(INSTALLER_DIR)/uninstall.ps1' -EnableExit } else { Write-Host 'PSScriptAnalyzer not installed; skipping' }"; \
+	else \
+		echo "pwsh not installed; skipping PowerShell analysis"; \
+	fi
 
 clean:
 	rm -rf $(DIST)

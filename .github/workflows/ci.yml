@@ -84,3 +84,38 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cargo-deny --locked
       - run: cargo deny check advisories bans licenses sources
+
+  lint-installers:
+    name: lint installers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck and PowerShell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck powershell
+
+      - name: Install PSScriptAnalyzer
+        run: |
+          pwsh -NoProfile -Command "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module PSScriptAnalyzer -Scope CurrentUser -Force"
+
+      - name: Lint shell scripts
+        run: |
+          shellcheck scripts/install/install.sh
+          shellcheck scripts/install/uninstall.sh
+
+      - name: Lint PowerShell scripts
+        run: |
+          pwsh -NoProfile -Command "Invoke-ScriptAnalyzer -Path scripts/install/install.ps1 -EnableExit"
+          pwsh -NoProfile -Command "Invoke-ScriptAnalyzer -Path scripts/install/uninstall.ps1 -EnableExit"
+
+      - name: Offline smoke test (install.sh)
+        run: |
+          tmp="$(mktemp -d)"
+          cp scripts/install/install.sh "$tmp/install.sh"
+          cp scripts/install/uninstall.sh "$tmp/uninstall.sh"
+          touch "$tmp/teletipo"
+          chmod +x "$tmp/teletipo" "$tmp/install.sh" "$tmp/uninstall.sh"
+          "$tmp/install.sh" --from-archive "$tmp" --prefix "$tmp/prefix" --no-desktop --no-verify
+          test -x "$tmp/prefix/bin/teletipo"

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Teletipo
+Comment=Modern GPU-accelerated terminal
+Exec={{EXEC_PATH}}
+Icon=teletipo
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupNotify=true

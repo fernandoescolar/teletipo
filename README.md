@@ -6,27 +6,73 @@ A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with 
 
 ![Teletipo screenshot](docs/teletipo-screenshot.gif)
 
+
+## Features
+
+- GPU-accelerated rendering via `wgpu`
+- Multi-tab workflow
+- Stateful ANSI/VT100 parser (CSI, DEC sequences, SGR, alternate screen, scrollback)
+- Primary and alternate screen buffers
+- Inline terminal search panel (`Cmd+F` / `Ctrl+F`) with match highlights and next/previous navigation
+- Search scope includes both visible terminal rows and scrollback history
+- Code-editor-style command input
+- Themeable (YAML theme files, ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night)
+- Automatic silent self-update from GitHub Releases
+
+## Before install
+
+For the best experience with Teletipo, we recommend installing the following first:
+
+- At least one Nerd Font: https://www.nerdfonts.com/font-downloads (I use Hack Nerd Font)
+- Starship prompt: https://github.com/starship/starship
+
+To use my Starship preset:
+
+	starship preset gruvbox-rainbow -o ~/.config/starship.toml
+
 ## Install
 
-### macOS (Apple Silicon + Intel universal binary)
+### Quick install (recommended)
+
+#### macOS + Linux
 
 ```bash
-curl -Lo teletipo.tar.gz https://github.com/fernandoescolar/teletipo/releases/latest/download/teletipo-macos-universal.tar.gz
-tar -xzf teletipo.tar.gz
-sudo mv teletipo /usr/local/bin/
+curl -fsSL https://github.com/fernandoescolar/teletipo/releases/latest/download/install.sh | sh
 ```
 
-### Linux (x86-64)
+Install as desktop app too:
 
 ```bash
-curl -Lo teletipo.tar.gz https://github.com/fernandoescolar/teletipo/releases/latest/download/teletipo-linux-x86_64.tar.gz
-tar -xzf teletipo.tar.gz
-sudo mv teletipo /usr/local/bin/
+curl -fsSL https://github.com/fernandoescolar/teletipo/releases/latest/download/install.sh | sh -s -- --desktop
 ```
 
-### Windows (x86-64)
+#### Windows (PowerShell)
 
-Download `teletipo-windows-x86_64.zip` from the [latest release](https://github.com/fernandoescolar/teletipo/releases/latest), extract it, and place `teletipo.exe` somewhere on your `PATH`.
+```powershell
+irm https://github.com/fernandoescolar/teletipo/releases/latest/download/install.ps1 | iex
+```
+
+### Verified/manual install
+
+```bash
+curl -fsSLO https://github.com/fernandoescolar/teletipo/releases/latest/download/teletipo-linux-x86_64.tar.gz
+curl -fsSLO https://github.com/fernandoescolar/teletipo/releases/latest/download/SHA256SUMS
+grep ' teletipo-linux-x86_64.tar.gz$' SHA256SUMS | sha256sum -c -
+tar -xzf teletipo-linux-x86_64.tar.gz
+./teletipo-linux-x86_64/install.sh --desktop
+```
+
+Each release archive includes platform-native installer scripts:
+
+- Linux/macOS: `install.sh` and `uninstall.sh`
+- Windows: `install.ps1` and `uninstall.ps1`
+
+### Platform archives
+
+- macOS CLI (universal): `teletipo-macos-universal.tar.gz`
+- macOS app bundle: `teletipo-macos-app.tar.gz`
+- Linux x86-64: `teletipo-linux-x86_64.tar.gz`
+- Windows x86-64: `teletipo-windows-x86_64.zip`
 
 ### Build from source
 
@@ -70,18 +116,6 @@ teletipo --metrics
 # Increase runtime logging verbosity
 RUST_LOG=app_cli=debug,render_wgpu=info teletipo
 ```
-
-## Features
-
-- GPU-accelerated rendering via `wgpu`
-- Multi-tab workflow
-- Stateful ANSI/VT100 parser (CSI, DEC sequences, SGR, alternate screen, scrollback)
-- Primary and alternate screen buffers
-- Inline terminal search panel (`Cmd+F` / `Ctrl+F`) with match highlights and next/previous navigation
-- Search scope includes both visible terminal rows and scrollback history
-- Code-editor-style command input
-- Themeable (YAML theme files, ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night)
-- Automatic silent self-update from GitHub Releases
 
 ## Keyboard Shortcuts
 

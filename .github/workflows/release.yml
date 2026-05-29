@@ -82,9 +82,19 @@ jobs:
       - name: Package archives
         run: |
           cp dist/teletipo-macos-universal dist/teletipo
-          tar -czf dist/teletipo-macos-universal.tar.gz -C dist teletipo
+          mkdir -p dist/teletipo-macos-universal
+          cp dist/teletipo dist/teletipo-macos-universal/teletipo
+          cp scripts/install/install.sh dist/teletipo-macos-universal/install.sh
+          cp scripts/install/uninstall.sh dist/teletipo-macos-universal/uninstall.sh
+          cp scripts/install/README-install.txt dist/teletipo-macos-universal/README-install.txt
+          tar -czf dist/teletipo-macos-universal.tar.gz -C dist teletipo-macos-universal
           rm dist/teletipo
-          tar -czf dist/teletipo-macos-app.tar.gz -C dist Teletipo.app
+          mkdir -p dist/teletipo-macos-app
+          cp -R dist/Teletipo.app dist/teletipo-macos-app/Teletipo.app
+          cp scripts/install/install.sh dist/teletipo-macos-app/install.sh
+          cp scripts/install/uninstall.sh dist/teletipo-macos-app/uninstall.sh
+          cp scripts/install/README-install.txt dist/teletipo-macos-app/README-install.txt
+          tar -czf dist/teletipo-macos-app.tar.gz -C dist teletipo-macos-app
 
       - uses: actions/upload-artifact@v4
         with:
@@ -130,6 +140,9 @@ jobs:
             'Terminal=false' \
             'Categories=System;TerminalEmulator;' \
             > "$PKG_DIR/share/applications/teletipo.desktop"
+          cp scripts/install/install.sh "$PKG_DIR/install.sh"
+          cp scripts/install/uninstall.sh "$PKG_DIR/uninstall.sh"
+          cp scripts/install/README-install.txt "$PKG_DIR/README-install.txt"
           tar -czf dist/teletipo-linux-x86_64.tar.gz -C dist teletipo-linux-x86_64
 
       - uses: actions/upload-artifact@v4
@@ -161,8 +174,11 @@ jobs:
           mkdir -p "$PKG_DIR"
           cp target/x86_64-pc-windows-gnu/release/teletipo.exe "$PKG_DIR/teletipo.exe"
           cp docs/teletipo128x128.png "$PKG_DIR/teletipo.png"
+          cp scripts/install/install.ps1 "$PKG_DIR/install.ps1"
+          cp scripts/install/uninstall.ps1 "$PKG_DIR/uninstall.ps1"
+          cp scripts/install/README-install.txt "$PKG_DIR/README-install.txt"
           cd "$PKG_DIR"
-          zip -9 "$GITHUB_WORKSPACE/dist/teletipo-windows-x86_64.zip" teletipo.exe teletipo.png
+          zip -9 "$GITHUB_WORKSPACE/dist/teletipo-windows-x86_64.zip" teletipo.exe teletipo.png install.ps1 uninstall.ps1 README-install.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -175,10 +191,18 @@ jobs:
     needs: [build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
           path: dist
+
+      - name: Add standalone installers
+        run: |
+          cp scripts/install/install.sh dist/install.sh
+          cp scripts/install/install.ps1 dist/install.ps1
+          cp scripts/install/README-install.txt dist/README-install.txt
 
       - name: Install zipsign
         run: cargo install zipsign --locked
@@ -193,7 +217,7 @@ jobs:
           zipsign sign tar dist/teletipo-macos-app.tar.gz "$keyfile" --force
           zipsign sign tar dist/teletipo-linux-x86_64.tar.gz "$keyfile" --force
           zipsign sign zip dist/teletipo-windows-x86_64.zip "$keyfile" --force
-          (cd dist && sha256sum teletipo-macos-universal.tar.gz teletipo-macos-app.tar.gz teletipo-linux-x86_64.tar.gz teletipo-windows-x86_64.zip > SHA256SUMS)
+          (cd dist && sha256sum teletipo-macos-universal.tar.gz teletipo-macos-app.tar.gz teletipo-linux-x86_64.tar.gz teletipo-windows-x86_64.zip install.sh install.ps1 README-install.txt > SHA256SUMS)
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -203,4 +227,7 @@ jobs:
             dist/teletipo-macos-app.tar.gz
             dist/teletipo-linux-x86_64.tar.gz
             dist/teletipo-windows-x86_64.zip
+            dist/install.sh
+            dist/install.ps1
+            dist/README-install.txt
             dist/SHA256SUMS
