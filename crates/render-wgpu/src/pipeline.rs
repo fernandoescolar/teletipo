@@ -243,11 +243,14 @@ impl<'a> GpuState<'a> {
 
         let pad_h = snapshot.padding_h as f32;
         let pad_v = snapshot.padding_v as f32;
+        let terminal_text = snapshot.terminal_text_from_rows();
+        let (terminal_fg_colors, _terminal_bg_colors, terminal_styles) =
+            snapshot.terminal_flatten_fg_bg_style();
 
         // Bottom-align terminal content within the padded area: pad_v is reserved at
         // both the top and bottom of the terminal pane so the last visible row ends
         // pad_v pixels above the separator.
-        let terminal_rows = snapshot.terminal_text.lines().count().max(1) as f32;
+        let terminal_rows = snapshot.terminal_rows_len() as f32;
         let term_pane_h_px = snapshot.split_ratio * available_h;
         let effective_term_h = (term_pane_h_px - 2.0 * pad_v).max(0.0);
         let content_h_px = (terminal_rows * self.cell_h_px).min(effective_term_h);
@@ -291,8 +294,7 @@ impl<'a> GpuState<'a> {
 
         self.ensure_glyph('\u{276f}');
         self.ensure_glyph('\u{d7}'); // × close-button character
-        for ch in snapshot
-            .terminal_text
+        for ch in terminal_text
             .chars()
             .chain(snapshot.editor_text.chars())
             .chain(snapshot.editor_suggestion.chars())
@@ -356,7 +358,7 @@ impl<'a> GpuState<'a> {
         } else {
             self.font_data
                 .as_deref()
-                .and_then(|fd| shape_terminal_text(fd, &snapshot.terminal_text, self.font_size))
+                .and_then(|fd| shape_terminal_text(fd, &terminal_text, self.font_size))
         };
 
         // Pre-rasterize any ligature glyphs (span_cols > 1) into the shaped glyph cache.
@@ -364,11 +366,7 @@ impl<'a> GpuState<'a> {
             for shaped_line in shaped {
                 for sg in shaped_line {
                     if sg.span_cols > 1 {
-                        let is_bold = snapshot
-                            .terminal_styles
-                            .get(sg.full_char_idx)
-                            .copied()
-                            .unwrap_or(0)
+                        let is_bold = terminal_styles.get(sg.full_char_idx).copied().unwrap_or(0)
                             & 0b001
                             != 0;
                         self.ensure_shaped_glyph(sg.glyph_id, is_bold);
@@ -387,8 +385,8 @@ impl<'a> GpuState<'a> {
                     term_top_px + pad_v,
                     pad_h,
                     self.theme.text,
-                    &snapshot.terminal_fg_colors,
-                    &snapshot.terminal_styles,
+                    &terminal_fg_colors,
+                    &terminal_styles,
                     shaped,
                     &self.shaped_glyph_cache,
                     &self.glyph_cache,
@@ -401,12 +399,12 @@ impl<'a> GpuState<'a> {
                 );
             } else {
                 add_text_verts(
-                    &snapshot.terminal_text,
+                    &terminal_text,
                     term_top_px + pad_v,
                     pad_h,
                     self.theme.text,
-                    &snapshot.terminal_fg_colors,
-                    &snapshot.terminal_styles,
+                    &terminal_fg_colors,
+                    &terminal_styles,
                     &self.glyph_cache,
                     Some(&self.bold_glyph_cache),
                     self.cell_w_px,

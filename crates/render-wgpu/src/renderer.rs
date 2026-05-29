@@ -25,10 +25,7 @@ impl WgpuRenderer {
         Self {
             pacer: FramePacer::new(config.target_fps),
             config,
-            pending_damage: DamageRegion {
-                full_redraw: true,
-                dirty_rows: Vec::new(),
-            },
+            pending_damage: DamageRegion::default(),
             frames: 0,
             stats: RenderStats::default(),
             batch_builder: BatchBuilder::default(),
@@ -85,14 +82,11 @@ impl WgpuRenderer {
 
 impl Renderer for WgpuRenderer {
     fn ingest_damage(&mut self, damage: DamageRegion) {
-        if damage.full_redraw {
-            self.pending_damage.full_redraw = true;
-        }
-        self.pending_damage.dirty_rows.extend(damage.dirty_rows);
+        self.pending_damage.merge_from(&damage);
     }
 
     fn render(&mut self, snapshot: &RenderSnapshot) {
-        if !self.pending_damage.full_redraw && self.pending_damage.dirty_rows.is_empty() {
+        if self.pending_damage.is_empty() {
             return;
         }
         if !self.pending_damage.full_redraw && !self.pacer.should_render() {
@@ -101,8 +95,7 @@ impl Renderer for WgpuRenderer {
 
         let start = Instant::now();
         let _batches = self.build_batches(snapshot);
-        self.pending_damage.dirty_rows.clear();
-        self.pending_damage.full_redraw = false;
+        self.pending_damage.clear();
         self.pacer.on_presented();
         self.frames += 1;
         self.stats.record(start.elapsed());
@@ -130,6 +123,8 @@ impl Renderer for NullRenderer {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{NullRenderer, Renderer, WgpuRenderer};
     use crate::geometry::{
         build_panel_vertices, snapshot_to_cell_quads, snapshot_to_cell_quads_in_bounds,
@@ -142,6 +137,8 @@ mod tests {
     #[allow(dead_code)]
     fn blank_snapshot() -> RenderSnapshot {
         RenderSnapshot {
+            terminal_rows: vec![],
+            terminal_damage: Arc::new(DamageRegion::default()),
             terminal_text: String::new(),
             terminal_fg_colors: vec![],
             terminal_bg_colors: vec![],
@@ -181,50 +178,23 @@ mod tests {
         }
     }
 
+    fn damage(full_redraw: bool, dirty_rows: Vec<usize>) -> DamageRegion {
+        DamageRegion {
+            full_redraw,
+            dirty_rows,
+            cols: 0,
+            dirty_cells: Vec::new(),
+        }
+    }
+
     #[test]
     fn null_renderer_counts_frames() {
         let mut renderer = NullRenderer::default();
-        renderer.ingest_damage(DamageRegion {
-            full_redraw: true,
-            dirty_rows: vec![0],
-        });
+        renderer.ingest_damage(damage(true, vec![0]));
         renderer.render(&RenderSnapshot {
             terminal_text: "t".to_string(),
-            terminal_fg_colors: vec![],
-            terminal_bg_colors: vec![],
             editor_text: "e".to_string(),
-            editor_cursor_offset: 0,
-            scroll_offset: 0,
-            scrollback_lines: 0,
-            editor_focused: false,
-            split_ratio: 0.7,
-            resize_overlay: None,
-            editor_line_count: 1,
-            editor_scroll_offset: 0,
-            editor_selection: None,
-            selection: None,
-            tab_labels: vec![],
-            active_tab: 0,
-            tab_context_menu: None,
-            tab_drag_from: None,
-            tab_drag_insert_before: None,
-            theme: ColorTheme::default(),
-            padding_h: 0,
-            padding_v: 0,
-            settings_overlay: None,
-            title_cwd: String::new(),
-            editor_suggestion: String::new(),
-            suggestion_dropdown: None,
-            terminal_links: vec![],
-            request_exit: false,
-            cursor_shape: 0,
-            bell_active: false,
-            terminal_cursor_row: 0,
-            terminal_cursor_col: 0,
-            terminal_fullscreen: false,
-            terminal_screen_version: 0,
-            terminal_styles: vec![],
-            cursor_blink_on: true,
+            ..blank_snapshot()
         });
         assert_eq!(renderer.frames(), 1);
     }
@@ -243,86 +213,17 @@ mod tests {
 
         renderer.render(&RenderSnapshot {
             terminal_text: "noop".to_string(),
-            terminal_fg_colors: vec![],
-            terminal_bg_colors: vec![],
             editor_text: "noop".to_string(),
-            editor_cursor_offset: 0,
-            scroll_offset: 0,
-            scrollback_lines: 0,
-            editor_focused: false,
-            split_ratio: 0.7,
-            resize_overlay: None,
-            editor_line_count: 1,
-            editor_scroll_offset: 0,
-            editor_selection: None,
-            selection: None,
-            tab_labels: vec![],
-            active_tab: 0,
-            tab_context_menu: None,
-            tab_drag_from: None,
-            tab_drag_insert_before: None,
-            theme: ColorTheme::default(),
-            padding_h: 0,
-            padding_v: 0,
-            settings_overlay: None,
-            title_cwd: String::new(),
-            editor_suggestion: String::new(),
-            suggestion_dropdown: None,
-            terminal_links: vec![],
-            request_exit: false,
-            cursor_shape: 0,
-            bell_active: false,
-            terminal_cursor_row: 0,
-            terminal_cursor_col: 0,
-            terminal_fullscreen: false,
-            terminal_screen_version: 0,
-            terminal_styles: vec![],
-            cursor_blink_on: true,
+            ..blank_snapshot()
         });
         assert_eq!(renderer.frames(), 1);
         assert_eq!(renderer.atlas_len(), 0);
 
-        renderer.ingest_damage(DamageRegion {
-            full_redraw: false,
-            dirty_rows: vec![1],
-        });
+        renderer.ingest_damage(damage(false, vec![1]));
         renderer.render(&RenderSnapshot {
             terminal_text: "dirty".to_string(),
-            terminal_fg_colors: vec![],
-            terminal_bg_colors: vec![],
             editor_text: "editor".to_string(),
-            editor_cursor_offset: 0,
-            scroll_offset: 0,
-            scrollback_lines: 0,
-            editor_focused: false,
-            split_ratio: 0.7,
-            resize_overlay: None,
-            editor_line_count: 1,
-            editor_scroll_offset: 0,
-            editor_selection: None,
-            selection: None,
-            tab_labels: vec![],
-            active_tab: 0,
-            tab_context_menu: None,
-            tab_drag_from: None,
-            tab_drag_insert_before: None,
-            theme: ColorTheme::default(),
-            padding_h: 0,
-            padding_v: 0,
-            settings_overlay: None,
-            title_cwd: String::new(),
-            editor_suggestion: String::new(),
-            suggestion_dropdown: None,
-            terminal_links: vec![],
-            request_exit: false,
-            cursor_shape: 0,
-            bell_active: false,
-            terminal_cursor_row: 0,
-            terminal_cursor_col: 0,
-            terminal_fullscreen: false,
-            terminal_screen_version: 0,
-            terminal_styles: vec![],
-            cursor_blink_on: true,
+            ..blank_snapshot()
         });
         assert!(renderer.frames() >= 1);
         assert!(renderer.stats().frame_count >= 1);
@@ -332,41 +233,7 @@ mod tests {
     fn converts_snapshot_to_quads_with_damage_filter() {
         let snapshot = RenderSnapshot {
             terminal_text: "abc\nxyz".to_string(),
-            terminal_fg_colors: vec![],
-            terminal_bg_colors: vec![],
-            editor_text: String::new(),
-            editor_cursor_offset: 0,
-            scroll_offset: 0,
-            scrollback_lines: 0,
-            editor_focused: false,
-            split_ratio: 0.7,
-            resize_overlay: None,
-            editor_line_count: 1,
-            editor_scroll_offset: 0,
-            editor_selection: None,
-            selection: None,
-            tab_labels: vec![],
-            active_tab: 0,
-            tab_context_menu: None,
-            tab_drag_from: None,
-            tab_drag_insert_before: None,
-            theme: ColorTheme::default(),
-            padding_h: 0,
-            padding_v: 0,
-            settings_overlay: None,
-            title_cwd: String::new(),
-            editor_suggestion: String::new(),
-            suggestion_dropdown: None,
-            terminal_links: vec![],
-            request_exit: false,
-            cursor_shape: 0,
-            bell_active: false,
-            terminal_cursor_row: 0,
-            terminal_cursor_col: 0,
-            terminal_fullscreen: false,
-            terminal_screen_version: 0,
-            terminal_styles: vec![],
-            cursor_blink_on: true,
+            ..blank_snapshot()
         };
 
         let only_row_0 = snapshot_to_cell_quads(
@@ -374,6 +241,8 @@ mod tests {
             &DamageRegion {
                 full_redraw: false,
                 dirty_rows: vec![0],
+                cols: 0,
+                dirty_cells: Vec::new(),
             },
             3,
         );
@@ -385,6 +254,8 @@ mod tests {
             &DamageRegion {
                 full_redraw: true,
                 dirty_rows: vec![],
+                cols: 0,
+                dirty_cells: Vec::new(),
             },
             3,
         );
@@ -398,6 +269,8 @@ mod tests {
             &DamageRegion {
                 full_redraw: true,
                 dirty_rows: vec![],
+                cols: 0,
+                dirty_cells: Vec::new(),
             },
             4,
             (1.0, -0.4),
@@ -407,6 +280,8 @@ mod tests {
             &DamageRegion {
                 full_redraw: true,
                 dirty_rows: vec![],
+                cols: 0,
+                dirty_cells: Vec::new(),
             },
             4,
             (-0.4, -1.0),
@@ -421,42 +296,10 @@ mod tests {
     #[test]
     fn panel_vertices_contain_cursor_quad() {
         let snapshot = RenderSnapshot {
-            terminal_text: String::new(),
-            terminal_fg_colors: vec![],
-            terminal_bg_colors: vec![],
             editor_text: "abc".to_string(),
             editor_cursor_offset: 3,
-            scroll_offset: 0,
-            scrollback_lines: 0,
             editor_focused: true,
-            split_ratio: 0.7,
-            resize_overlay: None,
-            editor_line_count: 1,
-            editor_scroll_offset: 0,
-            editor_selection: None,
-            selection: None,
-            tab_labels: vec![],
-            active_tab: 0,
-            tab_context_menu: None,
-            tab_drag_from: None,
-            tab_drag_insert_before: None,
-            theme: ColorTheme::default(),
-            padding_h: 0,
-            padding_v: 0,
-            settings_overlay: None,
-            title_cwd: String::new(),
-            editor_suggestion: String::new(),
-            suggestion_dropdown: None,
-            terminal_links: vec![],
-            request_exit: false,
-            cursor_shape: 0,
-            bell_active: false,
-            terminal_cursor_row: 0,
-            terminal_cursor_col: 0,
-            terminal_fullscreen: false,
-            terminal_screen_version: 0,
-            terminal_styles: vec![],
-            cursor_blink_on: true,
+            ..blank_snapshot()
         };
         let size = PhysicalSize::new(1280u32, 720u32);
         let verts = build_panel_vertices(size, &snapshot, 0.0, 8.4, 16.8, 0.0, 0.0);
@@ -468,42 +311,10 @@ mod tests {
         use crate::geometry::snapshot_to_ime_area;
 
         let snapshot = RenderSnapshot {
-            terminal_text: String::new(),
-            terminal_fg_colors: vec![],
-            terminal_bg_colors: vec![],
             editor_text: "hello".to_string(),
             editor_cursor_offset: 5,
-            scroll_offset: 0,
-            scrollback_lines: 0,
             editor_focused: true,
-            split_ratio: 0.7,
-            resize_overlay: None,
-            editor_line_count: 1,
-            editor_scroll_offset: 0,
-            editor_selection: None,
-            selection: None,
-            tab_labels: vec![],
-            active_tab: 0,
-            tab_context_menu: None,
-            tab_drag_from: None,
-            tab_drag_insert_before: None,
-            theme: ColorTheme::default(),
-            padding_h: 0,
-            padding_v: 0,
-            settings_overlay: None,
-            title_cwd: String::new(),
-            editor_suggestion: String::new(),
-            suggestion_dropdown: None,
-            terminal_links: vec![],
-            request_exit: false,
-            cursor_shape: 0,
-            bell_active: false,
-            terminal_cursor_row: 0,
-            terminal_cursor_col: 0,
-            terminal_fullscreen: false,
-            terminal_screen_version: 0,
-            terminal_styles: vec![],
-            cursor_blink_on: true,
+            ..blank_snapshot()
         };
         let (pos, size) = snapshot_to_ime_area(&snapshot, PhysicalSize::new(1280u32, 720u32));
         assert!(

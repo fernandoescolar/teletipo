@@ -326,6 +326,10 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
+    let terminal_text = snapshot.terminal_text_from_rows();
+    let (terminal_fg_colors, terminal_bg_colors, terminal_styles) =
+        snapshot.terminal_flatten_fg_bg_style();
+
     if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
         let px_x = 2.0 / size.width as f32;
         let px_y = 2.0 / size.height as f32;
@@ -333,14 +337,14 @@ pub(crate) fn build_panel_vertices(
         let mut char_idx = 0usize;
         let mut row = 0usize;
         let mut col = 0usize;
-        for ch in snapshot.terminal_text.chars() {
+        for ch in terminal_text.chars() {
             if ch == '\n' {
                 row += 1;
                 col = 0;
                 char_idx += 1;
                 continue;
             }
-            if let Some(Some([r, g, b])) = snapshot.terminal_bg_colors.get(char_idx) {
+            if let Some(Some([r, g, b])) = terminal_bg_colors.get(char_idx) {
                 let w = char_col_width(ch);
                 let x0 = (pad_h + col as f32 * cell_w_px) * px_x - 1.0;
                 let x1 = (pad_h + (col + w) as f32 * cell_w_px) * px_x - 1.0;
@@ -354,7 +358,7 @@ pub(crate) fn build_panel_vertices(
     }
 
     // Strikethrough decoration: a 1-pixel horizontal bar at 50% cell height.
-    if !snapshot.terminal_styles.is_empty()
+    if !terminal_styles.is_empty()
         && size.width > 0
         && size.height > 0
         && cell_w_px > 0.0
@@ -366,17 +370,16 @@ pub(crate) fn build_panel_vertices(
         let mut char_idx = 0usize;
         let mut row = 0usize;
         let mut col = 0usize;
-        for ch in snapshot.terminal_text.chars() {
+        for ch in terminal_text.chars() {
             if ch == '\n' {
                 row += 1;
                 col = 0;
                 char_idx += 1;
                 continue;
             }
-            let style = snapshot.terminal_styles.get(char_idx).copied().unwrap_or(0);
+            let style = terminal_styles.get(char_idx).copied().unwrap_or(0);
             if style & 0b100 != 0 && ch != ' ' {
-                let fg_color = snapshot
-                    .terminal_fg_colors
+                let fg_color = terminal_fg_colors
                     .get(char_idx)
                     .copied()
                     .flatten()

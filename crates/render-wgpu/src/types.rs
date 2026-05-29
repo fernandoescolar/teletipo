@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 // `AppWindowEvent` is defined in `platform-abstraction` so that the UI crate
@@ -17,8 +18,18 @@ pub struct TerminalLink {
 
 #[derive(Debug, Clone)]
 pub struct RenderSnapshot {
+    /// Row-wise terminal data model used by the renderer. This is the primary
+    /// representation for terminal glyphs and per-cell style/color state.
+    pub terminal_rows: Vec<RenderRow>,
+    /// Per-frame terminal damage map. Shared via `Arc` to avoid copying when
+    /// multiple rendering stages consume the same damage metadata.
+    pub terminal_damage: Arc<DamageRegion>,
+    /// Flattened text form retained for transitional compatibility with
+    /// call-sites that still expect newline-separated terminal text.
     pub terminal_text: String,
+    /// Transitional flattened foreground colors parallel to `terminal_text`.
     pub terminal_fg_colors: Vec<Option<[f32; 3]>>,
+    /// Transitional flattened background colors parallel to `terminal_text`.
     pub terminal_bg_colors: Vec<Option<[f32; 3]>>,
     /// Style bits per terminal character: bit 0 = bold, bit 1 = italic, bit 2 = strikethrough.
     pub terminal_styles: Vec<u8>,
@@ -85,6 +96,47 @@ pub struct RenderSnapshot {
     /// version to skip expensive terminal vertex uploads when content is
     /// unchanged.
     pub terminal_screen_version: u64,
+}
+
+impl RenderSnapshot {
+    pub fn terminal_rows_len(&self) -> usize {
+        self.terminal_rows.len().max(1)
+    }
+
+    pub fn terminal_text_from_rows(&self) -> String {
+        if self.terminal_rows.is_empty() {
+            return self.terminal_text.clone();
+        }
+        let mut out = String::new();
+        for (idx, row) in self.terminal_rows.iter().enumerate() {
+            out.push_str(&row.text());
+            if idx + 1 < self.terminal_rows.len() {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    pub fn terminal_flatten_fg_bg_style(
+        &self,
+    ) -> (Vec<Option<[f32; 3]>>, Vec<Option<[f32; 3]>>, Vec<u8>) {
+        let mut fg = Vec::new();
+        let mut bg = Vec::new();
+        let mut style = Vec::new();
+        for (row_idx, row) in self.terminal_rows.iter().enumerate() {
+            for cell in &row.cells {
+                fg.push(cell.fg);
+                bg.push(cell.bg);
+                style.push(cell.style);
+            }
+            if row_idx + 1 < self.terminal_rows.len() {
+                fg.push(None);
+                bg.push(None);
+                style.push(0);
+            }
+        }
+        (fg, bg, style)
+    }
 }
 
 /// Visual state for the suggestion cycling dropdown shown above the editor.
@@ -282,10 +334,99 @@ impl Default for RenderConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RenderCell {
+    pub ch: char,
+    pub fg: Option<[f32; 3]>,
+    pub bg: Option<[f32; 3]>,
+    pub style: u8,
+}
+
+impl Default for RenderCell {
+    fn default() -> Self {
+        Self {
+            ch: ' ',
+            fg: None,
+            bg: None,
+            style: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderRow {
+    pub cells: Vec<RenderCell>,
+    /// True when the row was touched in the source damage model for this frame.
+    pub dirty: bool,
+}
+
+impl RenderRow {
+    pub fn text(&self) -> String {
+        self.cells.iter().map(|c| c.ch).collect()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DamageRegion {
     pub full_redraw: bool,
     pub dirty_rows: Vec<usize>,
+    /// Number of columns in the terminal grid used to index `dirty_cells`.
+    pub cols: usize,
+    /// Cell-level damage bitset in row-major order. Length = rows * cols.
+    pub dirty_cells: Vec<bool>,
+}
+
+impl DamageRegion {
+    pub fn is_empty(&self) -> bool {
+        !self.full_redraw && self.dirty_rows.is_empty() && !self.dirty_cells.iter().any(|v| *v)
+    }
+
+    pub fn row_is_dirty(&self, row: usize) -> bool {
+        if self.full_redraw || self.dirty_rows.contains(&row) {
+            return true;
+        }
+        if self.cols == 0 {
+            return false;
+        }
+        let start = row.saturating_mul(self.cols);
+        let end = start.saturating_add(self.cols).min(self.dirty_cells.len());
+        self.dirty_cells[start..end].iter().any(|v| *v)
+    }
+
+    pub fn merge_from(&mut self, other: &DamageRegion) {
+        if other.full_redraw {
+            self.full_redraw = true;
+        }
+        self.cols = self.cols.max(other.cols);
+        self.dirty_rows.extend(other.dirty_rows.iter().copied());
+        if self.dirty_cells.len() < other.dirty_cells.len() {
+            self.dirty_cells.resize(other.dirty_cells.len(), false);
+        }
+        for (idx, dirty) in other.dirty_cells.iter().copied().enumerate() {
+            if dirty {
+                self.dirty_cells[idx] = true;
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.full_redraw = false;
+        self.dirty_rows.clear();
+        for slot in &mut self.dirty_cells {
+            *slot = false;
+        }
+    }
+}
+
+impl Default for DamageRegion {
+    fn default() -> Self {
+        Self {
+            full_redraw: true,
+            dirty_rows: Vec::new(),
+            cols: 0,
+            dirty_cells: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

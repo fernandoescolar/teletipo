@@ -50,7 +50,7 @@ Full per-task detail (steps, AC, tests, risks) lives in plan.md. Summary:
 | **T13** | LICENSE + per-crate license metadata | legal | P0 | S | LIC-1 | Yes |
 | **T14** | Property tests for `Screen::resize`; integration tests for PTY; golden snapshots; theme schema fuzz; E2E smoke | testability | P1 | M | TST-1, TST-2 | Yes |
 | **T15** | `#![warn(missing_docs)]` per crate; refresh blueprint as `docs/ARCHITECTURE.md` | documentation | P2 | S | DOC-1, DOC-2 | Yes |
-| **T16** | Redesign `RenderSnapshot` to `Vec<RenderRow>` + cell-bitset `DamageRegion`; `Arc<String>` cache | API/perf | P2 | L | API-1, API-2, PERF-1 | |
+| **T16** | Redesign `RenderSnapshot` to `Vec<RenderRow>` + cell-bitset `DamageRegion`; `Arc<String>` cache | API/perf | P2 | L | API-1, API-2, PERF-1 | Yes |
 | **T17** | Glyph atlas LRU + repack + metrics | performance | P3 | M | REL-4 | Yes |
 
 **Suggested execution waves**

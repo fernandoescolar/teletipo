@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use editor_core::EditorBuffer;
-use terminal_core::{StyledChars, TerminalError, TerminalSession};
+use terminal_core::{DamageRegion, StyledChars, TerminalError, TerminalSession};
 use terminal_pty::PtyBackend;
 
 // ============================================================================
@@ -265,6 +265,10 @@ impl AppTerminal {
         self.session.cursor_pos()
     }
 
+    pub fn take_damage(&mut self) -> DamageRegion {
+        self.session.take_damage()
+    }
+
     pub fn is_alternate_screen(&self) -> bool {
         self.session.is_alternate_screen()
     }
@@ -508,6 +512,10 @@ impl App {
     /// Returns the terminal cursor position as `(row, col)`, 0-based.
     pub fn terminal_cursor_pos(&self) -> (usize, usize) {
         self.terminal.cursor_pos()
+    }
+
+    pub fn terminal_take_damage(&mut self) -> DamageRegion {
+        self.terminal.take_damage()
     }
 
     /// Returns whether the terminal currently uses the alternate screen buffer.

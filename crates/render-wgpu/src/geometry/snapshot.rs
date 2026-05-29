@@ -6,7 +6,8 @@ pub fn snapshot_to_cell_quads(
     damage: &DamageRegion,
     cols_hint: usize,
 ) -> Vec<CellQuad> {
-    snapshot_to_cell_quads_in_bounds(&snapshot.terminal_text, damage, cols_hint, (1.0, -1.0))
+    let terminal_text = snapshot.terminal_text_from_rows();
+    snapshot_to_cell_quads_in_bounds(&terminal_text, damage, cols_hint, (1.0, -1.0))
 }
 
 pub fn snapshot_to_cell_quads_in_bounds(
@@ -23,7 +24,7 @@ pub fn snapshot_to_cell_quads_in_bounds(
 
     let mut quads = Vec::new();
     for (row, line) in lines.iter().enumerate() {
-        if !damage.full_redraw && !damage.dirty_rows.contains(&row) {
+        if !damage.row_is_dirty(row) {
             continue;
         }
 
@@ -54,6 +55,8 @@ pub(crate) fn snapshot_to_text_quads_in_bounds(
     let full_redraw = DamageRegion {
         full_redraw: true,
         dirty_rows: Vec::new(),
+        cols: 0,
+        dirty_cells: Vec::new(),
     };
     snapshot_to_cell_quads_in_bounds(text, &full_redraw, cols_hint, y_bounds)
 }
@@ -68,6 +71,8 @@ mod tests {
         let damage = DamageRegion {
             full_redraw: true,
             dirty_rows: Vec::new(),
+            cols: 0,
+            dirty_cells: Vec::new(),
         };
 
         let quads = snapshot_to_cell_quads_in_bounds("ab\nc", &damage, 4, (1.0, -1.0));

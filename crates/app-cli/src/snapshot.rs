@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::GpuRuntimeState;
 use crate::coords::{
     current_line_prefix, cursor_at_line_end, cursor_to_terminal_cell, detect_terminal_links,
@@ -5,7 +7,10 @@ use crate::coords::{
 };
 use crate::settings::build_settings_overlay;
 use crate::theme;
-use render_wgpu::{ColorTheme, RenderSnapshot, SuggestionDropdown, TabContextMenu, TerminalLink};
+use render_wgpu::{
+    ColorTheme, DamageRegion, RenderCell, RenderRow, RenderSnapshot, SuggestionDropdown,
+    TabContextMenu, TerminalLink,
+};
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
 /// if the string is longer.  Used to keep dropdown entries and ghost text
@@ -97,6 +102,54 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let terminal_bg_colors: Vec<Option<[f32; 3]>> =
         styled.iter().map(|(_, _, bg, _)| *bg).collect();
     let terminal_styles: Vec<u8> = styled.iter().map(|(_, _, _, s)| *s).collect();
+    let mut terminal_rows: Vec<RenderRow> = Vec::new();
+    let mut current_row: Vec<RenderCell> = Vec::new();
+    for (ch, fg, bg, style) in &styled {
+        if *ch == '\n' {
+            terminal_rows.push(RenderRow {
+                cells: std::mem::take(&mut current_row),
+                dirty: false,
+            });
+            continue;
+        }
+        current_row.push(RenderCell {
+            ch: *ch,
+            fg: *fg,
+            bg: *bg,
+            style: *style,
+        });
+    }
+    terminal_rows.push(RenderRow {
+        cells: current_row,
+        dirty: false,
+    });
+
+    let (term_rows, term_cols) = if let Some(first) = terminal_rows.first() {
+        (terminal_rows.len(), first.cells.len())
+    } else {
+        (1usize, 0usize)
+    };
+    let mut damage = DamageRegion {
+        full_redraw: false,
+        dirty_rows: Vec::new(),
+        cols: term_cols,
+        dirty_cells: vec![false; term_rows.saturating_mul(term_cols)],
+    };
+    let screen_damage = state.tabs[active].app.terminal_take_damage();
+    damage.full_redraw = screen_damage.full_redraw;
+    damage.dirty_rows = screen_damage.dirty_rows.clone();
+    for row in &screen_damage.dirty_rows {
+        if let Some(render_row) = terminal_rows.get_mut(*row) {
+            render_row.dirty = true;
+        }
+        for col in 0..term_cols {
+            let idx = row.saturating_mul(term_cols).saturating_add(col);
+            if idx < damage.dirty_cells.len() {
+                damage.dirty_cells[idx] = true;
+            }
+        }
+    }
+    let terminal_damage = Arc::new(damage);
     state.tabs[active].last_terminal_text = terminal_text.clone();
     state.tabs[active].term_row_count = terminal_text.lines().count().max(1);
     // Underline only the link the cursor is currently hovering over.
@@ -287,6 +340,8 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     };
 
     RenderSnapshot {
+        terminal_rows,
+        terminal_damage,
         terminal_text,
         terminal_fg_colors,
         terminal_bg_colors,
