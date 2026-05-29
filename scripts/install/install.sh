@@ -74,14 +74,8 @@ download_to() {
 ensure_write_dir() {
     target_dir="$1"
     mkdir -p "$target_dir"
-    if [ -w "$target_dir" ]; then
-        printf ''
-    else
-        if have_cmd sudo; then
-            SUDO="sudo"
-        else
-            die "cannot write to ${target_dir} and sudo is not available"
-        fi
+    if [ ! -w "$target_dir" ] && ! have_cmd sudo; then
+        die "cannot write to ${target_dir} and sudo is not available"
     fi
 }
 
@@ -282,8 +276,6 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-SUDO=""
-
 if [ "$INSTALL_SCOPE" = "system" ]; then
     ensure_write_dir "$PREFIX"
 fi
@@ -297,7 +289,7 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
 script_dir="$(resolve_script_dir)"
-if [ -z "$FROM_ARCHIVE" ] && [ -f "$script_dir/teletipo" -o -d "$script_dir/Teletipo.app" ]; then
+if [ -z "$FROM_ARCHIVE" ] && { [ -f "$script_dir/teletipo" ] || [ -d "$script_dir/Teletipo.app" ]; }; then
     FROM_ARCHIVE="$script_dir"
 fi
 
@@ -354,7 +346,7 @@ if [ "$OS" = "Linux" ]; then
 elif [ "$OS" = "Darwin" ]; then
     if [ "$ENABLE_DESKTOP" = "yes" ]; then
         install_macos_app "$work_dir"
-    elif [ "$ENABLE_DESKTOP" = "auto" ] && [ -d "$work_dir/Teletipo.app" -o -d "$work_dir/teletipo-macos-app/Teletipo.app" ]; then
+    elif [ "$ENABLE_DESKTOP" = "auto" ] && { [ -d "$work_dir/Teletipo.app" ] || [ -d "$work_dir/teletipo-macos-app/Teletipo.app" ]; }; then
         install_macos_app "$work_dir"
     else
         install_macos_cli "$work_dir"

@@ -393,8 +393,11 @@ impl Drop for PortablePtySession {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_os = "windows"))]
     use super::PortablePtySession;
+    #[cfg(not(target_os = "windows"))]
     use crate::backend::PtyBackend;
+    #[cfg(not(target_os = "windows"))]
     use std::time::{Duration, Instant};
 
     #[test]
