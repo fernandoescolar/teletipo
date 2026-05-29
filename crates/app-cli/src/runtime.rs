@@ -159,13 +159,10 @@ impl GpuRuntimeState {
                 dead_tabs.push(i);
             }
         }
-        // Commit or discard pending commands based on shell-reported exit codes.
+        // Commit pending commands for every shell-reported exit code so failed
+        // commands remain available in history for quick retry.
         for (idx, code) in exit_codes {
-            if code == 0 {
-                self.commit_pending_cmd(idx);
-            } else {
-                self.tabs[idx].pending_cmd = None;
-            }
+            self.finalize_pending_cmd(idx, code);
         }
         if !resize_tabs.is_empty() {
             let lm = LayoutMetrics::new(
@@ -220,8 +217,8 @@ impl GpuRuntimeState {
     }
 
     /// Commit `pending_cmd` (if any) for `tab_idx` to history.
-    /// Called when the shell reports exit code 0 via OSC 133.
-    fn commit_pending_cmd(&mut self, tab_idx: usize) {
+    /// Called when the shell reports an exit code via OSC 133.
+    pub(crate) fn finalize_pending_cmd(&mut self, tab_idx: usize, _exit_code: i32) {
         let tab = &mut self.tabs[tab_idx];
         let Some(text) = tab.pending_cmd.take() else {
             return;

@@ -45,8 +45,8 @@ struct IntegrationSetup {
 }
 
 fn gui_shell_path() -> String {
-    let current = std::env::var("PATH")
-        .unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+    let current =
+        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
     format!(
         "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:{}",
         current
@@ -114,10 +114,13 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
 
             Some(IntegrationSetup {
                 extra_args: vec![],
-                env_vars: vec![(
-                    "ZDOTDIR".to_string(),
-                    integration_dir.to_string_lossy().into_owned(),
-                ), ("PATH".to_string(), gui_path)],
+                env_vars: vec![
+                    (
+                        "ZDOTDIR".to_string(),
+                        integration_dir.to_string_lossy().into_owned(),
+                    ),
+                    ("PATH".to_string(), gui_path),
+                ],
             })
         }
         "bash" => {
@@ -436,9 +439,9 @@ impl Drop for PortablePtySession {
 #[cfg(test)]
 mod tests {
     #[cfg(not(target_os = "windows"))]
-    use super::gui_shell_path;
-    #[cfg(not(target_os = "windows"))]
     use super::PortablePtySession;
+    #[cfg(not(target_os = "windows"))]
+    use super::gui_shell_path;
     #[cfg(not(target_os = "windows"))]
     use crate::backend::PtyBackend;
     #[cfg(not(target_os = "windows"))]
@@ -448,7 +451,11 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     fn gui_shell_path_prefers_homebrew_prefixes() {
         let path = gui_shell_path();
-        assert!(path.starts_with("/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:"));
+        assert!(
+            path.starts_with(
+                "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:"
+            )
+        );
     }
 
     #[test]
