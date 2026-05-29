@@ -2,8 +2,9 @@ Teletipo installers
 ==================
 
 Linux/macOS:
-  sh ./install.sh
+  sh ./install.sh            # macOS installs the desktop app by default
   sh ./install.sh --desktop
+  sh ./install.sh --no-desktop
   sh ./uninstall.sh
 
 Windows PowerShell:

@@ -40,6 +40,8 @@ To use my Starship preset:
 curl -fsSL https://github.com/fernandoescolar/teletipo/releases/latest/download/install.sh | sh
 ```
 
+On macOS, the installer now defaults to desktop mode. Use `--no-desktop` if you want the CLI-only install.
+
 Install as desktop app too:
 
 ```bash
