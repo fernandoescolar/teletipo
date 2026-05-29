@@ -8,8 +8,8 @@ license = "MIT OR Apache-2.0"
 editor-core = { path = "../editor-core" }
 terminal-core = { path = "../terminal-core" }
 terminal-pty = { path = "../terminal-pty" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

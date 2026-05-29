@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 platform-abstraction = { path = "../platform-abstraction" }
-winit = "0.29"
+winit = { workspace = true }
 
 [lints]
 workspace = true

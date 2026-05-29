@@ -5,9 +5,9 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-winit = "0.29"
+winit = { workspace = true }
 arboard = "3"
-tracing = "0.1"
+tracing = { workspace = true }
 
 [lints]
 workspace = true

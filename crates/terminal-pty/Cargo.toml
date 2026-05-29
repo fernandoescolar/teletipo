@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 portable-pty = "0.9"
-thiserror = "1"
+thiserror = { workspace = true }
 
 [lints]
 workspace = true

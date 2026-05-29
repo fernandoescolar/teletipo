@@ -11,14 +11,14 @@ terminal-pty = { path = "../terminal-pty" }
 render-wgpu = { path = "../render-wgpu" }
 ui = { path = "../ui" }
 clap = { version = "4", features = ["derive"] }
-anyhow = "1"
-winit = "0.29"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yaml = "0.9"
+anyhow = { workspace = true }
+winit = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 dirs = "5"
 toml = "0.8"
-fontdb = "0.23"
+fontdb = { workspace = true }
 self_update = { version = "0.44", default-features = false, features = [
     "archive-tar",
     "archive-zip",
@@ -28,7 +28,7 @@ self_update = { version = "0.44", default-features = false, features = [
     "rustls",
 ] }
 tracing = { workspace = true }
-thiserror = "1"
+thiserror = { workspace = true }
 
 [lints]
 workspace = true

@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 terminal-ansi = { path = "../terminal-ansi" }
 terminal-screen = { path = "../terminal-screen" }
-thiserror = "2"
+thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.5"

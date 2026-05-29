@@ -166,7 +166,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "terminal-pty",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "toml",
  "tracing",
  "ui",
@@ -2754,6 +2754,7 @@ name = "render-wgpu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "fontdb",
  "fontdue",
  "image",
@@ -2761,7 +2762,7 @@ dependencies = [
  "platform-abstraction",
  "pollster",
  "rustybuzz",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracing",
  "ttf-parser 0.25.1",
  "wgpu",
@@ -3475,7 +3476,7 @@ name = "terminal-pty"
 version = "0.1.0"
 dependencies = [
  "portable-pty",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
