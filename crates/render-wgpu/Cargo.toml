@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1"
+bytemuck = "1"
 fontdue = "0.7"
 fontdb = "0.23"
 platform-abstraction = { path = "../platform-abstraction" }

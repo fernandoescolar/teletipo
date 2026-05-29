@@ -70,11 +70,8 @@ fn fs_text(in: TextVertOut) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// # Safety
-/// `f32` has no invalid bit patterns.
-#[allow(unsafe_code)]
 pub(crate) fn floats_as_bytes(v: &[f32]) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 4) }
+    bytemuck::cast_slice(v)
 }
 
 /// Returns the number of terminal columns a character visually occupies.
