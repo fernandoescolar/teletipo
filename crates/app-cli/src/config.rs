@@ -226,8 +226,7 @@ impl UserConfig {
         match (section, key) {
             ("font", "size") => {
                 if let Ok(v) = value.parse::<f32>()
-                    && v > 4.0
-                    && v < 80.0
+                    && (FONT_SIZE_MIN..=FONT_SIZE_MAX).contains(&v)
                 {
                     self.font.size = v;
                     return true;
@@ -244,7 +243,7 @@ impl UserConfig {
             }
             ("padding", "horizontal") => {
                 if let Ok(v) = value.parse::<u32>()
-                    && v <= 100
+                    && v <= PADDING_MAX
                 {
                     self.padding.horizontal = v;
                     return true;
@@ -253,7 +252,7 @@ impl UserConfig {
             }
             ("padding", "vertical") => {
                 if let Ok(v) = value.parse::<u32>()
-                    && v <= 100
+                    && v <= PADDING_MAX
                 {
                     self.padding.vertical = v;
                     return true;
@@ -274,7 +273,7 @@ impl UserConfig {
                     return true;
                 }
                 if let Ok(v) = value.parse::<u32>()
-                    && v <= 500_000
+                    && v <= SCROLLBACK_LINES_MAX
                 {
                     self.terminal.scrollback_lines = v;
                     return true;
@@ -550,5 +549,33 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("teletipo-test.toml"));
+    }
+
+    #[test]
+    fn set_field_accepts_documented_maximums() {
+        let mut cfg = UserConfig::default();
+        assert!(cfg.set_field("font", "size", &FONT_SIZE_MAX.to_string()));
+        assert_eq!(cfg.font.size, FONT_SIZE_MAX);
+
+        assert!(cfg.set_field("padding", "horizontal", &PADDING_MAX.to_string()));
+        assert!(cfg.set_field("padding", "vertical", &PADDING_MAX.to_string()));
+        assert_eq!(cfg.padding.horizontal, PADDING_MAX);
+        assert_eq!(cfg.padding.vertical, PADDING_MAX);
+
+        assert!(cfg.set_field(
+            "terminal",
+            "scrollback_lines",
+            &SCROLLBACK_LINES_MAX.to_string()
+        ));
+        assert_eq!(cfg.terminal.scrollback_lines, SCROLLBACK_LINES_MAX);
+    }
+
+    #[test]
+    fn set_field_rejects_values_above_documented_maximums() {
+        let mut cfg = UserConfig::default();
+        assert!(!cfg.set_field("font", "size", "80.1"));
+        assert!(!cfg.set_field("padding", "horizontal", "201"));
+        assert!(!cfg.set_field("padding", "vertical", "201"));
+        assert!(!cfg.set_field("terminal", "scrollback_lines", "1000001"));
     }
 }

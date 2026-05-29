@@ -9,6 +9,11 @@ use std::fs;
 use std::path::PathBuf;
 use terminal_pty::PortablePtySession;
 
+pub(crate) const TERMINAL_ROWS_MIN: usize = 1;
+pub(crate) const TERMINAL_ROWS_MAX: usize = 1024;
+pub(crate) const TERMINAL_COLS_MIN: usize = 1;
+pub(crate) const TERMINAL_COLS_MAX: usize = 4096;
+
 // ── Font discovery ────────────────────────────────────────────────────────────
 
 /// A font family discovered on the machine.
@@ -170,6 +175,7 @@ pub(crate) fn build_initial_state(
     session: PersistentSession,
     update_rx: std::sync::mpsc::Receiver<Option<String>>,
 ) -> GpuRuntimeState {
+    let (rows, cols) = sanitize_terminal_size(rows, cols);
     let window_width = session.window_width;
     let window_height = session.window_height;
     let window_x = session.window_x.unwrap_or(0);
@@ -320,6 +326,21 @@ pub(crate) fn build_initial_state(
     state
 }
 
+pub(crate) fn sanitize_terminal_size(rows: usize, cols: usize) -> (usize, usize) {
+    let safe_rows = rows.clamp(TERMINAL_ROWS_MIN, TERMINAL_ROWS_MAX);
+    let safe_cols = cols.clamp(TERMINAL_COLS_MIN, TERMINAL_COLS_MAX);
+    if safe_rows != rows || safe_cols != cols {
+        tracing::warn!(
+            requested_rows = rows,
+            requested_cols = cols,
+            safe_rows,
+            safe_cols,
+            "terminal size out of bounds; clamped to safe range"
+        );
+    }
+    (safe_rows, safe_cols)
+}
+
 // ── Context menu ──────────────────────────────────────────────────────────────
 
 /// Execute the selected item from the tab context menu.
@@ -331,5 +352,28 @@ pub(crate) fn execute_context_menu_item(state: &mut GpuRuntimeState, tab_idx: us
         2 => state.move_tab_to(tab_idx, tab_idx.saturating_sub(1)),
         3 => state.move_tab_to(tab_idx, tab_idx + 2),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_terminal_size_keeps_in_range_values() {
+        assert_eq!(sanitize_terminal_size(24, 80), (24, 80));
+    }
+
+    #[test]
+    fn sanitize_terminal_size_clamps_low_values() {
+        assert_eq!(sanitize_terminal_size(0, 0), (TERMINAL_ROWS_MIN, TERMINAL_COLS_MIN));
+    }
+
+    #[test]
+    fn sanitize_terminal_size_clamps_high_values() {
+        assert_eq!(
+            sanitize_terminal_size(usize::MAX, usize::MAX),
+            (TERMINAL_ROWS_MAX, TERMINAL_COLS_MAX)
+        );
     }
 }

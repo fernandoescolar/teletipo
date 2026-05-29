@@ -3,7 +3,7 @@
 | # | Sev | Area | Location | Evidence | Why it matters | Fix | Fixed |
 |---|-----|------|---------|----------|----------------|-----|-------|
 | **SEC-1** | P0 | Security / supply chain | updater.rs, main.rs | `Update::configure()...update().ok()?` then `tx.send(try_update()).ok();`. `self_update` 0.44 with `ureq`+`rustls`, no minisign/sha256/pin, no rollback | A tampered GitHub release or rustls-trusted MITM silently replaces the running binary | Sign artifacts (minisign or sigstore), verify sig+sha256 pre-swap, keep `<exe>.bak`, surface failures in UI | |
-| **SEC-2** | P0 | Security / DoS | launch.rs | `App::new(rows, cols).expect("valid terminal size")` with rows/cols from user-writable session JSON | Crafted file → panic or multi-GB `Vec<Cell>` allocation | Clamp 1..=1024/1..=4096; warn + fall back to defaults | |
+| **SEC-2** | P0 | Security / DoS | launch.rs | `App::new(rows, cols).expect("valid terminal size")` with rows/cols from user-writable session JSON | Crafted file → panic or multi-GB `Vec<Cell>` allocation | Clamp 1..=1024/1..=4096; warn + fall back to defaults | Yes (T2) |
 | **SEC-3** | P0 | Security | Cargo.toml workspace lints `unsafe_code = "warn"`; cast at geometry.rs | `unsafe { slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*4) }` — preventable | One avoidable unsafe in a 1.3k-line file; policy is too permissive | `unsafe_code = "forbid"`, allow per-file in `window.rs`/`coords.rs`, replace cast with `bytemuck::cast_slice` | |
 | **LIC-1** | P0 | Legal | repo root | No LICENSE; no per-crate `license` field | Code is "all rights reserved" by default; CI publishes binaries but grants no rights to users | Add MIT OR Apache-2.0 + per-crate metadata | Yes (T13) |
 | **REL-1** | P1 | Reliability / observability | config.rs, theme.rs, launch.rs, lib.rs, terminal_backend.rs, updater.rs, session.rs | Pervasive `let _ =`, `.ok();`, `.ok()?`. Shell integration silently fails; PTY reader thread dies silently on `Err(_) => break`; Drop kills+waits silently | Users see "phantom" state; bad config silently reverts; PTY keystrokes vanish; updates fail invisibly | Convert each to `tracing::warn!/error!` with structured fields; surface critical paths in UI | |
@@ -36,7 +36,7 @@ Full per-task detail (steps, AC, tests, risks) lives in plan.md. Summary:
 | ID | Title | Type | Pri | Effort | Covers | Is done |
 |----|-------|------|-----|--------|--------|--------|
 | **T1**  | Sign & verify auto-update artifacts (minisign + sha256 + rollback + UI surfacing) | security | P0 | M | SEC-1 | |
-| **T2**  | Validate untrusted session + config bounds; clamp font/padding/scrollback | security | P0 | S | SEC-2, REL-1 (config silence) | |
+| **T2**  | Validate untrusted session + config bounds; clamp font/padding/scrollback | security | P0 | S | SEC-2, REL-1 (config silence) | Yes |
 | **T3**  | `unsafe_code = "forbid"` workspace-wide; replace geometry cast with `bytemuck` | security | P0 | S | SEC-3 | |
 | **T4**  | Replace `let _ =` / `.ok();` with `tracing` + PTY status surfacing in UI | reliability | P0 | M | REL-1, REL-3 | |
 | **T5**  | Centralise fallible `build_app()` factory; remove 5 production `.expect()`s | reliability | P1 | S | REL-2 | |

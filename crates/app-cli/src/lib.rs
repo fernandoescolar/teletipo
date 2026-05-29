@@ -20,7 +20,10 @@ pub mod updater;
 use app_orchestrator::App;
 use clap::Parser;
 use config::UserConfig;
-use launch::{FontEntry, build_initial_state, load_session, save_session, spawn_pty};
+use launch::{
+    FontEntry, build_initial_state, load_session, sanitize_terminal_size, save_session,
+    spawn_pty,
+};
 use platform_abstraction::default_shell;
 use render_wgpu::{FontConfig, RenderConfig, run_gpu_window_live_with_events_and_window};
 use std::cell::RefCell;
@@ -601,9 +604,10 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) -> std::process
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
     };
+    let (rows, cols) = sanitize_terminal_size(cli.rows, cli.cols);
     let state = Rc::new(RefCell::new(build_initial_state(
-        cli.rows,
-        cli.cols,
+        rows,
+        cols,
         cli.exec.as_deref(),
         &shell,
         session,
