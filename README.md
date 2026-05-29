@@ -165,8 +165,8 @@ Press `Tab` at the end of any line to open the suggestion popup, which shows his
 
 | Shortcut | Action |
 |---|---|
-| `Cmd + C` | Copy terminal selection or editor selection |
-| `Cmd + V` | Paste from clipboard |
+| `Cmd + C` / `Ctrl + Shift + C` | Copy terminal selection or editor selection (`Cmd` on macOS, `Ctrl + Shift` on Linux/Windows) |
+| `Cmd + V` / `Ctrl + Shift + V` | Paste from clipboard (`Cmd` on macOS, `Ctrl + Shift` on Linux/Windows) |
 
 ### Terminal scrollback
 
@@ -207,7 +207,7 @@ Press `Tab` at the end of any line to open the suggestion popup, which shows his
 | Action | Effect |
 |---|---|
 | Click + drag in terminal | Select text |
-| `Cmd + C` after selection | Copy selection |
+| Copy shortcut after selection | Copy selection (`Cmd + C` on macOS, `Ctrl + Shift + C` on Linux/Windows) |
 | Click search panel buttons | Previous match, next match, or close search |
 | Drag the split divider | Resize terminal / editor pane |
 | Drag the scrollbar | Scroll terminal or editor |

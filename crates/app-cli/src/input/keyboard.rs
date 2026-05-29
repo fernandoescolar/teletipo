@@ -316,6 +316,50 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             state.tab_mut().scroll_offset = prev.saturating_sub(5);
         }
 
+        Key::Character(ch) if is_copy_shortcut(state, ch.as_str()) => {
+            if let Some((start, end)) = state.tab().app.editor_selection() {
+                let editor_text = state.tab().app.editor_snapshot();
+                let selected = editor_text[start..end].to_string();
+                if !selected.is_empty() {
+                    state.shell_services.clipboard_set(selected);
+                }
+            } else if let (Some(anchor), Some(sel_end)) = (saved_terminal_anchor, saved_terminal_end)
+            {
+                // Adjust stored rows to the current scroll offset so that
+                // copy picks the correct text even after scrolling.
+                let current_scroll = state.tab().scroll_offset as i64;
+                let anchor_scroll = saved_anchor_scroll as i64;
+                let end_scroll = saved_end_scroll as i64;
+                let ar = (anchor.0 as i64 + current_scroll - anchor_scroll).max(0) as usize;
+                let er = (sel_end.0 as i64 + current_scroll - end_scroll).max(0) as usize;
+                let adjusted_anchor = (ar, anchor.1);
+                let adjusted_end = (er, sel_end.1);
+                let last_text = state.tab().last_terminal_text.clone();
+                let text = extract_selection(&last_text, adjusted_anchor, adjusted_end);
+                if !text.is_empty() {
+                    state.shell_services.clipboard_set(text);
+                }
+            }
+        }
+
+        Key::Character(ch) if is_paste_shortcut(state, ch.as_str()) => {
+            if let Some(text) = state.shell_services.clipboard_get() {
+                let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                if !normalized.is_empty() {
+                    if state.tab().app.is_alternate_screen() {
+                        if state.tab().app.bracketed_paste() {
+                            let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
+                            state.send_terminal_input(bracketed.as_bytes());
+                        } else {
+                            state.send_terminal_input(normalized.as_bytes());
+                        }
+                    } else {
+                        state.tab_mut().app.insert_editor_input(&normalized);
+                    }
+                }
+            }
+        }
+
         Key::Character(ch) if state.modifiers.super_down => {
             match ch.as_str() {
                 "," => {
@@ -323,49 +367,6 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                     state.settings.cursor = 0;
                     state.settings.edit_buf = None;
                     return;
-                }
-                "c" => {
-                    if let Some((start, end)) = state.tab().app.editor_selection() {
-                        let editor_text = state.tab().app.editor_snapshot();
-                        let selected = editor_text[start..end].to_string();
-                        if !selected.is_empty() {
-                            state.shell_services.clipboard_set(selected);
-                        }
-                    } else if let (Some(anchor), Some(sel_end)) =
-                        (saved_terminal_anchor, saved_terminal_end)
-                    {
-                        // Adjust stored rows to the current scroll offset so that
-                        // Cmd+C copies the correct text even after scrolling.
-                        let current_scroll = state.tab().scroll_offset as i64;
-                        let anchor_scroll = saved_anchor_scroll as i64;
-                        let end_scroll = saved_end_scroll as i64;
-                        let ar = (anchor.0 as i64 + current_scroll - anchor_scroll).max(0) as usize;
-                        let er = (sel_end.0 as i64 + current_scroll - end_scroll).max(0) as usize;
-                        let adjusted_anchor = (ar, anchor.1);
-                        let adjusted_end = (er, sel_end.1);
-                        let last_text = state.tab().last_terminal_text.clone();
-                        let text = extract_selection(&last_text, adjusted_anchor, adjusted_end);
-                        if !text.is_empty() {
-                            state.shell_services.clipboard_set(text);
-                        }
-                    }
-                }
-                "v" => {
-                    if let Some(text) = state.shell_services.clipboard_get() {
-                        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-                        if !normalized.is_empty() {
-                            if state.tab().app.is_alternate_screen() {
-                                if state.tab().app.bracketed_paste() {
-                                    let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
-                                    state.send_terminal_input(bracketed.as_bytes());
-                                } else {
-                                    state.send_terminal_input(normalized.as_bytes());
-                                }
-                            } else {
-                                state.tab_mut().app.insert_editor_input(&normalized);
-                            }
-                        }
-                    }
                 }
                 "a" => {
                     let end = state.tab().app.editor_snapshot().len();
@@ -628,5 +629,27 @@ fn handle_search_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyE
             }
         }
         _ => {}
+    }
+}
+
+fn is_copy_shortcut(state: &GpuRuntimeState, key: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        state.modifiers.super_down && key.eq_ignore_ascii_case("c")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        state.modifiers.ctrl_down && state.modifiers.shift_down && key.eq_ignore_ascii_case("c")
+    }
+}
+
+fn is_paste_shortcut(state: &GpuRuntimeState, key: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        state.modifiers.super_down && key.eq_ignore_ascii_case("v")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        state.modifiers.ctrl_down && state.modifiers.shift_down && key.eq_ignore_ascii_case("v")
     }
 }

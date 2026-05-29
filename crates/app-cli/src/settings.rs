@@ -38,6 +38,13 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
         return None;
     }
     let mut items: Vec<SettingsItem> = Vec::new();
+    items.push(SettingsItem {
+        is_header: true,
+        is_selectable: false,
+        is_searchable: false,
+        key: format!("[app] version: v{}", env!("CARGO_PKG_VERSION")),
+        value: String::new(),
+    });
     if let Some(ref err) = state.config_error {
         items.push(SettingsItem {
             is_header: true,
