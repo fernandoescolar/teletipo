@@ -316,7 +316,7 @@ pub enum ConfigError {
     Parse {
         path: PathBuf,
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 }
 
@@ -348,7 +348,7 @@ pub fn load_config_result() -> Result<UserConfig, ConfigError> {
     })?;
     let mut cfg: UserConfig = toml::from_str(&data).map_err(|source| ConfigError::Parse {
         path: path.clone(),
-        source,
+        source: Box::new(source),
     })?;
     cfg.validate();
     Ok(cfg)
@@ -536,7 +536,7 @@ mod tests {
             Ok(_) => panic!("expected parse error"),
             Err(source) => ConfigError::Parse {
                 path: path.clone(),
-                source,
+                source: Box::new(source),
             },
         };
         let msg = err.to_string();

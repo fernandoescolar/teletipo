@@ -28,7 +28,7 @@ app-cli = { path = "crates/app-cli" }
 tracing-subscriber = { workspace = true }
 
 [build-dependencies]
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 winres = "0.1"
 
 [profile.release]
