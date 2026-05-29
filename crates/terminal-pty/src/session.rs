@@ -44,6 +44,15 @@ struct IntegrationSetup {
     env_vars: Vec<(String, String)>,
 }
 
+fn gui_shell_path() -> String {
+    let current = std::env::var("PATH")
+        .unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+    format!(
+        "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:{}",
+        current
+    )
+}
+
 /// Writes per-shell integration scripts that make the shell emit
 /// `ESC ] 133 ; D ; <exit_code> BEL` before each prompt (OSC 133).
 /// Returns `None` if the shell is not supported or the files cannot be written.
@@ -76,11 +85,13 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
         "zsh" => {
             // The real dotfile directory (respects a pre-existing ZDOTDIR).
             let real_zdotdir = std::env::var("ZDOTDIR").unwrap_or_else(|_| home.clone());
+            let gui_path = gui_shell_path();
 
             // .zshenv – sourced for every zsh invocation (non-interactive too).
             let zshenv = format!(
                 "# Teletipo shell integration\n\
-                 [ -f '{real_zdotdir}/.zshenv' ] && source '{real_zdotdir}/.zshenv'\n"
+                 [ -f '{real_zdotdir}/.zshenv' ] && source '{real_zdotdir}/.zshenv'\n\
+                 export PATH='{gui_path}'\n"
             );
             if let Err(err) = std::fs::write(integration_dir.join(".zshenv"), zshenv) {
                 warn!(path = %integration_dir.join(".zshenv").display(), error = %err, "failed to write zsh shell integration file");
@@ -106,10 +117,11 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
                 env_vars: vec![(
                     "ZDOTDIR".to_string(),
                     integration_dir.to_string_lossy().into_owned(),
-                )],
+                ), ("PATH".to_string(), gui_path)],
             })
         }
         "bash" => {
+            let gui_path = gui_shell_path();
             // bash --rcfile lets us inject a custom init without --noprofile/--norc.
             let bashrc = format!(
                 "# Teletipo shell integration\n\
@@ -128,7 +140,7 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
                     "--rcfile".to_string(),
                     rcfile.to_string_lossy().into_owned(),
                 ],
-                env_vars: vec![],
+                env_vars: vec![("PATH".to_string(), gui_path)],
             })
         }
         _ => None,
@@ -424,11 +436,20 @@ impl Drop for PortablePtySession {
 #[cfg(test)]
 mod tests {
     #[cfg(not(target_os = "windows"))]
+    use super::gui_shell_path;
+    #[cfg(not(target_os = "windows"))]
     use super::PortablePtySession;
     #[cfg(not(target_os = "windows"))]
     use crate::backend::PtyBackend;
     #[cfg(not(target_os = "windows"))]
     use std::time::{Duration, Instant};
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn gui_shell_path_prefers_homebrew_prefixes() {
+        let path = gui_shell_path();
+        assert!(path.starts_with("/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:"));
+    }
 
     #[test]
     #[cfg(not(target_os = "windows"))]
