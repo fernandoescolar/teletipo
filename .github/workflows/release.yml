@@ -34,7 +34,7 @@ jobs:
           lipo -create \
             target/aarch64-apple-darwin/release/teletipo \
             target/x86_64-apple-darwin/release/teletipo \
-            -output dist/teletipo-macos-universal
+            -output dist/teletipo-macos-universal-bin
 
       - name: Build icons
         run: |
@@ -56,7 +56,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist/Teletipo.app/Contents/MacOS
           mkdir -p dist/Teletipo.app/Contents/Resources
-          cp dist/teletipo-macos-universal dist/Teletipo.app/Contents/MacOS/teletipo
+          cp dist/teletipo-macos-universal-bin dist/Teletipo.app/Contents/MacOS/teletipo
           chmod +x dist/Teletipo.app/Contents/MacOS/teletipo
           cp dist/Teletipo.icns dist/Teletipo.app/Contents/Resources/Teletipo.icns
           printf '%s\n' \
@@ -81,7 +81,7 @@ jobs:
 
       - name: Package archives
         run: |
-          cp dist/teletipo-macos-universal dist/teletipo
+          cp dist/teletipo-macos-universal-bin dist/teletipo
           mkdir -p dist/teletipo-macos-universal
           cp dist/teletipo dist/teletipo-macos-universal/teletipo
           cp scripts/install/install.sh dist/teletipo-macos-universal/install.sh
@@ -153,7 +153,7 @@ jobs:
   # ── Windows x86_64 (cross-compiled via MinGW) ──────────────────────────────
   build-windows:
     name: Build Windows x86_64
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -161,23 +161,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cross
-
       - name: Build
-        run: cross build --release -p teletipo --target x86_64-pc-windows-gnu
+        run: cargo build --release -p teletipo
 
       - name: Package
+        shell: pwsh
         run: |
-          PKG_DIR="dist/teletipo-windows-x86_64"
-          mkdir -p "$PKG_DIR"
-          cp target/x86_64-pc-windows-gnu/release/teletipo.exe "$PKG_DIR/teletipo.exe"
-          cp scripts/install/install.ps1 "$PKG_DIR/install.ps1"
-          cp scripts/install/uninstall.ps1 "$PKG_DIR/uninstall.ps1"
-          cp scripts/install/README-install.txt "$PKG_DIR/README-install.txt"
-          cd "$PKG_DIR"
-          zip -9 "$GITHUB_WORKSPACE/dist/teletipo-windows-x86_64.zip" teletipo.exe install.ps1 uninstall.ps1 README-install.txt
+          $pkgDir = "dist/teletipo-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
+          Copy-Item "target/release/teletipo.exe" "$pkgDir/teletipo.exe"
+          Copy-Item "scripts/install/install.ps1" "$pkgDir/install.ps1"
+          Copy-Item "scripts/install/uninstall.ps1" "$pkgDir/uninstall.ps1"
+          Copy-Item "scripts/install/README-install.txt" "$pkgDir/README-install.txt"
+          Compress-Archive -Path "$pkgDir/*" -DestinationPath "dist/teletipo-windows-x86_64.zip" -Force
 
       - uses: actions/upload-artifact@v4
         with:
