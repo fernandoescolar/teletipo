@@ -49,7 +49,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     if let Some(ref rx) = state.update_rx {
         match rx.try_recv() {
             Ok(result) => {
-                state.pending_update = result;
+                state.overlays.pending_update = result;
                 state.update_rx = None;
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -65,21 +65,22 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         let active = state.active_tab;
         state.tabs[active].scroll_offset = 0;
         // Reset cursor blink to visible whenever terminal output arrives.
-        state.cursor_blink_last = std::time::Instant::now();
-        state.cursor_blink_phase = true;
+        state.overlays.cursor_blink_last = std::time::Instant::now();
+        state.overlays.cursor_blink_phase = true;
     }
 
     // Advance cursor blink: toggle every 500 ms.
-    if state.cursor_blink_last.elapsed().as_millis() >= crate::consts::BLINK_HALF_MS {
-        state.cursor_blink_phase = !state.cursor_blink_phase;
-        state.cursor_blink_last = std::time::Instant::now();
+    if state.overlays.cursor_blink_last.elapsed().as_millis() >= crate::consts::BLINK_HALF_MS {
+        state.overlays.cursor_blink_phase = !state.overlays.cursor_blink_phase;
+        state.overlays.cursor_blink_last = std::time::Instant::now();
     }
 
     let active = state.active_tab;
     let scroll_offset = state.tabs[active].scroll_offset;
     let active_palette: Option<[[f32; 3]; 16]> = state
+        .themes_fonts
         .active_theme_idx
-        .map(|i| theme::build_ansi_palette(&state.available_themes[i]));
+        .map(|i| theme::build_ansi_palette(&state.themes_fonts.available_themes[i]));
     let styled = state.tabs[active]
         .app
         .terminal_styled_snapshot_at_offset_with_palette(scroll_offset, active_palette.as_ref());
@@ -103,13 +104,13 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             let pad_v = state.user_config.padding.vertical as f32;
             let term_row_count = state.tabs[active].term_row_count;
             if let Some((hover_row, hover_col)) = cursor_to_terminal_cell(
-                state.cursor_x,
-                state.cursor_y,
-                state.window_width,
-                state.window_height,
+                state.cursor.cursor_x,
+                state.cursor.cursor_y,
+                state.layout.window_width,
+                state.layout.window_height,
                 split_ratio,
-                state.cell_w,
-                state.cell_h,
+                state.layout.cell_w,
+                state.layout.cell_h,
                 term_row_count,
                 tab_bar_h,
                 pad_h,
@@ -185,13 +186,13 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let selection_end_scroll = state.tabs[active].selection_end_scroll;
     let current_scroll = state.tabs[active].scroll_offset;
 
-    let resize_overlay = if let Some(ref v) = state.pending_update {
+    let resize_overlay = if let Some(ref v) = state.overlays.pending_update {
         Some(format!("Updated to v{v} \u{2014} restart to apply"))
-    } else if let Some((ref t, cols, rows)) = state.last_resize {
+    } else if let Some((ref t, cols, rows)) = state.overlays.last_resize {
         if t.elapsed().as_secs_f32() < 1.0 {
             Some(format!("{cols}\u{d7}{rows}"))
         } else {
-            state.last_resize = None;
+            state.overlays.last_resize = None;
             None
         }
     } else {
@@ -237,15 +238,15 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     };
     let active_tab = state.active_tab;
 
-    let tab_drag_insert_before = state.tab_drag.and_then(|_| {
+    let tab_drag_insert_before = state.drag.tab_drag.and_then(|_| {
         if state.tabs.len() <= 1 {
             return None;
         }
-        if (state.cursor_x - state.tab_drag_start_x).abs() > 5.0 {
+        if (state.cursor.cursor_x - state.drag.tab_drag_start_x).abs() > 5.0 {
             let n = state.tabs.len();
-            let add_btn_w = state.cell_w as f64 * 2.0;
-            let tab_area_w = (state.window_width as f64 - add_btn_w).max(1.0);
-            let frac = (state.cursor_x / tab_area_w).clamp(0.0, 1.0);
+            let add_btn_w = state.layout.cell_w as f64 * 2.0;
+            let tab_area_w = (state.layout.window_width as f64 - add_btn_w).max(1.0);
+            let frac = (state.cursor.cursor_x / tab_area_w).clamp(0.0, 1.0);
             Some((frac * n as f64).round() as usize)
         } else {
             None
@@ -254,12 +255,13 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
 
     let tab_context_menu = if state.tabs.len() > 1 {
         state
+            .overlays
             .tab_context_menu
             .map(|(tab_idx, x_px, y_px)| TabContextMenu {
                 tab_idx,
                 x_px: x_px as f32,
                 y_px: y_px as f32,
-                hovered_item: state.tab_context_hover,
+                hovered_item: state.overlays.tab_context_hover,
             })
     } else {
         None
@@ -284,10 +286,13 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         tab_labels,
         active_tab,
         tab_context_menu,
-        tab_drag_from: state.tab_drag,
+        tab_drag_from: state.drag.tab_drag,
         tab_drag_insert_before,
         theme: {
-            let tf = state.active_theme_idx.map(|i| &state.available_themes[i]);
+            let tf = state
+                .themes_fonts
+                .active_theme_idx
+                .map(|i| &state.themes_fonts.available_themes[i]);
             theme_from_config(tf)
         },
         padding_h: state.user_config.padding.horizontal,
@@ -312,9 +317,10 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         request_exit: state.should_exit,
         cursor_shape: state.tabs[active].app.cursor_shape(),
         bell_active: state
+            .overlays
             .bell_flash_until
             .is_some_and(|t| t > std::time::Instant::now()),
-        cursor_blink_on: state.cursor_blink_phase,
+        cursor_blink_on: state.overlays.cursor_blink_phase,
         terminal_cursor_row: state.tabs[active].app.terminal_cursor_pos().0,
         terminal_cursor_col: state.tabs[active].app.terminal_cursor_pos().1,
         terminal_fullscreen: state.tabs[active].was_terminal_fullscreen,

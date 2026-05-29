@@ -3,12 +3,14 @@ mod platform;
 mod traits;
 mod types;
 
-pub use impls::{BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryClipboard, MemoryIme};
+pub use impls::{
+    BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryClipboard, MemoryIme, SystemClipboard,
+};
 pub use platform::{
     NativePlatformServices, PlatformServices, current_platform, default_shell,
     detect_display_backend, detect_display_backend_from, native_services,
 };
-pub use traits::{Accessibility, Clipboard, DpiAwareness, FontFallback, Ime};
+pub use traits::{Accessibility, Clipboard, DpiAwareness, FontFallback, Ime, WindowControl};
 pub use types::{AppWindowEvent, DisplayBackend, PlatformKind};
 
 #[cfg(target_os = "linux")]

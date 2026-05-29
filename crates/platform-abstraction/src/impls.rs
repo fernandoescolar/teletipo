@@ -1,8 +1,65 @@
+use std::sync::Mutex;
+
 use crate::traits::{Accessibility, Clipboard, DpiAwareness, FontFallback, Ime};
 
 #[derive(Default)]
 pub struct MemoryClipboard {
     content: Option<String>,
+}
+
+/// Real system clipboard backed by [`arboard`]. The underlying handle is
+/// created lazily on first use and re-used across calls (creating a fresh
+/// `arboard::Clipboard` per access is expensive on macOS).
+///
+/// If `arboard::Clipboard::new()` fails (e.g. headless CI, no display server)
+/// the failure is sticky: subsequent calls silently no-op rather than retrying
+/// every invocation.
+#[derive(Default)]
+pub struct SystemClipboard {
+    inner: Mutex<SystemClipboardInner>,
+}
+
+#[derive(Default)]
+struct SystemClipboardInner {
+    handle: Option<arboard::Clipboard>,
+    failed: bool,
+}
+
+impl SystemClipboardInner {
+    /// Lazy-init wrapper. Returns `None` once a previous init attempt failed.
+    fn handle_mut(&mut self) -> Option<&mut arboard::Clipboard> {
+        if self.failed {
+            return None;
+        }
+        if self.handle.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(cb) => self.handle = Some(cb),
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to initialise system clipboard");
+                    self.failed = true;
+                    return None;
+                }
+            }
+        }
+        self.handle.as_mut()
+    }
+}
+
+impl Clipboard for SystemClipboard {
+    fn get(&self) -> Option<String> {
+        let mut guard = self.inner.lock().ok()?;
+        let cb = guard.handle_mut()?;
+        cb.get_text().ok()
+    }
+
+    fn set(&mut self, text: String) {
+        let Ok(mut guard) = self.inner.lock() else {
+            return;
+        };
+        if let Some(cb) = guard.handle_mut() {
+            let _ = cb.set_text(text);
+        }
+    }
 }
 
 #[derive(Default)]

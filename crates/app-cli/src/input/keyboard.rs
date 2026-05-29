@@ -35,11 +35,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
 
     // In alternate-screen fullscreen mode (vim/less/htop), route typing and
     // navigation keys directly to the terminal PTY instead of the command editor.
-    if state.tab().app.is_alternate_screen() && !state.super_down {
+    if state.tab().app.is_alternate_screen() && !state.modifiers.super_down {
         let app_cursor = state.tab().app.application_cursor_keys();
         match &key_event.logical_key {
             // Keep settings shortcut available even in fullscreen mode.
-            Key::Character(ch) if state.ctrl_down && ch.as_str() == "," => {}
+            Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "," => {}
             Key::Named(NamedKey::Escape) => {
                 state.send_terminal_input(b"\x1b");
                 return;
@@ -136,7 +136,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 state.send_terminal_input(b"\x1b[24~");
                 return;
             }
-            Key::Character(ch) if state.ctrl_down => {
+            Key::Character(ch) if state.modifiers.ctrl_down => {
                 if let Some(c) = ch.as_str().chars().next() {
                     let lo = c.to_ascii_lowercase();
                     if lo.is_ascii_lowercase() {
@@ -203,7 +203,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 | NamedKey::CapsLock,
         )
     );
-    if !state.super_down && !state.ctrl_down && !is_modifier_key {
+    if !state.modifiers.super_down && !state.modifiers.ctrl_down && !is_modifier_key {
         let active = state.active_tab;
         state.tabs[active].selection_anchor = None;
         state.tabs[active].selection_end = None;
@@ -223,7 +223,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         Key::Named(NamedKey::Tab) => {
             // If the popup is already open and Tab (without Shift) is pressed,
             // confirm the highlighted entry: fill the editor and close the dropdown.
-            if cycling && !state.shift_down {
+            if cycling && !state.modifiers.shift_down {
                 let prefix = state.tabs[state.active_tab]
                     .suggestion_prefix
                     .clone()
@@ -280,7 +280,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
 
             let n = matches.len();
             let current_idx = state.tabs[state.active_tab].suggestion_index;
-            let new_idx = if state.shift_down {
+            let new_idx = if state.modifiers.shift_down {
                 // Shift+Tab: cycle backward.
                 match current_idx {
                     None | Some(0) => n - 1,
@@ -309,7 +309,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             state.tab_mut().scroll_offset = prev.saturating_sub(5);
         }
 
-        Key::Character(ch) if state.super_down => {
+        Key::Character(ch) if state.modifiers.super_down => {
             match ch.as_str() {
                 "," => {
                     state.settings.open = true;
@@ -387,13 +387,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             }
         }
 
-        Key::Character(ch) if state.ctrl_down && ch.as_str() == "," => {
+        Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "," => {
             state.settings.open = true;
             state.settings.cursor = 0;
             state.settings.edit_buf = None;
         }
 
-        Key::Character(ch) if state.ctrl_down => {
+        Key::Character(ch) if state.modifiers.ctrl_down => {
             if let Some(c) = ch.as_str().chars().next() {
                 let lo = c.to_ascii_lowercase();
                 if lo.is_ascii_lowercase() {
@@ -409,7 +409,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         }
 
         Key::Named(NamedKey::Enter) => {
-            if cycling && !state.shift_down {
+            if cycling && !state.modifiers.shift_down {
                 // Confirm: fill the editor with the selected match before submitting.
                 let prefix = state.tabs[state.active_tab]
                     .suggestion_prefix
@@ -436,7 +436,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 state.tabs[state.active_tab].suggestion_prefix = None;
                 state.tabs[state.active_tab].suggestion_index = None;
             }
-            if state.shift_down {
+            if state.modifiers.shift_down {
                 state.tab_mut().app.insert_editor_input("\n");
             } else {
                 state.tab_mut().scroll_offset = 0;
@@ -469,11 +469,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             state.tab_mut().app.editor_delete_forward();
         }
         Key::Named(NamedKey::ArrowLeft) => {
-            let extend = state.shift_down;
+            let extend = state.modifiers.shift_down;
             state.tab_mut().app.editor_move_cursor_left(extend);
         }
         Key::Named(NamedKey::ArrowRight) => {
-            let extend = state.shift_down;
+            let extend = state.modifiers.shift_down;
             state.tab_mut().app.editor_move_cursor_right(extend);
         }
         Key::Named(NamedKey::ArrowUp) => {
@@ -499,11 +499,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 let text = state.tab().app.editor_snapshot();
                 let offset = state.tab().app.editor_cursor_offset();
                 let (row, col) = editor_cursor_row_col(&text, offset);
-                if row == 0 && !state.shift_down {
+                if row == 0 && !state.modifiers.shift_down {
                     state.history_prev();
                 } else if row > 0 {
                     let new_offset = editor_row_col_to_offset(&text, row - 1, col);
-                    let extend = state.shift_down;
+                    let extend = state.modifiers.shift_down;
                     state.tab_mut().app.set_editor_cursor(new_offset, extend);
                 }
             }
@@ -532,21 +532,21 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 let offset = state.tab().app.editor_cursor_offset();
                 let (row, col) = editor_cursor_row_col(&text, offset);
                 let last_row = text.lines().count().saturating_sub(1);
-                if row >= last_row && !state.shift_down {
+                if row >= last_row && !state.modifiers.shift_down {
                     state.history_next();
                 } else if row < last_row {
                     let new_offset = editor_row_col_to_offset(&text, row + 1, col);
-                    let extend = state.shift_down;
+                    let extend = state.modifiers.shift_down;
                     state.tab_mut().app.set_editor_cursor(new_offset, extend);
                 }
             }
         }
         Key::Named(NamedKey::Home) => {
-            let extend = state.shift_down;
+            let extend = state.modifiers.shift_down;
             state.tab_mut().app.set_editor_cursor(0, extend);
         }
         Key::Named(NamedKey::End) => {
-            let extend = state.shift_down;
+            let extend = state.modifiers.shift_down;
             let end = state.tab().app.editor_snapshot().len();
             state.tab_mut().app.set_editor_cursor(end, extend);
         }

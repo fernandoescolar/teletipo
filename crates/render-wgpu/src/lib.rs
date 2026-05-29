@@ -22,4 +22,7 @@ pub use types::{
     RenderConfig, RenderSnapshot, RenderStats, SettingsItem, SettingsOverlay, SuggestionDropdown,
     TabContextMenu, TerminalLink, VsyncMode, default_ansi_palette,
 };
-pub use window::{run_gpu_window, run_gpu_window_live, run_gpu_window_live_with_events};
+pub use window::{
+    run_gpu_window, run_gpu_window_live, run_gpu_window_live_with_events,
+    run_gpu_window_live_with_events_and_window,
+};

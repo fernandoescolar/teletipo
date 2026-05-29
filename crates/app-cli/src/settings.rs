@@ -43,8 +43,9 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
         let is_selectable = is_searchable || numeric_step(field.section, field.key).is_some();
         let value = if field.section == "font" && field.key == "family" {
             state
+                .themes_fonts
                 .available_fonts
-                .get(state.active_font_idx)
+                .get(state.themes_fonts.active_font_idx)
                 .map(|f| f.family.clone())
                 .unwrap_or_else(|| "(default)".to_owned())
         } else {
@@ -66,6 +67,7 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
             let field = &SETTINGS_FIELDS[state.settings.cursor];
             let matches: Vec<String> = if field.section == "font" && field.key == "family" {
                 state
+                    .themes_fonts
                     .available_fonts
                     .iter()
                     .filter(|f| f.family.to_lowercase().contains(&q))
@@ -73,6 +75,7 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
                     .collect()
             } else if field.key == "theme" {
                 state
+                    .themes_fonts
                     .available_themes
                     .iter()
                     .filter(|t| t.name.to_lowercase().contains(&q))
@@ -191,9 +194,9 @@ pub(crate) fn handle_settings_key(
         Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
             let is_right = matches!(&key_event.logical_key, Key::Named(NamedKey::ArrowRight));
             let field = &SETTINGS_FIELDS[state.settings.cursor];
-            if field.key == "theme" && !state.available_themes.is_empty() {
-                let n = state.available_themes.len();
-                let cur = state.active_theme_idx.unwrap_or(0);
+            if field.key == "theme" && !state.themes_fonts.available_themes.is_empty() {
+                let n = state.themes_fonts.available_themes.len();
+                let cur = state.themes_fonts.active_theme_idx.unwrap_or(0);
                 let next = if is_right {
                     (cur + 1) % n
                 } else if cur == 0 {
@@ -201,16 +204,16 @@ pub(crate) fn handle_settings_key(
                 } else {
                     cur - 1
                 };
-                state.active_theme_idx = Some(next);
-                let tf = state.available_themes[next].clone();
+                state.themes_fonts.active_theme_idx = Some(next);
+                let tf = state.themes_fonts.available_themes[next].clone();
                 apply_theme_file(&mut state.user_config, &tf);
                 state.settings.dirty = true;
             } else if field.section == "font"
                 && field.key == "family"
-                && !state.available_fonts.is_empty()
+                && !state.themes_fonts.available_fonts.is_empty()
             {
-                let n = state.available_fonts.len();
-                let cur = state.active_font_idx;
+                let n = state.themes_fonts.available_fonts.len();
+                let cur = state.themes_fonts.active_font_idx;
                 let next = if is_right {
                     (cur + 1) % n
                 } else if cur == 0 {
@@ -218,11 +221,11 @@ pub(crate) fn handle_settings_key(
                 } else {
                     cur - 1
                 };
-                state.active_font_idx = next;
+                state.themes_fonts.active_font_idx = next;
                 state.user_config.font.family = if next == 0 {
                     None
                 } else {
-                    Some(state.available_fonts[next].family.clone())
+                    Some(state.themes_fonts.available_fonts[next].family.clone())
                 };
                 state.settings.dirty = true;
             } else if let Some(step) = numeric_step(field.section, field.key) {
@@ -276,7 +279,7 @@ pub(crate) fn handle_settings_key(
                 buf.pop();
             }
         }
-        Key::Character(ch) if state.super_down && ch.as_str() == "s" => {
+        Key::Character(ch) if state.modifiers.super_down && ch.as_str() == "s" => {
             // Explicit Cmd+S: flush any open edit buffer then save.
             if let Some(buf) = state.settings.edit_buf.take() {
                 let field = &SETTINGS_FIELDS[state.settings.cursor];
@@ -317,12 +320,14 @@ fn search_match_count(state: &GpuRuntimeState) -> usize {
     let field = &SETTINGS_FIELDS[state.settings.cursor];
     if field.section == "font" && field.key == "family" {
         state
+            .themes_fonts
             .available_fonts
             .iter()
             .filter(|f| f.family.to_lowercase().contains(&buf))
             .count()
     } else if field.key == "theme" {
         state
+            .themes_fonts
             .available_themes
             .iter()
             .filter(|t| t.name.to_lowercase().contains(&buf))
@@ -357,6 +362,7 @@ fn confirm_search_selection(state: &mut GpuRuntimeState) {
     let field = &SETTINGS_FIELDS[state.settings.cursor];
     if field.section == "font" && field.key == "family" {
         let matches: Vec<String> = state
+            .themes_fonts
             .available_fonts
             .iter()
             .filter(|f| f.family.to_lowercase().contains(&buf))
@@ -364,16 +370,18 @@ fn confirm_search_selection(state: &mut GpuRuntimeState) {
             .collect();
         if let Some(family) = matches.get(state.settings.search_selected)
             && let Some(idx) = state
+                .themes_fonts
                 .available_fonts
                 .iter()
                 .position(|f| &f.family == family)
         {
-            state.active_font_idx = idx;
+            state.themes_fonts.active_font_idx = idx;
             state.user_config.font.family = if idx == 0 { None } else { Some(family.clone()) };
             state.settings.dirty = true;
         }
     } else if field.key == "theme" {
         let matches: Vec<String> = state
+            .themes_fonts
             .available_themes
             .iter()
             .filter(|t| t.name.to_lowercase().contains(&buf))
@@ -381,12 +389,13 @@ fn confirm_search_selection(state: &mut GpuRuntimeState) {
             .collect();
         if let Some(theme_name) = matches.get(state.settings.search_selected)
             && let Some(idx) = state
+                .themes_fonts
                 .available_themes
                 .iter()
                 .position(|t| &t.name == theme_name)
         {
-            state.active_theme_idx = Some(idx);
-            let tf = state.available_themes[idx].clone();
+            state.themes_fonts.active_theme_idx = Some(idx);
+            let tf = state.themes_fonts.available_themes[idx].clone();
             apply_theme_file(&mut state.user_config, &tf);
             state.settings.dirty = true;
         }

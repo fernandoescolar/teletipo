@@ -13,6 +13,7 @@ use crate::error::RenderError;
 use crate::geometry::snapshot_to_ime_area;
 use crate::pipeline::GpuState;
 use crate::types::{AppWindowEvent, RenderConfig, RenderSnapshot};
+use platform_abstraction::WindowControl;
 
 type Result<T> = std::result::Result<T, RenderError>;
 
@@ -122,14 +123,82 @@ where
     run_gpu_window_live_with_events(next_snapshot, |_| {}, config)
 }
 
+/// [`WindowControl`] implementation backed by a `'static` reference to the
+/// winit [`Window`] owned by the event loop. Constructed once during
+/// [`run_gpu_window_live_with_events_and_window`] startup and passed to the
+/// caller-supplied `on_window_ready` callback before the loop starts pumping
+/// events.
+struct WinitWindowControl {
+    window: &'static Window,
+}
+
+impl WindowControl for WinitWindowControl {
+    fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
+    fn set_title(&self, title: &str) {
+        self.window.set_title(title);
+    }
+
+    fn open_url(&self, url: &str) {
+        // Only allow well-known safe URL schemes to avoid passing arbitrary
+        // strings (e.g. shell metacharacters) to the OS "open" handler.
+        const ALLOWED_PREFIXES: &[&str] = &["http://", "https://", "file://", "mailto:", "ftp://"];
+        if !ALLOWED_PREFIXES.iter().any(|p| url.starts_with(p)) {
+            tracing::warn!(url, "refusing to open URL with disallowed scheme");
+            return;
+        }
+        let result = {
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("open").arg(url).spawn()
+            }
+            #[cfg(target_os = "linux")]
+            {
+                std::process::Command::new("xdg-open").arg(url).spawn()
+            }
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new("cmd")
+                    .args(["/C", "start", "", url])
+                    .spawn()
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+            {
+                Err::<std::process::Child, std::io::Error>(std::io::Error::other(
+                    "unsupported platform",
+                ))
+            }
+        };
+        if let Err(err) = result {
+            tracing::warn!(error = %err, url, "failed to open URL");
+        }
+    }
+}
+
 pub fn run_gpu_window_live_with_events<F, E>(
-    mut next_snapshot: F,
-    mut on_event: E,
+    next_snapshot: F,
+    on_event: E,
     config: RenderConfig,
 ) -> Result<()>
 where
     F: 'static + FnMut() -> RenderSnapshot,
     E: 'static + FnMut(AppWindowEvent),
+{
+    run_gpu_window_live_with_events_and_window(next_snapshot, on_event, |_| {}, config)
+}
+
+pub fn run_gpu_window_live_with_events_and_window<F, E, W>(
+    mut next_snapshot: F,
+    mut on_event: E,
+    on_window_ready: W,
+    config: RenderConfig,
+) -> Result<()>
+where
+    F: 'static + FnMut() -> RenderSnapshot,
+    E: 'static + FnMut(AppWindowEvent),
+    W: FnOnce(Box<dyn WindowControl>),
 {
     let initial = next_snapshot();
     let event_loop = EventLoop::new().map_err(RenderError::event_loop)?;
@@ -154,6 +223,7 @@ where
     };
     let window: &'static Window = Box::leak(Box::new(window));
     window.set_ime_allowed(true);
+    on_window_ready(Box::new(WinitWindowControl { window }));
     #[cfg(target_os = "macos")]
     apply_app_icon();
     #[cfg(target_os = "macos")]

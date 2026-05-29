@@ -22,7 +22,7 @@ use clap::Parser;
 use config::UserConfig;
 use launch::{FontEntry, build_initial_state, load_session, save_session, spawn_pty};
 use platform_abstraction::default_shell;
-use render_wgpu::{FontConfig, RenderConfig, run_gpu_window_live_with_events};
+use render_wgpu::{FontConfig, RenderConfig, run_gpu_window_live_with_events_and_window};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
@@ -89,74 +89,129 @@ struct SettingsUiState {
     search_scroll_offset: usize,
 }
 
+/// Currently held keyboard modifier keys, refreshed on every
+/// [`winit::event::WindowEvent::ModifiersChanged`].
+#[derive(Default)]
+pub(crate) struct ModifierState {
+    pub(crate) ctrl_down: bool,
+    /// Whether the Super/Command key (⌘ on macOS) is currently held.
+    pub(crate) super_down: bool,
+    pub(crate) shift_down: bool,
+}
+
+/// State for the various pointer-driven drag interactions (separator,
+/// scrollbars, tab reorder). All fields default to a neutral "no drag in
+/// progress" state.
+#[derive(Default)]
+pub(crate) struct DragState {
+    /// Whether the user is currently dragging the separator bar.
+    pub(crate) dragging_separator: bool,
+    /// Whether the user is currently dragging the terminal scrollbar thumb.
+    pub(crate) dragging_terminal_scrollbar: bool,
+    /// Whether the user is currently dragging the editor scrollbar thumb.
+    pub(crate) dragging_editor_scrollbar: bool,
+    /// Index of the tab being dragged, if any.
+    pub(crate) tab_drag: Option<usize>,
+    /// Cursor x position at the moment the tab drag began.
+    pub(crate) tab_drag_start_x: f64,
+}
+
+/// Last known cursor position and held mouse button. Updated on
+/// [`winit::event::WindowEvent::CursorMoved`] and `MouseInput`.
+#[derive(Default)]
+pub(crate) struct CursorState {
+    pub(crate) cursor_x: f64,
+    pub(crate) cursor_y: f64,
+    /// Which mouse button (0=left, 1=mid, 2=right) is currently held, for
+    /// motion-reporting passthrough to the PTY (modes 1002/1003).
+    pub(crate) mouse_btn_held: Option<u8>,
+}
+
+/// Window geometry plus the renderer's reported per-cell physical pixel size.
+/// Updated on `Resized`, `WindowMoved`, and `ScaleFactorChanged` events.
+pub(crate) struct LayoutState {
+    pub(crate) window_width: u32,
+    pub(crate) window_height: u32,
+    /// Last known window top-left position in physical pixels.
+    pub(crate) window_x: i32,
+    pub(crate) window_y: i32,
+    /// Current display scale factor (1.0 on standard, 2.0 on Retina, etc.).
+    pub(crate) scale_factor: f64,
+    /// Actual physical-pixel cell dimensions from the renderer font.
+    pub(crate) cell_w: f32,
+    pub(crate) cell_h: f32,
+}
+
+/// Transient UI overlay state: cursor blink, BEL flash, last-resize hint,
+/// update-available banner, and right-click tab context menu.
+pub(crate) struct OverlayState {
+    /// Time and dimensions of the last PTY resize, shown as an overlay for 1 s.
+    pub(crate) last_resize: Option<(Instant, u16, u16)>,
+    /// Context menu opened by right-clicking a tab. (tab_idx, menu_x_px, menu_y_px)
+    pub(crate) tab_context_menu: Option<(usize, f64, f64)>,
+    /// Currently highlighted item inside the open context menu (0-3).
+    pub(crate) tab_context_hover: Option<usize>,
+    /// Set to `Some(version)` once a newer release is detected on GitHub.
+    pub(crate) pending_update: Option<String>,
+    /// When `Some`, flash the terminal background as a visual BEL indicator
+    /// until the contained `Instant`.
+    pub(crate) bell_flash_until: Option<Instant>,
+    /// Time the cursor blink half-cycle last toggled.
+    pub(crate) cursor_blink_last: Instant,
+    /// `true` = cursor visible (on-phase); `false` = cursor hidden (off-phase).
+    pub(crate) cursor_blink_phase: bool,
+}
+
+impl Default for OverlayState {
+    fn default() -> Self {
+        Self {
+            last_resize: None,
+            tab_context_menu: None,
+            tab_context_hover: None,
+            pending_update: None,
+            bell_flash_until: None,
+            cursor_blink_last: Instant::now(),
+            cursor_blink_phase: true,
+        }
+    }
+}
+
+/// Theme and font catalogues discovered at startup plus the index of the
+/// currently active preset (if any).
+#[derive(Default)]
+pub(crate) struct ThemeFontState {
+    /// All theme files discovered at startup (sorted by name).
+    pub(crate) available_themes: Vec<theme::ThemeFile>,
+    /// Index into `available_themes` of the currently active preset, or `None`
+    /// when the user is using custom colors.
+    pub(crate) active_theme_idx: Option<usize>,
+    /// All font families discovered at startup (index 0 = "(default)").
+    pub(crate) available_fonts: Vec<FontEntry>,
+    /// Index into `available_fonts` of the currently selected font.
+    /// 0 means "(default)", i.e. no font family override.
+    pub(crate) active_font_idx: usize,
+}
+
 struct GpuRuntimeState {
     tabs: Vec<TabState>,
     active_tab: usize,
     /// Shell executable used to spawn new PTY sessions.
     shell: String,
-    ctrl_down: bool,
-    /// Whether the Super/Command key (⌘ on macOS) is currently held.
-    super_down: bool,
-    window_width: u32,
-    window_height: u32,
-    /// Last known window top-left position in physical pixels (updated on WindowMoved).
-    window_x: i32,
-    window_y: i32,
-    /// Current display scale factor (1.0 on standard, 2.0 on Retina, etc.).
-    scale_factor: f64,
-    cursor_x: f64,
-    cursor_y: f64,
-    /// Whether the user is currently dragging the separator bar.
-    dragging_separator: bool,
-    /// Whether the user is currently dragging the terminal scrollbar thumb.
-    dragging_terminal_scrollbar: bool,
-    /// Whether the user is currently dragging the editor scrollbar thumb.
-    dragging_editor_scrollbar: bool,
-    /// Time and dimensions of the last PTY resize, shown as an overlay for 1 s.
-    last_resize: Option<(Instant, u16, u16)>,
-    /// Whether the Shift key is currently held.
-    shift_down: bool,
-    /// Actual physical-pixel cell dimensions from the renderer font (updated on Resized).
-    cell_w: f32,
-    cell_h: f32,
-    /// Tab drag-and-drop state.
-    tab_drag: Option<usize>, // index of the tab being dragged
-    tab_drag_start_x: f64, // cursor x at the moment the drag began
-    /// Context menu opened by right-clicking a tab. (tab_idx, menu_x_px, menu_y_px)
-    tab_context_menu: Option<(usize, f64, f64)>,
-    /// Currently highlighted item inside the open context menu (0-3).
-    tab_context_hover: Option<usize>,
+    modifiers: ModifierState,
+    layout: LayoutState,
+    cursor: CursorState,
+    drag: DragState,
+    overlays: OverlayState,
     /// Loaded user configuration (applied per frame to the render snapshot).
     user_config: UserConfig,
-    /// All theme files discovered at startup (sorted by name).
-    available_themes: Vec<theme::ThemeFile>,
-    /// Index into `available_themes` of the currently active preset, or `None`
-    /// when the user is using custom colors.
-    active_theme_idx: Option<usize>,
-    /// All font families discovered at startup (index 0 = "(default)").
-    available_fonts: Vec<FontEntry>,
-    /// Index into `available_fonts` of the currently selected font.
-    /// 0 means "(default)", i.e. no font family override.
-    active_font_idx: usize,
+    themes_fonts: ThemeFontState,
     /// Receiver for the background update-check result (consumed once after the
     /// check completes; set to `None` afterwards).
     update_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
-    /// Set to `Some(version)` once a newer release is detected on GitHub.
-    pending_update: Option<String>,
     /// Settings overlay interaction state.
     settings: SettingsUiState,
     /// Set to `true` when the last shell session ends so the window closes.
     should_exit: bool,
-    /// When `Some`, flash the terminal background as a visual BEL indicator
-    /// until the contained `Instant`.
-    bell_flash_until: Option<Instant>,
-    /// Time the cursor blink half-cycle last toggled.
-    cursor_blink_last: Instant,
-    /// `true` = cursor visible (on-phase); `false` = cursor hidden (off-phase).
-    cursor_blink_phase: bool,
-    /// Which mouse button (0=left, 1=mid, 2=right) is currently held, for
-    /// motion-reporting passthrough to the PTY (modes 1002/1003).
-    mouse_btn_held: Option<u8>,
     /// Abstraction over host-OS capabilities (clipboard today). Boxed so tests
     /// can swap in a [`shell::NullShell`].
     shell_services: Box<dyn shell::AppShell>,
@@ -174,7 +229,7 @@ impl GpuRuntimeState {
     /// Height of the tab bar in pixels. Hidden when only one tab is open.
     fn tab_bar_h(&self) -> f32 {
         if self.tabs.len() > 1 {
-            self.cell_h
+            self.layout.cell_h
         } else {
             0.0
         }
@@ -206,7 +261,7 @@ impl GpuRuntimeState {
                 active_had_data = true;
             }
             if tab.app.take_bell() && self.user_config.terminal.bell {
-                self.bell_flash_until =
+                self.overlays.bell_flash_until =
                     Some(Instant::now() + std::time::Duration::from_millis(150));
             }
             let now_fullscreen = tab.app.is_alternate_screen();
@@ -240,11 +295,11 @@ impl GpuRuntimeState {
         }
         if !resize_tabs.is_empty() {
             let lm = LayoutMetrics::new(
-                self.window_width,
-                self.window_height,
+                self.layout.window_width,
+                self.layout.window_height,
                 self.tab_bar_h(),
-                self.cell_w,
-                self.cell_h,
+                self.layout.cell_w,
+                self.layout.cell_h,
                 self.user_config.padding.horizontal as f32,
                 self.user_config.padding.vertical as f32,
             );
@@ -414,11 +469,11 @@ impl GpuRuntimeState {
     /// Resize every tab after a window resize. Each tab uses its own split_ratio.
     fn resize_all_tabs(&mut self) {
         let lm = LayoutMetrics::new(
-            self.window_width,
-            self.window_height,
+            self.layout.window_width,
+            self.layout.window_height,
             self.tab_bar_h(),
-            self.cell_w,
-            self.cell_h,
+            self.layout.cell_w,
+            self.layout.cell_h,
             self.user_config.padding.horizontal as f32,
             self.user_config.padding.vertical as f32,
         );
@@ -435,11 +490,11 @@ impl GpuRuntimeState {
         // After adding the new tab there will be at least 2 tabs, so the tab bar
         // will appear and steal one cell row — account for that when sizing the PTY.
         let lm = LayoutMetrics::new(
-            self.window_width,
-            self.window_height,
-            self.cell_h, // tab_bar_h = cell_h (will be visible after push)
-            self.cell_w,
-            self.cell_h,
+            self.layout.window_width,
+            self.layout.window_height,
+            self.layout.cell_h, // tab_bar_h = cell_h (will be visible after push)
+            self.layout.cell_w,
+            self.layout.cell_h,
             self.user_config.padding.horizontal as f32,
             self.user_config.padding.vertical as f32,
         );
@@ -561,16 +616,26 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) -> std::process
             UiConfig {
                 padding_horizontal: s.user_config.padding.horizontal as f32,
                 padding_vertical: s.user_config.padding.vertical as f32,
-                active_theme_idx: s.active_theme_idx,
-                active_font_idx: s.active_font_idx,
+                active_theme_idx: s.themes_fonts.active_theme_idx,
+                active_font_idx: s.themes_fonts.active_font_idx,
                 font_size: s.user_config.font.size,
                 font_family: s.user_config.font.family.clone(),
                 terminal_shell: s.user_config.terminal.shell.clone(),
                 terminal_scrollback_lines: s.user_config.terminal.scrollback_lines,
                 terminal_bell: s.user_config.terminal.bell,
                 active_theme: s.user_config.active_theme.clone(),
-                available_themes: s.available_themes.iter().map(|t| t.name.clone()).collect(),
-                available_fonts: s.available_fonts.iter().map(|f| f.family.clone()).collect(),
+                available_themes: s
+                    .themes_fonts
+                    .available_themes
+                    .iter()
+                    .map(|t| t.name.clone())
+                    .collect(),
+                available_fonts: s
+                    .themes_fonts
+                    .available_fonts
+                    .iter()
+                    .map(|f| f.family.clone())
+                    .collect(),
             },
         )
     }));
@@ -580,9 +645,10 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) -> std::process
     };
     let state_for_frames = Rc::clone(&state);
     let state_for_events = Rc::clone(&state);
+    let state_for_window = Rc::clone(&state);
     let bridge_for_events = Rc::clone(&ui_bridge);
 
-    if let Err(err) = run_gpu_window_live_with_events(
+    if let Err(err) = run_gpu_window_live_with_events_and_window(
         move || {
             let mut state = state_for_frames.borrow_mut();
             snapshot::build_snapshot(&mut state)
@@ -591,6 +657,12 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) -> std::process
             bridge_for_events.borrow_mut().handle_event(&event);
             let mut state = state_for_events.borrow_mut();
             input::handle_event(&mut state, event);
+        },
+        move |window| {
+            state_for_window
+                .borrow_mut()
+                .shell_services
+                .install_window(window);
         },
         RenderConfig {
             initial_size: Some((window_width, window_height)),
@@ -608,4 +680,144 @@ pub fn run(update_rx: std::sync::mpsc::Receiver<Option<String>>) -> std::process
     // Persist session state so the next run can restore it.
     save_session(&state.borrow());
     std::process::ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod input_smoke_tests {
+    //! Headless smoke tests that drive [`input::handle_event`] against a
+    //! [`shell::NullShell`]-backed [`GpuRuntimeState`] without spawning a PTY
+    //! or opening a window.
+
+    use super::*;
+    use render_wgpu::AppWindowEvent;
+
+    /// Construct a minimal [`GpuRuntimeState`] with a single PTY-less tab and
+    /// the provided [`shell::AppShell`] implementation. Suitable for tests that
+    /// only need to exercise event dispatch — no window, no shell process.
+    fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState {
+        let app = app_orchestrator::App::new(24, 80).expect("valid terminal size");
+        let tab = tab::TabState {
+            app,
+            pty: None,
+            scroll_offset: 0,
+            editor_scroll_offset: 0,
+            history: Vec::new(),
+            history_index: None,
+            saved_input: String::new(),
+            split_ratio: 0.5,
+            was_terminal_fullscreen: false,
+            pre_fullscreen_split_ratio: 0.5,
+            selection_anchor: None,
+            selection_anchor_scroll: 0,
+            selection_end: None,
+            selection_end_scroll: 0,
+            is_selecting: false,
+            is_selecting_editor: false,
+            last_terminal_text: String::new(),
+            term_row_count: 24,
+            cwd: String::new(),
+            suggestion_prefix: None,
+            suggestion_index: None,
+            history_entries: Vec::new(),
+            pending_cmd: None,
+            shell_integration: false,
+        };
+        GpuRuntimeState {
+            tabs: vec![tab],
+            active_tab: 0,
+            shell: "/bin/sh".to_owned(),
+            modifiers: ModifierState::default(),
+            layout: LayoutState {
+                window_width: 800,
+                window_height: 600,
+                window_x: 0,
+                window_y: 0,
+                scale_factor: 1.0,
+                cell_w: 8.0,
+                cell_h: 16.0,
+            },
+            cursor: CursorState::default(),
+            drag: DragState::default(),
+            overlays: OverlayState::default(),
+            user_config: config::UserConfig::default(),
+            themes_fonts: ThemeFontState::default(),
+            update_rx: None,
+            settings: SettingsUiState::default(),
+            should_exit: false,
+            shell_services,
+        }
+    }
+
+    #[test]
+    fn cursor_moved_event_updates_cursor_state() {
+        let mut state = build_test_state(Box::new(shell::NullShell::default()));
+        input::handle_event(
+            &mut state,
+            AppWindowEvent::CursorMoved {
+                x: 123.5,
+                y: 456.25,
+            },
+        );
+        assert_eq!(state.cursor.cursor_x, 123.5);
+        assert_eq!(state.cursor.cursor_y, 456.25);
+    }
+
+    #[test]
+    fn window_moved_event_updates_layout() {
+        let mut state = build_test_state(Box::new(shell::NullShell::default()));
+        input::handle_event(&mut state, AppWindowEvent::WindowMoved { x: 42, y: -7 });
+        assert_eq!(state.layout.window_x, 42);
+        assert_eq!(state.layout.window_y, -7);
+    }
+
+    #[test]
+    fn modifiers_changed_event_updates_modifier_state() {
+        use winit::keyboard::ModifiersState;
+        let mut state = build_test_state(Box::new(shell::NullShell::default()));
+        let mods = ModifiersState::SUPER | ModifiersState::SHIFT;
+        input::handle_event(&mut state, AppWindowEvent::ModifiersChanged(mods));
+        assert!(state.modifiers.super_down);
+        assert!(state.modifiers.shift_down);
+        assert!(!state.modifiers.ctrl_down);
+    }
+
+    #[test]
+    fn ime_commit_event_inserts_text_into_editor() {
+        let mut state = build_test_state(Box::new(shell::NullShell::default()));
+        input::handle_event(&mut state, AppWindowEvent::ImeCommit("héllo".to_owned()));
+        assert!(state.tab().app.editor_snapshot().contains("héllo"));
+    }
+
+    #[test]
+    fn resized_event_updates_layout_dimensions() {
+        let mut state = build_test_state(Box::new(shell::NullShell::default()));
+        input::handle_event(
+            &mut state,
+            AppWindowEvent::Resized {
+                width: 1024,
+                height: 768,
+                scale_factor: 2.0,
+                cell_w: 10.0,
+                cell_h: 20.0,
+            },
+        );
+        assert_eq!(state.layout.window_width, 1024);
+        assert_eq!(state.layout.window_height, 768);
+        assert_eq!(state.layout.scale_factor, 2.0);
+        assert_eq!(state.layout.cell_w, 10.0);
+        assert_eq!(state.layout.cell_h, 20.0);
+    }
+
+    #[test]
+    fn null_shell_clipboard_roundtrip_via_state() {
+        // Verifies the NullShell wired through `shell_services` is reachable
+        // from within state and round-trips clipboard text correctly — the
+        // contract the Cmd+C / Cmd+V keyboard handlers rely on.
+        let mut state = build_test_state(Box::new(shell::NullShell::default()));
+        state.shell_services.clipboard_set("smoke-test".to_owned());
+        assert_eq!(
+            state.shell_services.clipboard_get().as_deref(),
+            Some("smoke-test"),
+        );
+    }
 }

@@ -5,8 +5,8 @@ use crate::GpuRuntimeState;
 /// Adjusts `state.editor_scroll_offset` to keep the caret row visible.
 pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
     let tab_bar_h = state.tab_bar_h();
-    let window_height = state.window_height;
-    let cell_h = state.cell_h;
+    let window_height = state.layout.window_height;
+    let cell_h = state.layout.cell_h;
     let pad_v = state.user_config.padding.vertical as f32;
     let active = state.active_tab;
     let tab = &mut state.tabs[active];

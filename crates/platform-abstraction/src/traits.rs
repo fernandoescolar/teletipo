@@ -25,3 +25,22 @@ pub trait DpiAwareness {
 pub trait FontFallback {
     fn fallback_for_char(&self, ch: char) -> Option<String>;
 }
+
+/// Operations the application layer needs to perform on the host window or
+/// shell that don't fit any of the other trait boundaries. Backends owning the
+/// window (`render-wgpu`) provide a concrete implementation and hand it to the
+/// application layer through the renderer's setup callback.
+///
+/// All methods take `&self` so the trait object can be cheaply shared with
+/// callbacks living inside the event loop. Implementations must therefore use
+/// interior mutability where mutation is required.
+pub trait WindowControl {
+    /// Request a redraw of the host window. May coalesce with pending redraws.
+    fn request_redraw(&self);
+    /// Set the host window's title bar text.
+    fn set_title(&self, title: &str);
+    /// Open the given URL with the OS default handler. Only `http://`,
+    /// `https://`, `file://`, `mailto:` and `ftp://` schemes are accepted;
+    /// other inputs are silently ignored to avoid arbitrary command execution.
+    fn open_url(&self, url: &str);
+}

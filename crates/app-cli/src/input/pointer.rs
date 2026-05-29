@@ -10,8 +10,8 @@ use winit::event::{ElementState, MouseButton};
 
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) -> bool {
     if let AppWindowEvent::WindowMoved { x, y } = event {
-        state.window_x = *x;
-        state.window_y = *y;
+        state.layout.window_x = *x;
+        state.layout.window_y = *y;
         return true;
     }
     if let AppWindowEvent::Resized {
@@ -22,11 +22,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         cell_h,
     } = event
     {
-        state.window_width = *width;
-        state.window_height = *height;
-        state.scale_factor = *scale_factor;
-        state.cell_w = *cell_w;
-        state.cell_h = *cell_h;
+        state.layout.window_width = *width;
+        state.layout.window_height = *height;
+        state.layout.scale_factor = *scale_factor;
+        state.layout.cell_w = *cell_w;
+        state.layout.cell_h = *cell_h;
         state.resize_all_tabs();
         let tab_bar_h = state.tab_bar_h();
         let available_h = *height as f32 - tab_bar_h;
@@ -36,21 +36,21 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         let active = state.active_tab;
         let term_h = (available_h * state.tabs[active].split_ratio - 2.0 * pad_v).max(*cell_h);
         let rows = (term_h / cell_h).max(1.0) as u16;
-        state.last_resize = Some((Instant::now(), cols, rows));
+        state.overlays.last_resize = Some((Instant::now(), cols, rows));
         return true;
     }
 
     if let AppWindowEvent::CursorMoved { x, y } = event {
-        state.cursor_x = *x;
-        state.cursor_y = *y;
+        state.cursor.cursor_x = *x;
+        state.cursor.cursor_y = *y;
         let tab_bar_h = state.tab_bar_h() as f64;
         let split_ratio = state.tab().split_ratio;
 
-        if let Some((_, mx, my)) = state.tab_context_menu {
-            let menu_w = state.cell_w as f64 * 13.0;
-            let menu_item_h = state.cell_h as f64 * 1.15;
+        if let Some((_, mx, my)) = state.overlays.tab_context_menu {
+            let menu_w = state.layout.cell_w as f64 * 13.0;
+            let menu_item_h = state.layout.cell_h as f64 * 1.15;
             let in_menu = *x >= mx && *x <= mx + menu_w && *y >= my;
-            state.tab_context_hover = if in_menu {
+            state.overlays.tab_context_hover = if in_menu {
                 let item = ((*y - my) / menu_item_h) as usize;
                 if item < 4 { Some(item) } else { None }
             } else {
@@ -58,41 +58,44 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             };
         }
 
-        if state.dragging_separator {
+        if state.drag.dragging_separator {
             if state.tab().app.is_alternate_screen() {
-                state.dragging_separator = false;
+                state.drag.dragging_separator = false;
                 return true;
             }
-            let available_h = state.window_height as f64 - tab_bar_h;
+            let available_h = state.layout.window_height as f64 - tab_bar_h;
             let new_ratio = (*y - tab_bar_h) / available_h;
             state.tab_mut().split_ratio = (new_ratio as f32).clamp(0.2, 0.85);
             let active = state.active_tab;
             let sr = state.tabs[active].split_ratio;
             let pad_h = state.user_config.padding.horizontal as f32;
             let pad_v = state.user_config.padding.vertical as f32;
-            let cols = ((state.window_width as f32 - 2.0 * pad_h) / state.cell_w).max(1.0) as u16;
-            let term_h = (available_h as f32 * sr - 2.0 * pad_v).max(state.cell_h);
-            let rows = (term_h / state.cell_h).max(1.0) as u16;
+            let cols = ((state.layout.window_width as f32 - 2.0 * pad_h) / state.layout.cell_w)
+                .max(1.0) as u16;
+            let term_h = (available_h as f32 * sr - 2.0 * pad_v).max(state.layout.cell_h);
+            let rows = (term_h / state.layout.cell_h).max(1.0) as u16;
             state.resize_tab(active, rows, cols);
-        } else if state.dragging_terminal_scrollbar {
-            let available_h = state.window_height as f64 - tab_bar_h;
+        } else if state.drag.dragging_terminal_scrollbar {
+            let available_h = state.layout.window_height as f64 - tab_bar_h;
             let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
             if term_bottom > tab_bar_h {
                 let frac = ((*y - tab_bar_h) / (term_bottom - tab_bar_h)).clamp(0.0, 1.0);
                 let max_scroll = state.tab().app.scrollback_len();
                 state.tab_mut().scroll_offset = ((1.0 - frac) * max_scroll as f64) as usize;
             }
-        } else if state.dragging_editor_scrollbar {
-            let available_h = state.window_height as f64 - tab_bar_h;
+        } else if state.drag.dragging_editor_scrollbar {
+            let available_h = state.layout.window_height as f64 - tab_bar_h;
             let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
-            let edit_h_px = state.window_height as f64 - term_bottom;
+            let edit_h_px = state.layout.window_height as f64 - term_bottom;
             if edit_h_px > 0.0 {
                 let frac = ((*y - term_bottom) / edit_h_px).clamp(0.0, 1.0);
                 let editor_text = state.tab().app.editor_snapshot();
                 let total_lines = editor_text.lines().count().max(1);
                 let pad_v = state.user_config.padding.vertical as f32;
-                let visible_rows = if state.cell_h > 0.0 {
-                    ((edit_h_px as f32 - pad_v) / state.cell_h).floor().max(1.0) as usize
+                let visible_rows = if state.layout.cell_h > 0.0 {
+                    ((edit_h_px as f32 - pad_v) / state.layout.cell_h)
+                        .floor()
+                        .max(1.0) as usize
                 } else {
                     1
                 };
@@ -106,11 +109,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             if let Some(cell) = cursor_to_terminal_cell(
                 *x,
                 *y,
-                state.window_width,
-                state.window_height,
+                state.layout.window_width,
+                state.layout.window_height,
                 split_ratio,
-                state.cell_w,
-                state.cell_h,
+                state.layout.cell_w,
+                state.layout.cell_h,
                 term_row_count,
                 tab_bar_h as f32,
                 pad_h,
@@ -120,17 +123,17 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
             }
         } else if state.tab().is_selecting_editor {
-            let available_h = state.window_height as f64 - tab_bar_h;
+            let available_h = state.layout.window_height as f64 - tab_bar_h;
             let edit_top_px = tab_bar_h + split_ratio as f64 * available_h + 2.0;
             let editor_scroll_offset = state.tab().editor_scroll_offset;
             let pad_h = state.user_config.padding.horizontal as f64;
             let pad_v = state.user_config.padding.vertical as f64;
-            let row = ((*y - edit_top_px - pad_v) / state.cell_h as f64)
+            let row = ((*y - edit_top_px - pad_v) / state.layout.cell_h as f64)
                 .max(0.0)
                 .floor() as usize
                 + editor_scroll_offset;
             let prefix_cols = if row == 0 { 2.0_f64 } else { 0.0 };
-            let col = ((*x - pad_h) / state.cell_w as f64 - prefix_cols)
+            let col = ((*x - pad_h) / state.layout.cell_w as f64 - prefix_cols)
                 .max(0.0)
                 .floor() as usize;
             let text = state.tab().app.editor_snapshot();
@@ -145,7 +148,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         let mouse_mode = state.tab().app.mouse_mode();
         if state.tab().app.is_alternate_screen() && mouse_mode >= 1002 {
             let should_send =
-                mouse_mode == 1003 || (mouse_mode == 1002 && state.mouse_btn_held.is_some());
+                mouse_mode == 1003 || (mouse_mode == 1002 && state.cursor.mouse_btn_held.is_some());
             if should_send {
                 let tab_bar_h_f = state.tab_bar_h();
                 let split_ratio = state.tab().split_ratio;
@@ -153,19 +156,20 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 let pad_h = state.user_config.padding.horizontal as f32;
                 let pad_v = state.user_config.padding.vertical as f32;
                 if let Some((row, col)) = cursor_to_terminal_cell(
-                    state.cursor_x,
-                    state.cursor_y,
-                    state.window_width,
-                    state.window_height,
+                    state.cursor.cursor_x,
+                    state.cursor.cursor_y,
+                    state.layout.window_width,
+                    state.layout.window_height,
                     split_ratio,
-                    state.cell_w,
-                    state.cell_h,
+                    state.layout.cell_w,
+                    state.layout.cell_h,
                     term_row_count,
                     tab_bar_h_f,
                     pad_h,
                     pad_v,
                 ) {
-                    let bytes = encode_mouse_motion(state.mouse_btn_held, row, col, mouse_mode);
+                    let bytes =
+                        encode_mouse_motion(state.cursor.mouse_btn_held, row, col, mouse_mode);
                     state.send_terminal_input(&bytes);
                 }
             }
@@ -180,23 +184,23 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     } = event
     {
         if *btn_state == ElementState::Released {
-            if let Some(drag_from) = state.tab_drag {
-                if (state.cursor_x - state.tab_drag_start_x).abs() > 5.0 {
+            if let Some(drag_from) = state.drag.tab_drag {
+                if (state.cursor.cursor_x - state.drag.tab_drag_start_x).abs() > 5.0 {
                     let n = state.tabs.len();
-                    let add_btn_w = state.cell_w as f64 * 2.0;
-                    let tab_area_w = (state.window_width as f64 - add_btn_w).max(1.0);
-                    let frac = (state.cursor_x / tab_area_w).clamp(0.0, 1.0);
+                    let add_btn_w = state.layout.cell_w as f64 * 2.0;
+                    let tab_area_w = (state.layout.window_width as f64 - add_btn_w).max(1.0);
+                    let frac = (state.cursor.cursor_x / tab_area_w).clamp(0.0, 1.0);
                     let insert_before = (frac * n as f64).round() as usize;
                     state.move_tab_to(drag_from, insert_before);
                 }
-                state.tab_drag = None;
+                state.drag.tab_drag = None;
             }
-            state.dragging_separator = false;
-            state.dragging_terminal_scrollbar = false;
-            state.dragging_editor_scrollbar = false;
+            state.drag.dragging_separator = false;
+            state.drag.dragging_terminal_scrollbar = false;
+            state.drag.dragging_editor_scrollbar = false;
             state.tab_mut().is_selecting = false;
             state.tab_mut().is_selecting_editor = false;
-            state.mouse_btn_held = None;
+            state.cursor.mouse_btn_held = None;
             // Send mouse release to PTY when mouse reporting is active.
             let mouse_mode = state.tab().app.mouse_mode();
             if mouse_mode != 0 {
@@ -206,13 +210,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 let pad_h = state.user_config.padding.horizontal as f32;
                 let pad_v = state.user_config.padding.vertical as f32;
                 if let Some((row, col)) = cursor_to_terminal_cell(
-                    state.cursor_x,
-                    state.cursor_y,
-                    state.window_width,
-                    state.window_height,
+                    state.cursor.cursor_x,
+                    state.cursor.cursor_y,
+                    state.layout.window_width,
+                    state.layout.window_height,
                     split_ratio,
-                    state.cell_w,
-                    state.cell_h,
+                    state.layout.cell_w,
+                    state.layout.cell_h,
                     term_row_count,
                     tab_bar_h as f32,
                     pad_h,
@@ -224,99 +228,105 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             }
         }
         if *btn_state == ElementState::Pressed {
-            if state.tab_context_menu.is_some() {
-                if let (Some(item), Some((tab_idx, _, _))) =
-                    (state.tab_context_hover, state.tab_context_menu)
-                {
+            if state.overlays.tab_context_menu.is_some() {
+                if let (Some(item), Some((tab_idx, _, _))) = (
+                    state.overlays.tab_context_hover,
+                    state.overlays.tab_context_menu,
+                ) {
                     execute_context_menu_item(state, tab_idx, item);
                 }
-                state.tab_context_menu = None;
-                state.tab_context_hover = None;
+                state.overlays.tab_context_menu = None;
+                state.overlays.tab_context_hover = None;
                 return true;
             }
 
             let tab_bar_h = state.tab_bar_h() as f64;
-            if state.cursor_y < tab_bar_h {
+            if state.cursor.cursor_y < tab_bar_h {
                 let n = state.tabs.len();
-                let add_btn_w = state.cell_w as f64 * 2.0;
-                let tab_area_w = state.window_width as f64 - add_btn_w;
+                let add_btn_w = state.layout.cell_w as f64 * 2.0;
+                let tab_area_w = state.layout.window_width as f64 - add_btn_w;
 
-                if state.cursor_x >= state.window_width as f64 - add_btn_w {
+                if state.cursor.cursor_x >= state.layout.window_width as f64 - add_btn_w {
                     state.add_new_tab();
                     return true;
                 }
 
                 let tab_w = tab_area_w / n as f64;
-                let tab_idx = (state.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
-                let close_w = state.cell_w as f64 * 1.5;
+                let tab_idx = (state.cursor.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
+                let close_w = state.layout.cell_w as f64 * 1.5;
                 let tab_right = (tab_idx + 1) as f64 * tab_w;
-                if state.cursor_x >= tab_right - close_w {
+                if state.cursor.cursor_x >= tab_right - close_w {
                     state.close_tab(tab_idx);
                 } else {
                     state.active_tab = tab_idx;
-                    state.tab_drag = Some(tab_idx);
-                    state.tab_drag_start_x = state.cursor_x;
+                    state.drag.tab_drag = Some(tab_idx);
+                    state.drag.tab_drag_start_x = state.cursor.cursor_x;
                 }
                 return true;
             }
 
             let split_ratio = state.tab().split_ratio;
-            let available_h = state.window_height as f64 - tab_bar_h;
+            let available_h = state.layout.window_height as f64 - tab_bar_h;
             let sep_y_px = tab_bar_h + available_h * split_ratio as f64;
             let fullscreen = state.tab().app.is_alternate_screen();
 
-            if !fullscreen && (state.cursor_y - sep_y_px).abs() < 6.0 {
-                state.dragging_separator = true;
+            if !fullscreen && (state.cursor.cursor_y - sep_y_px).abs() < 6.0 {
+                state.drag.dragging_separator = true;
                 return true;
             }
 
-            let sb_left = state.window_width as f64 - SCROLLBAR_W_PX as f64;
+            let sb_left = state.layout.window_width as f64 - SCROLLBAR_W_PX as f64;
             let term_bottom = sep_y_px;
 
-            if state.cursor_x >= sb_left
-                && state.cursor_y >= tab_bar_h
-                && state.cursor_y <= term_bottom
+            if state.cursor.cursor_x >= sb_left
+                && state.cursor.cursor_y >= tab_bar_h
+                && state.cursor.cursor_y <= term_bottom
             {
-                let frac = (state.cursor_y - tab_bar_h) / (term_bottom - tab_bar_h);
+                let frac = (state.cursor.cursor_y - tab_bar_h) / (term_bottom - tab_bar_h);
                 let max_scroll = state.tab().app.scrollback_len();
                 state.tab_mut().scroll_offset = ((1.0 - frac) * max_scroll as f64) as usize;
-                state.dragging_terminal_scrollbar = true;
+                state.drag.dragging_terminal_scrollbar = true;
                 return true;
             }
 
-            if !fullscreen && state.cursor_x >= sb_left && state.cursor_y > term_bottom {
-                let edit_h_px = state.window_height as f64 - term_bottom;
+            if !fullscreen
+                && state.cursor.cursor_x >= sb_left
+                && state.cursor.cursor_y > term_bottom
+            {
+                let edit_h_px = state.layout.window_height as f64 - term_bottom;
                 if edit_h_px > 0.0 {
-                    let frac = (state.cursor_y - term_bottom) / edit_h_px;
+                    let frac = (state.cursor.cursor_y - term_bottom) / edit_h_px;
                     let editor_text = state.tab().app.editor_snapshot();
                     let total_lines = editor_text.lines().count().max(1);
                     let pad_v = state.user_config.padding.vertical as f32;
-                    let visible_rows = if state.cell_h > 0.0 {
-                        ((edit_h_px as f32 - pad_v) / state.cell_h).floor().max(1.0) as usize
+                    let visible_rows = if state.layout.cell_h > 0.0 {
+                        ((edit_h_px as f32 - pad_v) / state.layout.cell_h)
+                            .floor()
+                            .max(1.0) as usize
                     } else {
                         1
                     };
                     let max_scroll = total_lines.saturating_sub(visible_rows);
                     state.tab_mut().editor_scroll_offset =
                         (frac * max_scroll as f64).round() as usize;
-                    state.dragging_editor_scrollbar = true;
+                    state.drag.dragging_editor_scrollbar = true;
                 }
                 return true;
             }
 
             // Cmd+click: open a detected terminal link without starting selection.
-            if state.super_down {
+            if state.modifiers.super_down {
                 let pad_h = state.user_config.padding.horizontal as f32;
                 let pad_v = state.user_config.padding.vertical as f32;
                 let term_row_count = state.tab().term_row_count;
                 if let Some((row, col)) = cursor_to_terminal_cell(
-                    state.cursor_x,
-                    state.cursor_y,
-                    state.window_width,
-                    state.window_height,
+                    state.cursor.cursor_x,
+                    state.cursor.cursor_y,
+                    state.layout.window_width,
+                    state.layout.window_height,
                     split_ratio,
-                    state.cell_w,
-                    state.cell_h,
+                    state.layout.cell_w,
+                    state.layout.cell_h,
                     term_row_count,
                     tab_bar_h as f32,
                     pad_h,
@@ -329,7 +339,8 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                         .find(|(r, cs, ce, _)| *r == row && col >= *cs && col < *ce)
                     {
                         let cwd = state.tab().cwd.clone();
-                        open_link(target, &cwd);
+                        let target = target.clone();
+                        open_link(&mut *state.shell_services, &target, &cwd);
                         return true;
                     }
                 }
@@ -339,13 +350,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             let pad_h = state.user_config.padding.horizontal as f32;
             let pad_v = state.user_config.padding.vertical as f32;
             if let Some(cell) = cursor_to_terminal_cell(
-                state.cursor_x,
-                state.cursor_y,
-                state.window_width,
-                state.window_height,
+                state.cursor.cursor_x,
+                state.cursor.cursor_y,
+                state.layout.window_width,
+                state.layout.window_height,
                 split_ratio,
-                state.cell_w,
-                state.cell_h,
+                state.layout.cell_w,
+                state.layout.cell_h,
                 term_row_count,
                 tab_bar_h as f32,
                 pad_h,
@@ -358,7 +369,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     let (row, col) = cell;
                     let bytes = encode_mouse_btn(0, row, col, true, mouse_mode);
                     state.send_terminal_input(&bytes);
-                    state.mouse_btn_held = Some(0);
+                    state.cursor.mouse_btn_held = Some(0);
                     return true;
                 }
                 state.tab_mut().selection_anchor = Some(cell);
@@ -366,17 +377,19 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 state.tab_mut().selection_end = Some(cell);
                 state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
                 state.tab_mut().is_selecting = true;
-            } else if !fullscreen && state.cursor_y > term_bottom {
+            } else if !fullscreen && state.cursor.cursor_y > term_bottom {
                 let edit_top_px = term_bottom + 2.0;
                 let editor_scroll_offset = state.tab().editor_scroll_offset;
                 let pad_h_f = state.user_config.padding.horizontal as f64;
                 let pad_v_f = state.user_config.padding.vertical as f64;
-                let row = ((state.cursor_y - edit_top_px - pad_v_f) / state.cell_h as f64)
+                let row = ((state.cursor.cursor_y - edit_top_px - pad_v_f)
+                    / state.layout.cell_h as f64)
                     .max(0.0)
                     .floor() as usize
                     + editor_scroll_offset;
                 let prefix_cols = if row == 0 { 2.0_f64 } else { 0.0 };
-                let col = ((state.cursor_x - pad_h_f) / state.cell_w as f64 - prefix_cols)
+                let col = ((state.cursor.cursor_x - pad_h_f) / state.layout.cell_w as f64
+                    - prefix_cols)
                     .max(0.0)
                     .floor() as usize;
                 // Clicking in the editor clears any terminal text selection.
@@ -385,7 +398,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 state.tab_mut().is_selecting = false;
                 let text = state.tab().app.editor_snapshot();
                 let offset = editor_row_col_to_offset(&text, row, col);
-                let extend = state.shift_down;
+                let extend = state.modifiers.shift_down;
                 state.tab_mut().app.set_editor_cursor(offset, extend);
                 state.tab_mut().is_selecting_editor = true;
                 clamp_editor_scroll(state);
@@ -400,18 +413,19 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     } = event
     {
         if *btn_state == ElementState::Pressed {
-            state.tab_context_menu = None;
-            state.tab_context_hover = None;
+            state.overlays.tab_context_menu = None;
+            state.overlays.tab_context_hover = None;
 
             let tab_bar_h = state.tab_bar_h() as f64;
-            if state.cursor_y < tab_bar_h {
+            if state.cursor.cursor_y < tab_bar_h {
                 let n = state.tabs.len();
-                let add_btn_w = state.cell_w as f64 * 2.0;
-                let tab_area_w = state.window_width as f64 - add_btn_w;
-                if n > 0 && state.cursor_x < state.window_width as f64 - add_btn_w {
+                let add_btn_w = state.layout.cell_w as f64 * 2.0;
+                let tab_area_w = state.layout.window_width as f64 - add_btn_w;
+                if n > 0 && state.cursor.cursor_x < state.layout.window_width as f64 - add_btn_w {
                     let tab_w = tab_area_w / n as f64;
-                    let tab_idx = (state.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
-                    state.tab_context_menu = Some((tab_idx, state.cursor_x, tab_bar_h));
+                    let tab_idx = (state.cursor.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
+                    state.overlays.tab_context_menu =
+                        Some((tab_idx, state.cursor.cursor_x, tab_bar_h));
                 }
             }
         }
@@ -419,22 +433,25 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     if let AppWindowEvent::MouseWheel { delta_lines } = event {
-        if state.tab_context_menu.is_some() {
-            state.tab_context_menu = None;
-            state.tab_context_hover = None;
+        if state.overlays.tab_context_menu.is_some() {
+            state.overlays.tab_context_menu = None;
+            state.overlays.tab_context_hover = None;
         }
         let lines = delta_lines.round().abs().max(1.0) as usize;
         let tab_bar_h = state.tab_bar_h() as f64;
         let split_ratio = state.tab().split_ratio;
-        let term_bottom = tab_bar_h + (state.window_height as f64 - tab_bar_h) * split_ratio as f64;
+        let term_bottom =
+            tab_bar_h + (state.layout.window_height as f64 - tab_bar_h) * split_ratio as f64;
 
-        if state.cursor_y > term_bottom {
+        if state.cursor.cursor_y > term_bottom {
             let editor_text = state.tab().app.editor_snapshot();
             let total_lines = editor_text.lines().count().max(1);
-            let edit_h_px = state.window_height as f64 - term_bottom;
+            let edit_h_px = state.layout.window_height as f64 - term_bottom;
             let pad_v = state.user_config.padding.vertical as f32;
-            let visible_rows = if state.cell_h > 0.0 {
-                ((edit_h_px as f32 - pad_v) / state.cell_h).floor().max(1.0) as usize
+            let visible_rows = if state.layout.cell_h > 0.0 {
+                ((edit_h_px as f32 - pad_v) / state.layout.cell_h)
+                    .floor()
+                    .max(1.0) as usize
             } else {
                 1
             };
@@ -456,17 +473,17 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 let term_row_count = state.tab().term_row_count;
                 let pad_h = state.user_config.padding.horizontal as f32;
                 let pad_v = state.user_config.padding.vertical as f32;
-                let term_bottom_for_scroll =
-                    tab_bar_h_f + (state.window_height as f64 - tab_bar_h_f) * split_ratio as f64;
-                if state.cursor_y < term_bottom_for_scroll
+                let term_bottom_for_scroll = tab_bar_h_f
+                    + (state.layout.window_height as f64 - tab_bar_h_f) * split_ratio as f64;
+                if state.cursor.cursor_y < term_bottom_for_scroll
                     && let Some((row, col)) = cursor_to_terminal_cell(
-                        state.cursor_x,
-                        state.cursor_y,
-                        state.window_width,
-                        state.window_height,
+                        state.cursor.cursor_x,
+                        state.cursor.cursor_y,
+                        state.layout.window_width,
+                        state.layout.window_height,
                         split_ratio,
-                        state.cell_w,
-                        state.cell_h,
+                        state.layout.cell_w,
+                        state.layout.cell_h,
                         term_row_count,
                         tab_bar_h_f as f32,
                         pad_h,
@@ -493,9 +510,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     if let AppWindowEvent::ModifiersChanged(mods) = event {
-        state.ctrl_down = mods.control_key();
-        state.super_down = mods.super_key();
-        state.shift_down = mods.shift_key();
+        state.modifiers.ctrl_down = mods.control_key();
+        state.modifiers.super_down = mods.super_key();
+        state.modifiers.shift_down = mods.shift_key();
         return true;
     }
 
@@ -542,21 +559,17 @@ fn encode_mouse_btn(button: u8, row: usize, col: usize, pressed: bool, mouse_mod
 
 /// Open a terminal link (URL or file path), stripping any `:line:col` suffix,
 /// resolving relative paths against `cwd`, and showing an alert on failure.
-fn open_link(raw_target: &str, cwd: &str) {
+///
+/// URLs (http/https/ftp) are delegated to the [`crate::shell::AppShell`] so
+/// tests can capture them. Local file paths are still resolved + opened here
+/// because the shell abstraction only covers URLs.
+fn open_link(shell: &mut dyn crate::shell::AppShell, raw_target: &str, cwd: &str) {
     let is_url = raw_target.starts_with("http://")
         || raw_target.starts_with("https://")
         || raw_target.starts_with("ftp://");
 
     if is_url {
-        #[cfg(target_os = "macos")]
-        let status = std::process::Command::new("open").arg(raw_target).spawn();
-        #[cfg(not(target_os = "macos"))]
-        let status = std::process::Command::new("xdg-open")
-            .arg(raw_target)
-            .spawn();
-        if status.is_err() {
-            show_alert(&format!("Could not open URL:\n{raw_target}"));
-        }
+        shell.open_url(raw_target);
         return;
     }
 

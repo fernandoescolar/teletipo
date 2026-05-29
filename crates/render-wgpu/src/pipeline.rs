@@ -417,29 +417,6 @@ impl<'a> GpuState<'a> {
                 );
             }
 
-            if let Some(ref overlay_text) = snapshot.resize_overlay {
-                let n_chars = overlay_text.chars().count() as f32;
-                let text_w_px = n_chars * self.cell_w_px;
-                let term_h_px = tab_bar_h + snapshot.split_ratio * available_h;
-                let x_start = (self.size.width as f32 - text_w_px) / 2.0;
-                let y_start = (tab_bar_h + term_h_px) / 2.0 - self.cell_h_px / 2.0;
-                add_text_verts(
-                    overlay_text,
-                    y_start,
-                    x_start,
-                    [1.0, 1.0, 1.0, 1.0],
-                    &[],
-                    &[],
-                    &self.glyph_cache,
-                    None,
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
-                    &mut text_verts,
-                    0,
-                );
-            }
-
             // Update the terminal vertex cache.
             self.terminal_verts_cache.clear();
             self.terminal_verts_cache
@@ -447,6 +424,31 @@ impl<'a> GpuState<'a> {
             self.last_terminal_version = snapshot.terminal_screen_version;
             self.last_cursor_pos = (snapshot.terminal_cursor_row, snapshot.terminal_cursor_col);
             self.last_scroll_offset = snapshot.scroll_offset;
+        }
+
+        // Resize overlay text is rendered every frame (never cached) so it
+        // disappears at the same time as the background box.
+        if let Some(ref overlay_text) = snapshot.resize_overlay {
+            let n_chars = overlay_text.chars().count() as f32;
+            let text_w_px = n_chars * self.cell_w_px;
+            let term_h_px = tab_bar_h + snapshot.split_ratio * available_h;
+            let x_start = (self.size.width as f32 - text_w_px) / 2.0;
+            let y_start = (tab_bar_h + term_h_px) / 2.0 - self.cell_h_px / 2.0;
+            add_text_verts(
+                overlay_text,
+                y_start,
+                x_start,
+                [1.0, 1.0, 1.0, 1.0],
+                &[],
+                &[],
+                &self.glyph_cache,
+                None,
+                self.cell_w_px,
+                self.cell_h_px,
+                self.size,
+                &mut text_verts,
+                0,
+            );
         }
 
         let terminal_vert_count = (text_verts.len() / 8) as u32;

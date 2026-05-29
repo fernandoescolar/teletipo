@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 winit = "0.29"
+arboard = "3"
+tracing = "0.1"
 
 [lints]
 workspace = true

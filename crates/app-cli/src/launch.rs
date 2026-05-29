@@ -145,13 +145,13 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
     let active = &state.tabs[state.active_tab];
     // Store logical pixels (physical ÷ scale_factor) so window.rs can restore the
     // size correctly with LogicalSize::new(…) on the next launch.
-    let logical_w = (state.window_width as f64 / state.scale_factor).round() as u32;
-    let logical_h = (state.window_height as f64 / state.scale_factor).round() as u32;
+    let logical_w = (state.layout.window_width as f64 / state.layout.scale_factor).round() as u32;
+    let logical_h = (state.layout.window_height as f64 / state.layout.scale_factor).round() as u32;
     let session = PersistentSession {
         window_width: logical_w,
         window_height: logical_h,
-        window_x: Some(state.window_x),
-        window_y: Some(state.window_y),
+        window_x: Some(state.layout.window_x),
+        window_y: Some(state.layout.window_y),
         tabs: tab_sessions,
         split_ratio: active.split_ratio,
         history: active.history.clone(),
@@ -266,57 +266,51 @@ pub(crate) fn build_initial_state(
         tabs,
         active_tab: 0,
         shell: shell.to_owned(),
-        ctrl_down: false,
-        super_down: false,
-        window_width,
-        window_height,
-        window_x,
-        window_y,
-        scale_factor: 1.0,
-        cursor_x: 0.0,
-        cursor_y: 0.0,
-        dragging_separator: false,
-        dragging_terminal_scrollbar: false,
-        dragging_editor_scrollbar: false,
-        last_resize: None,
-        shift_down: false,
-        cell_w: 8.4,
-        cell_h: 16.8,
-        tab_drag: None,
-        tab_drag_start_x: 0.0,
-        tab_context_menu: None,
-        tab_context_hover: None,
-        user_config: load_config(),
-        available_themes: {
-            theme::install_default_themes();
-            theme::load_themes()
+        modifiers: crate::ModifierState::default(),
+        layout: crate::LayoutState {
+            window_width,
+            window_height,
+            window_x,
+            window_y,
+            scale_factor: 1.0,
+            cell_w: 8.4,
+            cell_h: 16.8,
         },
-        active_theme_idx: None,
-        available_fonts: enumerate_font_families(),
-        active_font_idx: 0,
+        cursor: crate::CursorState::default(),
+        drag: crate::DragState::default(),
+        overlays: crate::OverlayState::default(),
+        user_config: load_config(),
+        themes_fonts: crate::ThemeFontState {
+            available_themes: {
+                theme::install_default_themes();
+                theme::load_themes()
+            },
+            active_theme_idx: None,
+            available_fonts: enumerate_font_families(),
+            active_font_idx: 0,
+        },
         update_rx: Some(update_rx),
-        pending_update: None,
         settings: crate::SettingsUiState::default(),
         should_exit: false,
-        bell_flash_until: None,
-        cursor_blink_last: std::time::Instant::now(),
-        cursor_blink_phase: true,
-        mouse_btn_held: None,
         shell_services: Box::new(crate::shell::SystemShell::new()),
     };
 
-    state.active_theme_idx = state
-        .user_config
-        .active_theme
-        .as_ref()
-        .and_then(|name| state.available_themes.iter().position(|t| &t.name == name));
-    state.active_font_idx = state
+    state.themes_fonts.active_theme_idx =
+        state.user_config.active_theme.as_ref().and_then(|name| {
+            state
+                .themes_fonts
+                .available_themes
+                .iter()
+                .position(|t| &t.name == name)
+        });
+    state.themes_fonts.active_font_idx = state
         .user_config
         .font
         .family
         .as_ref()
         .and_then(|family| {
             state
+                .themes_fonts
                 .available_fonts
                 .iter()
                 .position(|f| &f.family == family)

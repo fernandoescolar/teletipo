@@ -1,6 +1,6 @@
 use std::env;
 
-use crate::impls::{BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryClipboard, MemoryIme};
+use crate::impls::{BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryIme, SystemClipboard};
 use crate::traits::{Accessibility, Clipboard, DpiAwareness, FontFallback, Ime};
 use crate::types::{DisplayBackend, PlatformKind};
 
@@ -20,7 +20,7 @@ where
 }
 
 #[cfg(target_os = "linux")]
-pub type LinuxClipboard = MemoryClipboard;
+pub type LinuxClipboard = SystemClipboard;
 #[cfg(target_os = "linux")]
 pub type LinuxIme = MemoryIme;
 #[cfg(target_os = "linux")]
@@ -31,7 +31,7 @@ pub type LinuxDpi = FixedDpi;
 pub type LinuxFontFallback = BasicFontFallback;
 
 #[cfg(target_os = "macos")]
-pub type MacClipboard = MemoryClipboard;
+pub type MacClipboard = SystemClipboard;
 #[cfg(target_os = "macos")]
 pub type MacIme = MemoryIme;
 #[cfg(target_os = "macos")]
@@ -42,7 +42,7 @@ pub type MacDpi = FixedDpi;
 pub type MacFontFallback = BasicFontFallback;
 
 #[cfg(target_os = "windows")]
-pub type WindowsClipboard = MemoryClipboard;
+pub type WindowsClipboard = SystemClipboard;
 #[cfg(target_os = "windows")]
 pub type WindowsIme = MemoryIme;
 #[cfg(target_os = "windows")]
@@ -71,7 +71,7 @@ pub type NativePlatformServices = PlatformServices<
 
 pub fn native_services() -> NativePlatformServices {
     PlatformServices {
-        clipboard: MemoryClipboard::default(),
+        clipboard: SystemClipboard::default(),
         ime: MemoryIme::default(),
         accessibility: MemoryAccessibility::default(),
         dpi: FixedDpi::default(),

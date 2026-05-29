@@ -2,14 +2,17 @@
 //! input handlers need (clipboard today; window/redraw/file dialogs later).
 //!
 //! The goal is to keep `GpuRuntimeState` testable without requiring a live
-//! windowing system or an `arboard::Clipboard` handle.
+//! windowing system or a real OS clipboard.
 //!
 //! Two implementations are provided:
 //!
-//! - [`SystemShell`] — real, backed by [`arboard`]. Lazily initialises the
-//!   clipboard handle the first time it is used; if `arboard` fails (e.g.
-//!   headless CI), subsequent calls silently no-op.
+//! - [`SystemShell`] — real, backed by [`platform_abstraction::SystemClipboard`]
+//!   for the clipboard and by a [`WindowControl`] handle (installed at startup)
+//!   for window-level operations. If the OS clipboard backend fails (e.g.
+//!   headless CI), calls silently no-op.
 //! - [`NullShell`] — pure in-memory; intended for unit tests.
+
+use platform_abstraction::{Clipboard, SystemClipboard, WindowControl};
 
 /// Capabilities the app needs from the host OS, abstracted so input handlers
 /// can be exercised without a real window/clipboard.
@@ -19,54 +22,74 @@ pub(crate) trait AppShell {
 
     /// Write `text` to the system clipboard. Silently no-ops on backend error.
     fn clipboard_set(&mut self, text: String);
+
+    /// Ask the host window to schedule a redraw. Default: no-op.
+    #[allow(dead_code)] // plumbing in place; no caller yet (see T9).
+    fn request_redraw(&mut self) {}
+
+    /// Set the host window's title bar text. Default: no-op.
+    #[allow(dead_code)] // plumbing in place; no caller yet (see T9).
+    fn set_title(&mut self, _title: &str) {}
+
+    /// Open `url` with the OS default handler. Default: no-op.
+    #[allow(dead_code)] // plumbing in place; no caller yet (see T9).
+    fn open_url(&mut self, _url: &str) {}
+
+    /// Install a [`WindowControl`] implementation so the shell can forward
+    /// redraw/title/open-url calls to the real window. Called once during
+    /// startup by the GPU backend before the event loop pumps any events.
+    /// Default: drops the handle (used by [`NullShell`] in tests).
+    fn install_window(&mut self, _window: Box<dyn WindowControl>) {}
 }
 
-/// Real shell backed by `arboard`. The clipboard handle is created lazily on
-/// first use and re-used across calls (cheaper than `Clipboard::new()` per
-/// keystroke, which is what the previous implementation did).
+/// Real shell. The clipboard is delegated to
+/// [`platform_abstraction::SystemClipboard`], which lazily creates an
+/// `arboard` handle on first use and re-uses it across calls. Window-level
+/// operations (redraw / title / open-url) are forwarded to a
+/// [`WindowControl`] installed via [`AppShell::install_window`] at startup.
 pub(crate) struct SystemShell {
-    clipboard: Option<arboard::Clipboard>,
-    clipboard_failed: bool,
+    clipboard: SystemClipboard,
+    window: Option<Box<dyn WindowControl>>,
 }
 
 impl SystemShell {
     pub(crate) fn new() -> Self {
         Self {
-            clipboard: None,
-            clipboard_failed: false,
+            clipboard: SystemClipboard::default(),
+            window: None,
         }
-    }
-
-    /// Returns a mutable reference to the cached clipboard, lazily creating it.
-    /// Returns `None` once a previous init has failed (avoids retrying every call).
-    fn clipboard_mut(&mut self) -> Option<&mut arboard::Clipboard> {
-        if self.clipboard_failed {
-            return None;
-        }
-        if self.clipboard.is_none() {
-            match arboard::Clipboard::new() {
-                Ok(cb) => self.clipboard = Some(cb),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to initialise system clipboard");
-                    self.clipboard_failed = true;
-                    return None;
-                }
-            }
-        }
-        self.clipboard.as_mut()
     }
 }
 
 impl AppShell for SystemShell {
     fn clipboard_get(&mut self) -> Option<String> {
-        let cb = self.clipboard_mut()?;
-        cb.get_text().ok()
+        self.clipboard.get()
     }
 
     fn clipboard_set(&mut self, text: String) {
-        if let Some(cb) = self.clipboard_mut() {
-            let _ = cb.set_text(text);
+        self.clipboard.set(text);
+    }
+
+    fn request_redraw(&mut self) {
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
         }
+    }
+
+    fn set_title(&mut self, title: &str) {
+        if let Some(w) = self.window.as_ref() {
+            w.set_title(title);
+        }
+    }
+
+    fn open_url(&mut self, url: &str) {
+        if let Some(w) = self.window.as_ref() {
+            w.open_url(url);
+        }
+    }
+
+    fn install_window(&mut self, window: Box<dyn WindowControl>) {
+        self.window = Some(window);
     }
 }
 
@@ -75,12 +98,30 @@ impl AppShell for SystemShell {
 #[allow(dead_code)] // currently used only by tests; will be reached when GpuRuntimeState gets test coverage.
 pub(crate) struct NullShell {
     clipboard: Option<String>,
+    /// Number of times [`AppShell::request_redraw`] has been invoked.
+    redraw_requests: u32,
+    /// Most recent title passed to [`AppShell::set_title`].
+    last_title: Option<String>,
+    /// Most recent URL passed to [`AppShell::open_url`].
+    last_url: Option<String>,
 }
 
 #[cfg(test)]
 impl NullShell {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn redraw_requests(&self) -> u32 {
+        self.redraw_requests
+    }
+
+    pub(crate) fn last_title(&self) -> Option<&str> {
+        self.last_title.as_deref()
+    }
+
+    pub(crate) fn last_url(&self) -> Option<&str> {
+        self.last_url.as_deref()
     }
 }
 
@@ -91,6 +132,18 @@ impl AppShell for NullShell {
 
     fn clipboard_set(&mut self, text: String) {
         self.clipboard = Some(text);
+    }
+
+    fn request_redraw(&mut self) {
+        self.redraw_requests = self.redraw_requests.saturating_add(1);
+    }
+
+    fn set_title(&mut self, title: &str) {
+        self.last_title = Some(title.to_owned());
+    }
+
+    fn open_url(&mut self, url: &str) {
+        self.last_url = Some(url.to_owned());
     }
 }
 
@@ -112,5 +165,17 @@ mod tests {
         shell.clipboard_set("a".to_string());
         shell.clipboard_set("b".to_string());
         assert_eq!(shell.clipboard_get().as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn null_shell_records_window_calls() {
+        let mut shell = NullShell::new();
+        shell.request_redraw();
+        shell.request_redraw();
+        shell.set_title("hello");
+        shell.open_url("https://example.com");
+        assert_eq!(shell.redraw_requests(), 2);
+        assert_eq!(shell.last_title(), Some("hello"));
+        assert_eq!(shell.last_url(), Some("https://example.com"));
     }
 }
