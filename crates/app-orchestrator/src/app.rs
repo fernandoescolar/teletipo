@@ -551,6 +551,11 @@ mod tests {
     use std::time::Duration;
     use terminal_pty::MockPty;
 
+    #[cfg(windows)]
+    const LINE_ENDING: &[u8] = b"\r\n";
+    #[cfg(not(windows))]
+    const LINE_ENDING: &[u8] = b"\n";
+
     /// Construct an `App` with the given terminal dimensions for testing.
     /// Panics if construction fails (invalid size).
     pub(super) fn make_app(rows: usize, cols: usize) -> App {
@@ -602,7 +607,8 @@ mod tests {
         let sent = app.run_editor_command(&mut pty, false).expect("run cmd");
 
         assert!(sent);
-        assert_eq!(pty.input_log(), b"echo run-buffer\n");
+        let expected = [b"echo run-buffer".as_ref(), LINE_ENDING].concat();
+        assert_eq!(pty.input_log(), expected.as_slice());
     }
 
     #[test]
@@ -643,7 +649,8 @@ mod tests {
             .expect("run selection");
 
         assert!(sent);
-        assert_eq!(pty.input_log(), b"selected\n");
+        let expected = [b"selected".as_ref(), LINE_ENDING].concat();
+        assert_eq!(pty.input_log(), expected.as_slice());
     }
 
     #[test]
