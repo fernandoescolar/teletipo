@@ -117,6 +117,8 @@ teletipo --metrics
 RUST_LOG=app_cli=debug,render_wgpu=info teletipo
 ```
 
+Runtime logs are written automatically to daily-rotated files under the platform data directory (see [File Locations](#file-locations)).
+
 ## Keyboard Shortcuts
 
 > `Cmd` on macOS · `Super`/`Win` on Linux/Windows
@@ -270,12 +272,15 @@ Teletipo stores its files in the standard OS directories via the [`dirs`](https:
 | Configuration | `config.toml` | `~/Library/Application Support/teletipo/` | `~/.config/teletipo/` | `%APPDATA%\teletipo\` |
 | Custom themes | `themes/*.yaml` | `~/Library/Application Support/teletipo/themes/` | `~/.config/teletipo/themes/` | `%APPDATA%\teletipo\themes\` |
 | Session & history | `session.json` | `~/Library/Application Support/teletipo/` | `~/.local/share/teletipo/` | `%LOCALAPPDATA%\teletipo\` |
+| Logs | `logs/teletipo.log.YYYY-MM-DD` | `~/Library/Application Support/teletipo/logs/` | `~/.local/share/teletipo/logs/` | `%LOCALAPPDATA%\teletipo\logs\` |
 
 **Configuration** (`config.toml`) — font, font size, theme, padding, shell, and other settings. Created with defaults on first launch.
 
 **Custom themes** — drop any `*.yaml` theme file into the `themes/` directory and it will appear in the settings panel alongside the built-in themes.
 
 **Session & history** (`session.json`) — command history with frecency data, and terminal output snapshots. Written on exit, restored on next launch.
+
+**Logs** (`logs/teletipo.log.YYYY-MM-DD`) — structured runtime logs from all crates. A new file is created each day automatically.
 
 ## Workspace Layout
 

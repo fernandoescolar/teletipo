@@ -19,12 +19,15 @@ serde_json = "1"
 serde_yaml = "0.9"
 thiserror = "2"
 tracing = "0.1"
+tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 wgpu = "0.19"
 winit = "0.29"
 
 [dependencies]
 app-cli = { path = "crates/app-cli" }
+dirs = "5"
+tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [build-dependencies]
