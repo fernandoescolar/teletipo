@@ -77,6 +77,8 @@ RUST_LOG=app_cli=debug,render_wgpu=info teletipo
 - Multi-tab workflow
 - Stateful ANSI/VT100 parser (CSI, DEC sequences, SGR, alternate screen, scrollback)
 - Primary and alternate screen buffers
+- Inline terminal search panel (`Cmd+F` / `Ctrl+F`) with match highlights and next/previous navigation
+- Search scope includes both visible terminal rows and scrollback history
 - Code-editor-style command input
 - Themeable (YAML theme files, ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night)
 - Automatic silent self-update from GitHub Releases
@@ -137,6 +139,17 @@ Press `Tab` at the end of any line to open the suggestion popup, which shows his
 | `Page Up` | Scroll up 5 lines |
 | `Page Down` | Scroll down 5 lines |
 
+### Terminal search
+
+| Shortcut | Action |
+|---|---|
+| `Cmd + F` / `Ctrl + F` | Open search panel for the active tab |
+| typing | Update search query |
+| `Backspace` | Delete previous character in query |
+| `Enter` / `↓` | Jump to next match |
+| `↑` | Jump to previous match |
+| `Escape` | Close search panel |
+
 ### Settings
 
 | Shortcut | Action |
@@ -159,6 +172,7 @@ Press `Tab` at the end of any line to open the suggestion popup, which shows his
 |---|---|
 | Click + drag in terminal | Select text |
 | `Cmd + C` after selection | Copy selection |
+| Click search panel buttons | Previous match, next match, or close search |
 | Drag the split divider | Resize terminal / editor pane |
 | Drag the scrollbar | Scroll terminal or editor |
 | Right-click in terminal | Context menu |
@@ -233,14 +247,18 @@ Teletipo stores its files in the standard OS directories via the [`dirs`](https:
 
 | Crate | Purpose |
 |---|---|
+| `src/main.rs` | Binary entry point |
+| `crates/app-cli` | Application runtime library (GPU window, tabs, themes, updater, search overlay state/input routing) |
+| `crates/app-orchestrator` | Wires terminal, editor, and PTY pump loop |
+| `crates/editor-core` | Editor buffer and undo/redo |
+| `crates/editor-lang` | Token-based syntax highlighting helpers |
+| `crates/platform-abstraction` | Cross-platform adapters (clipboard, window control, process metadata, IME/accessibility) |
+| `crates/render-wgpu` | WGPU renderer, snapshot-to-geometry conversion, text/background overlay rendering |
 | `crates/terminal-ansi` | ANSI/VT parser and action model |
 | `crates/terminal-screen` | Screen/grid model, styles, scrollback, damage tracking |
 | `crates/terminal-core` | Applies parser actions over screen state |
 | `crates/terminal-pty` | PTY abstractions and session management |
-| `crates/editor-core` | Editor buffer and undo/redo |
-| `crates/app-orchestrator` | Wires terminal, editor, and PTY pump loop |
-| `crates/app-cli` | Application runtime library (GPU window, tabs, themes, updater) |
-| `src/main.rs` | Binary entry point |
+| `crates/ui` | Shared UI input/state primitives used across app and renderer |
 
 ## Development
 
