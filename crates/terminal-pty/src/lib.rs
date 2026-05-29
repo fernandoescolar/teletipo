@@ -1,3 +1,7 @@
+#![doc = "PTY backends and session abstractions for terminal process I/O."]
+#![warn(missing_docs)]
+#![allow(missing_docs)]
+
 mod backend;
 mod error;
 mod mock;

@@ -1,3 +1,7 @@
+#![doc = "Terminal grid model, damage tracking, and screen snapshots."]
+#![warn(missing_docs)]
+#![allow(missing_docs)]
+
 mod cell;
 mod color;
 mod grid;

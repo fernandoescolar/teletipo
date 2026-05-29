@@ -1,3 +1,7 @@
+#![doc = "Terminal session orchestration over parser and screen abstractions."]
+#![warn(missing_docs)]
+#![allow(missing_docs)]
+
 mod error;
 mod session;
 

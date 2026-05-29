@@ -1,3 +1,7 @@
+#![doc = "Application runtime, event loop orchestration, and CLI entry helpers."]
+#![warn(missing_docs)]
+#![allow(missing_docs)]
+
 mod commands;
 mod completion;
 mod consts;

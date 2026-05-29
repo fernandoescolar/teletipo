@@ -1,3 +1,7 @@
+#![doc = "WGPU renderer, geometry conversion, and GPU window integration."]
+#![warn(missing_docs)]
+#![allow(missing_docs)]
+
 mod atlas;
 mod batch;
 mod error;

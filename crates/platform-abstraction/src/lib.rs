@@ -1,3 +1,7 @@
+#![doc = "Cross-platform traits and adapters for OS-specific services."]
+#![warn(missing_docs)]
+#![allow(missing_docs)]
+
 mod impls;
 mod macos;
 mod platform;

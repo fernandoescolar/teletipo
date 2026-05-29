@@ -1,3 +1,7 @@
+#![doc = "Shared UI state, actions, and input routing primitives."]
+#![warn(missing_docs)]
+#![allow(missing_docs)]
+
 pub mod actions;
 pub mod components;
 pub mod config;

@@ -1,3 +1,7 @@
+#![doc = "Application orchestration primitives shared by frontend entry points."]
+#![warn(missing_docs)]
+#![allow(missing_docs)]
+
 mod app;
 mod runtime;
 

@@ -1,3 +1,7 @@
+#![doc = "Language highlighting abstractions and incremental highlight snapshots."]
+#![warn(missing_docs)]
+#![allow(missing_docs)]
+
 mod highlighter;
 mod types;
 
