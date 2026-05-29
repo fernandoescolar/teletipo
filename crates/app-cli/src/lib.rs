@@ -31,6 +31,7 @@ use std::rc::Rc;
 use std::time::Instant;
 use tab::TabState;
 use ui::{InputRouter, TabPane, UiConfig, UiState};
+use tracing::{debug, warn};
 
 struct UiComponentBridge {
     state: UiState<TerminalBackend>,
@@ -266,9 +267,17 @@ impl GpuRuntimeState {
                 .unwrap_or(false);
             // Send any pending DSR responses (e.g. \x1b[row;colR) back to the PTY.
             for response in tab.app.drain_pending_responses() {
-                let _ = tab.app.send_pty_input(&mut pty, response.as_bytes());
+                if let Err(err) = tab.app.send_pty_input(&mut pty, response.as_bytes()) {
+                    warn!(error = %err, response = %response, "failed to send pending response to pty");
+                }
             }
-            let is_dead = pty.try_wait().ok().flatten().is_some();
+            let is_dead = match pty.try_wait() {
+                Ok(status) => status.is_some(),
+                Err(err) => {
+                    debug!(error = %err, "failed to query pty child status");
+                    false
+                }
+            };
             tab.pty = Some(pty);
             if i == active && had_data {
                 active_had_data = true;
@@ -342,7 +351,9 @@ impl GpuRuntimeState {
         let Some(mut pty) = tab.pty.take() else {
             return;
         };
-        let _ = tab.app.send_pty_input(&mut pty, bytes);
+        if let Err(err) = tab.app.send_pty_input(&mut pty, bytes) {
+            warn!(error = %err, byte_len = bytes.len(), "failed to send terminal input to pty");
+        }
         tab.pty = Some(pty);
     }
 

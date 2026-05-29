@@ -3477,6 +3477,7 @@ version = "0.1.0"
 dependencies = [
  "portable-pty",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

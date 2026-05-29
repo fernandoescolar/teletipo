@@ -1,6 +1,7 @@
 use app_orchestrator::App;
 use terminal_pty::PortablePtySession;
 use ui::TabBackend;
+use tracing::{debug, warn};
 
 /// Concrete [`TabBackend`] implementation for `app-cli`.
 ///
@@ -65,21 +66,31 @@ impl TabBackend for TerminalBackend {
 
     fn run_command(&mut self, pipe_selection: bool) {
         if let Some(mut pty) = self.pty.take() {
-            let _ = self.app.run_editor_command(&mut pty, pipe_selection);
+            if let Err(err) = self.app.run_editor_command(&mut pty, pipe_selection) {
+                warn!(error = %err, pipe_selection, "editor command failed");
+            }
             self.pty = Some(pty);
         }
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) {
         if let Some(mut pty) = self.pty.take() {
-            let _ = self.app.send_pty_input(&mut pty, bytes);
+            if let Err(err) = self.app.send_pty_input(&mut pty, bytes) {
+                warn!(error = %err, byte_len = bytes.len(), "failed to send bytes to pty");
+            }
             self.pty = Some(pty);
         }
     }
 
     fn pump(&mut self) -> Option<usize> {
         let mut pty = self.pty.take()?;
-        let result = self.app.pump_pty_once(&mut pty).ok();
+        let result = match self.app.pump_pty_once(&mut pty) {
+            Ok(bytes) => Some(bytes),
+            Err(err) => {
+                warn!(error = %err, "failed to pump pty output");
+                None
+            }
+        };
         self.pty = Some(pty);
         result
     }
@@ -97,10 +108,16 @@ impl TabBackend for TerminalBackend {
     }
 
     fn is_dead(&mut self) -> bool {
-        self.pty
-            .as_mut()
-            .and_then(|p| p.try_wait().ok().flatten())
-            .is_some()
+        match self.pty.as_mut().and_then(|p| match p.try_wait() {
+            Ok(status) => Some(status),
+            Err(err) => {
+                debug!(error = %err, "failed to query pty child status");
+                None
+            }
+        }) {
+            Some(Some(_)) => true,
+            Some(None) | None => false,
+        }
     }
 
     fn resize(&mut self, rows: u16, cols: u16) {

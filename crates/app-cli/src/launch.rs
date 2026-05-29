@@ -88,7 +88,10 @@ pub(crate) fn spawn_pty(
 
 pub(crate) fn session_path() -> Option<PathBuf> {
     let dir = dirs::data_local_dir()?.join("teletipo");
-    fs::create_dir_all(&dir).ok()?;
+    if let Err(err) = fs::create_dir_all(&dir) {
+        tracing::warn!(path = %dir.display(), error = %err, "failed to create session directory");
+        return None;
+    }
     Some(dir.join("session.json"))
 }
 
@@ -163,7 +166,9 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
         terminal_output: trim_output(&active.app.terminal_ansi_snapshot()),
     };
     if let Ok(json) = serde_json::to_string_pretty(&session) {
-        let _ = fs::write(path, json);
+        if let Err(err) = fs::write(&path, json) {
+            tracing::warn!(path = %path.display(), error = %err, "failed to save session file");
+        }
     }
 }
 

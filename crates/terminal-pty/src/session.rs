@@ -3,6 +3,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use tracing::{debug, warn};
 
 use crate::backend::PtyBackend;
 use crate::error::PtyError;
@@ -45,13 +46,22 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
         .file_name()
         .and_then(|n| n.to_str())?;
 
-    let home = std::env::var("HOME").ok()?;
+    let home = match std::env::var("HOME") {
+        Ok(home) => home,
+        Err(err) => {
+            warn!(shell = %shell, error = %err, "shell integration unavailable: HOME not set");
+            return None;
+        }
+    };
     let integration_dir = std::path::PathBuf::from(&home)
         .join(".config")
         .join("teletipo")
         .join("shell-integration");
 
-    std::fs::create_dir_all(&integration_dir).ok()?;
+    if let Err(err) = std::fs::create_dir_all(&integration_dir) {
+        warn!(path = %integration_dir.display(), error = %err, "shell integration unavailable: failed to create integration directory");
+        return None;
+    }
 
     let hook = r#"printf '\033]133;D;%d\007' "$?""#;
 
@@ -65,7 +75,10 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
                 "# Teletipo shell integration\n\
                  [ -f '{real_zdotdir}/.zshenv' ] && source '{real_zdotdir}/.zshenv'\n"
             );
-            std::fs::write(integration_dir.join(".zshenv"), zshenv).ok()?;
+            if let Err(err) = std::fs::write(integration_dir.join(".zshenv"), zshenv) {
+                warn!(path = %integration_dir.join(".zshenv").display(), error = %err, "failed to write zsh shell integration file");
+                return None;
+            }
 
             // .zshrc – sourced for interactive shells.
             let zshrc = format!(
@@ -76,7 +89,10 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
                  unset ZDOTDIR\n\
                  [ -f '{real_zdotdir}/.zshrc' ] && source '{real_zdotdir}/.zshrc'\n"
             );
-            std::fs::write(integration_dir.join(".zshrc"), zshrc).ok()?;
+            if let Err(err) = std::fs::write(integration_dir.join(".zshrc"), zshrc) {
+                warn!(path = %integration_dir.join(".zshrc").display(), error = %err, "failed to write zsh shell integration file");
+                return None;
+            }
 
             Some(IntegrationSetup {
                 extra_args: vec![],
@@ -95,7 +111,10 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
                  PROMPT_COMMAND=\"${{PROMPT_COMMAND:+${{PROMPT_COMMAND}}; }}_teletipo_precmd\"\n"
             );
             let rcfile = integration_dir.join(".bashrc");
-            std::fs::write(&rcfile, bashrc).ok()?;
+            if let Err(err) = std::fs::write(&rcfile, bashrc) {
+                warn!(path = %rcfile.display(), error = %err, "failed to write bash shell integration file");
+                return None;
+            }
 
             Some(IntegrationSetup {
                 extra_args: vec![
@@ -175,11 +194,15 @@ impl PortablePtySession {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        if tx.send(buf[..n].to_vec()).is_err() {
+                        if let Err(err) = tx.send(buf[..n].to_vec()) {
+                            debug!(error = %err, "pty reader exiting: receiver dropped");
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(err) => {
+                        warn!(error = %err, "pty reader exiting on read error");
+                        break;
+                    }
                 }
             }
         });
@@ -242,11 +265,15 @@ impl PortablePtySession {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        if tx.send(buf[..n].to_vec()).is_err() {
+                        if let Err(err) = tx.send(buf[..n].to_vec()) {
+                            debug!(error = %err, "pty reader exiting: receiver dropped");
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(err) => {
+                        warn!(error = %err, "pty reader exiting on read error");
+                        break;
+                    }
                 }
             }
         });
@@ -272,12 +299,14 @@ impl PortablePtySession {
 
     /// Notifies the PTY child process of a terminal size change (sends SIGWINCH).
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        let _ = self.master.resize(PtySize {
+        if let Err(err) = self.master.resize(PtySize {
             rows,
             cols,
             pixel_width: 0,
             pixel_height: 0,
-        });
+        }) {
+            warn!(rows, cols, error = %err, "failed to resize pty");
+        }
     }
 }
 
@@ -299,7 +328,11 @@ impl PtyBackend for PortablePtySession {
 
 impl Drop for PortablePtySession {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Err(err) = self.child.kill() {
+            warn!(error = %err, "failed to kill pty child on drop");
+        }
+        if let Err(err) = self.child.wait() {
+            warn!(error = %err, "failed to wait for pty child on drop");
+        }
     }
 }

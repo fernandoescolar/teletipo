@@ -322,7 +322,10 @@ pub enum ConfigError {
 
 pub fn config_path() -> Option<PathBuf> {
     let dir = dirs::config_dir()?.join("teletipo");
-    fs::create_dir_all(&dir).ok()?;
+    if let Err(err) = fs::create_dir_all(&dir) {
+        tracing::warn!(path = %dir.display(), error = %err, "failed to create config directory");
+        return None;
+    }
     Some(dir.join("config.toml"))
 }
 
@@ -370,7 +373,9 @@ pub fn save_config(cfg: &UserConfig) {
     if let Some(path) = config_path()
         && let Ok(s) = toml::to_string_pretty(cfg)
     {
-        let _ = fs::write(path, s);
+        if let Err(err) = fs::write(&path, s) {
+            tracing::warn!(path = %path.display(), error = %err, "failed to save config file");
+        }
     }
 }
 
@@ -400,7 +405,9 @@ vertical   = 0
 # Scrollback lines per session (0 = built-in default).
 # scrollback_lines = 10000
 "##;
-    let _ = fs::write(path, content);
+    if let Err(err) = fs::write(path, content) {
+        tracing::warn!(path = %path.display(), error = %err, "failed to write default config file");
+    }
 }
 
 // ── Color helpers ─────────────────────────────────────────────────────────────

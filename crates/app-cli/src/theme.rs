@@ -81,7 +81,10 @@ pub fn build_ansi_palette(tf: &ThemeFile) -> [[f32; 3]; 16] {
 /// Returns `~/.config/teletipo/themes/`, creating it if needed.
 pub fn themes_dir() -> Option<PathBuf> {
     let dir = dirs::config_dir()?.join("teletipo").join("themes");
-    fs::create_dir_all(&dir).ok()?;
+    if let Err(err) = fs::create_dir_all(&dir) {
+        tracing::warn!(path = %dir.display(), error = %err, "failed to create themes directory");
+        return None;
+    }
     Some(dir)
 }
 
@@ -163,7 +166,9 @@ pub fn install_default_themes() {
 
     for (filename, content) in BUNDLED_THEMES {
         let path = dir.join(filename);
-        let _ = fs::write(path, content);
+        if let Err(err) = fs::write(&path, content) {
+            tracing::warn!(path = %path.display(), error = %err, "failed to install bundled theme");
+        }
     }
 }
 

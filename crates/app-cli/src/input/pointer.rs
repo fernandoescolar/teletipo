@@ -588,9 +588,13 @@ fn open_link(shell: &mut dyn crate::shell::AppShell, raw_target: &str, cwd: &str
     }
 
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg(&path).spawn();
+    if let Err(err) = std::process::Command::new("open").arg(&path).spawn() {
+        tracing::warn!(path = %path.display(), error = %err, "failed to open link target");
+    }
     #[cfg(not(target_os = "macos"))]
-    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+    if let Err(err) = std::process::Command::new("xdg-open").arg(&path).spawn() {
+        tracing::warn!(path = %path.display(), error = %err, "failed to open link target");
+    }
 }
 
 /// Show a modal alert dialog (macOS) or print to stderr (other platforms).
@@ -602,9 +606,12 @@ fn show_alert(message: &str) {
             "display alert \"Teletipo\" message \"{}\" buttons {{\"OK\"}} default button \"OK\"",
             escaped
         );
-        let _ = std::process::Command::new("osascript")
+        if let Err(err) = std::process::Command::new("osascript")
             .args(["-e", &script])
-            .spawn();
+            .spawn()
+        {
+            tracing::warn!(error = %err, "failed to show alert dialog");
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {

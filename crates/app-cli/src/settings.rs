@@ -287,7 +287,14 @@ pub(crate) fn handle_settings_key(
                     || (field.section == "font" && field.key == "family")
                     || numeric_step(field.section, field.key).is_some();
                 if !is_selectable {
-                    let _ = state.user_config.set_field(field.section, field.key, &buf);
+                    if !state.user_config.set_field(field.section, field.key, &buf) {
+                        tracing::warn!(
+                            section = field.section,
+                            key = field.key,
+                            value = %buf,
+                            "rejected invalid setting value"
+                        );
+                    }
                 }
             }
             save_config(&state.user_config);
