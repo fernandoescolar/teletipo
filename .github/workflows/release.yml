@@ -23,6 +23,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Sync crate versions to tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          find . -path ./target -prune -o -name Cargo.toml -print \
+            | xargs sed -i.bak -E '3 s/^version = "[0-9]+\.[0-9]+\.[0-9]+"$/version = "'"$VERSION"'"/'
+          find . -name 'Cargo.toml.bak' -delete
+          # Refresh Cargo.lock with the new versions so build does not error.
+          cargo update --workspace
+
       - name: Build arm64 + x86_64
         run: |
           cargo build --release -p teletipo --target aarch64-apple-darwin
@@ -118,6 +127,14 @@ jobs:
         with:
           tool: cross
 
+      - name: Sync crate versions to tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          find . -path ./target -prune -o -name Cargo.toml -print \
+            | xargs sed -i.bak -E '3 s/^version = "[0-9]+\.[0-9]+\.[0-9]+"$/version = "'"$VERSION"'"/'
+          find . -name 'Cargo.toml.bak' -delete
+          cargo update --workspace
+
       - name: Build
         run: cross build --release -p teletipo --target x86_64-unknown-linux-gnu
 
@@ -161,6 +178,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Sync crate versions to tag
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          Get-ChildItem -Recurse -Filter Cargo.toml `
+            | Where-Object { $_.FullName -notmatch '\\target\\' } `
+            | ForEach-Object {
+                $lines = Get-Content $_.FullName
+                if ($lines.Count -ge 3 -and $lines[2] -match '^version = "[0-9]+\.[0-9]+\.[0-9]+"$') {
+                    $lines[2] = "version = `"$version`""
+                    Set-Content -Path $_.FullName -Value $lines
+                }
+            }
+          cargo update --workspace
 
       - name: Build
         run: cargo build --release -p teletipo

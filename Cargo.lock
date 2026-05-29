@@ -152,7 +152,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "app-cli"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "app-orchestrator",
@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "app-orchestrator"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "editor-core",
  "serde",
@@ -1011,11 +1011,11 @@ dependencies = [
 
 [[package]]
 name = "editor-core"
-version = "0.1.0"
+version = "0.0.2"
 
 [[package]]
 name = "editor-lang"
-version = "0.1.0"
+version = "0.0.2"
 
 [[package]]
 name = "either"
@@ -2451,7 +2451,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-abstraction"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "arboard",
  "objc2 0.4.1",
@@ -2900,7 +2900,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "render-wgpu"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3599,7 +3599,7 @@ dependencies = [
 
 [[package]]
 name = "teletipo"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "app-cli",
  "dirs",
@@ -3633,14 +3633,14 @@ dependencies = [
 
 [[package]]
 name = "terminal-ansi"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "criterion",
 ]
 
 [[package]]
 name = "terminal-core"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "criterion",
  "metrics",
@@ -3651,7 +3651,7 @@ dependencies = [
 
 [[package]]
 name = "terminal-pty"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "metrics",
  "portable-pty",
@@ -3661,7 +3661,7 @@ dependencies = [
 
 [[package]]
 name = "terminal-screen"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "criterion",
  "metrics",
