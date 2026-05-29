@@ -43,15 +43,14 @@ fn collect_all_commands() -> Vec<String> {
     }
 
     // $PATH executables — includes scripts and tools without man pages.
-    if let Ok(path_var) = std::env::var("PATH") {
-        for dir in path_var.split(':') {
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
             let Ok(entries) = std::fs::read_dir(dir) else {
                 continue;
             };
             for entry in entries.filter_map(|e| e.ok()) {
                 if let Ok(meta) = entry.metadata() {
-                    use std::os::unix::fs::PermissionsExt;
-                    if meta.permissions().mode() & 0o111 != 0 {
+                    if is_executable_path(&entry.path(), &meta) {
                         let name = entry.file_name().to_string_lossy().into_owned();
                         if !name.is_empty() && !name.contains('/') && !name.starts_with('.') {
                             cmds.insert(name);
@@ -65,6 +64,26 @@ fn collect_all_commands() -> Vec<String> {
     let mut v: Vec<String> = cmds.into_iter().collect();
     v.sort();
     v
+}
+
+#[cfg(unix)]
+fn is_executable_path(path: &std::path::Path, meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.is_file() && (meta.permissions().mode() & 0o111 != 0) && path.file_name().is_some()
+}
+
+#[cfg(not(unix))]
+fn is_executable_path(path: &std::path::Path, meta: &std::fs::Metadata) -> bool {
+    if !meta.is_file() {
+        return false;
+    }
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => {
+            let ext_upper = ext.to_ascii_uppercase();
+            ["EXE", "BAT", "CMD", "COM", "PS1"].contains(&ext_upper.as_str())
+        }
+        None => false,
+    }
 }
 
 // ── Unified asynchronous man-page data cache ─────────────────────────────────

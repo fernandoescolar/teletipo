@@ -2,8 +2,8 @@
 param(
     [string]$Version = "latest",
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\Teletipo",
-    [switch]$AddToPath = $true,
-    [switch]$Shortcut = $true,
+    [switch]$SkipAddToPath,
+    [switch]$SkipShortcut,
     [switch]$NoVerify,
     [string]$FromArchive,
     [switch]$Uninstall
@@ -14,9 +14,9 @@ $ErrorActionPreference = "Stop"
 $Repo = "fernandoescolar/teletipo"
 $BaseReleaseUrl = "https://github.com/$Repo/releases"
 
-function Write-Log {
+function Write-TeletipoInfo {
     param([string]$Message)
-    Write-Host "[teletipo] $Message"
+    Write-Output "[teletipo] $Message"
 }
 
 function Resolve-LatestTag {
@@ -28,7 +28,7 @@ function Resolve-LatestTag {
     return [System.IO.Path]::GetFileName($final)
 }
 
-function Ensure-UserPath {
+function Add-TeletipoUserPathEntry {
     param([string]$PathToAdd)
 
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -40,10 +40,11 @@ function Ensure-UserPath {
     if ($parts -notcontains $PathToAdd) {
         $newPath = ($parts + $PathToAdd) -join ';'
         [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-        Write-Log "added to user PATH: $PathToAdd"
+        Write-TeletipoInfo "added to user PATH: $PathToAdd"
     }
 }
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Internal helper in non-interactive installer script.')]
 function New-StartMenuShortcut {
     param(
         [string]$ExePath,
@@ -65,7 +66,7 @@ function New-StartMenuShortcut {
     }
     $shortcut.Save()
 
-    Write-Log "shortcut created: $shortcutPath"
+    Write-TeletipoInfo "shortcut created: $shortcutPath"
 }
 
 function Invoke-Uninstall {
@@ -87,7 +88,7 @@ function Invoke-Uninstall {
         [Environment]::SetEnvironmentVariable("Path", ($parts -join ';'), "User")
     }
 
-    Write-Log "uninstall complete"
+    Write-TeletipoInfo "uninstall complete"
 }
 
 if ($Uninstall) {
@@ -144,15 +145,15 @@ try {
         Copy-Item $iconCandidate.FullName (Join-Path $InstallDir "teletipo.png") -Force
     }
 
-    if ($AddToPath) {
-        Ensure-UserPath -PathToAdd $InstallDir
+    if (-not $SkipAddToPath) {
+        Add-TeletipoUserPathEntry -PathToAdd $InstallDir
     }
 
-    if ($Shortcut) {
+    if (-not $SkipShortcut) {
         New-StartMenuShortcut -ExePath (Join-Path $InstallDir "teletipo.exe") -IconPath (Join-Path $InstallDir "teletipo.png")
     }
 
-    Write-Log "installed in $InstallDir"
+    Write-TeletipoInfo "installed in $InstallDir"
 }
 finally {
     if (Test-Path $tmp) {

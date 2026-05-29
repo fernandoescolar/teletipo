@@ -21,4 +21,4 @@ if ($userPath) {
     [Environment]::SetEnvironmentVariable("Path", ($parts -join ';'), "User")
 }
 
-Write-Host "[teletipo] uninstall complete"
+Write-Output "[teletipo] uninstall complete"
