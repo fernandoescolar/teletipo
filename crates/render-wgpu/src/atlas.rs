@@ -135,6 +135,27 @@ impl GlyphAtlas {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{GlyphAtlas, GlyphEntry, GlyphKey};
+
+    #[test]
+    fn glyph_atlas_roundtrip() {
+        let mut atlas = GlyphAtlas::default();
+        let key = GlyphKey { ch: 'a', style: 1 };
+        let entry = GlyphEntry {
+            uv: [0.1, 0.2, 0.3, 0.4],
+            advance: 1.5,
+        };
+
+        atlas.insert(key.clone(), entry.clone());
+
+        let stored = atlas.get(&key).expect("glyph entry stored");
+        assert_eq!(stored.uv, entry.uv);
+        assert_eq!(stored.advance, entry.advance);
+    }
+}
+
 /// One rasterized glyph packed into the atlas texture.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct CachedGlyph {

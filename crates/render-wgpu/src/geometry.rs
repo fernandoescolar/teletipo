@@ -1293,6 +1293,49 @@ pub fn snapshot_to_cell_quads_in_bounds(
     quads
 }
 
+#[cfg(test)]
+mod tests {
+    use super::snapshot_to_cell_quads_in_bounds;
+    use crate::types::DamageRegion;
+
+    #[test]
+    fn snapshot_to_cell_quads_in_bounds_matches_expected_layout() {
+        let damage = DamageRegion {
+            full_redraw: true,
+            dirty_rows: Vec::new(),
+        };
+
+        let quads = snapshot_to_cell_quads_in_bounds("ab\nc", &damage, 4, (1.0, -1.0));
+
+        assert_eq!(
+            quads,
+            vec![
+                crate::batch::CellQuad {
+                    x: -1.0,
+                    y: 0.0,
+                    w: 0.5,
+                    h: 1.0,
+                    glyph: 'a',
+                },
+                crate::batch::CellQuad {
+                    x: -0.5,
+                    y: 0.0,
+                    w: 0.5,
+                    h: 1.0,
+                    glyph: 'b',
+                },
+                crate::batch::CellQuad {
+                    x: -1.0,
+                    y: -1.0,
+                    w: 0.5,
+                    h: 1.0,
+                    glyph: 'c',
+                },
+            ]
+        );
+    }
+}
+
 pub(crate) fn snapshot_to_text_quads_in_bounds(
     text: &str,
     cols_hint: usize,

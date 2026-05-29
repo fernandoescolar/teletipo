@@ -805,6 +805,22 @@ impl Screen {
 #[cfg(test)]
 mod tests {
     use super::Screen;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn resize_keeps_cursor_in_bounds(new_rows in 1usize..16, new_cols in 1usize..16) {
+            let mut screen = Screen::new(3, 3);
+            screen.put_char('a');
+            screen.put_char('b');
+            screen.cursor_position(3, 3);
+
+            screen.resize(new_rows, new_cols);
+
+            prop_assert!(screen.cursor_row() < new_rows);
+            prop_assert!(screen.cursor_col() < new_cols);
+        }
+    }
 
     #[test]
     fn writes_text_and_newline() {
@@ -900,5 +916,18 @@ mod tests {
 
         let snap = screen.snapshot();
         assert!(snap.text.contains('z'));
+    }
+
+    #[test]
+    fn resize_clamps_cursor_after_wide_chars() {
+        let mut screen = Screen::new(2, 4);
+        screen.put_char('你');
+        screen.put_char('好');
+        screen.cursor_position(2, 4);
+
+        screen.resize(2, 2);
+
+        assert!(screen.cursor_row() < 2);
+        assert!(screen.cursor_col() < 2);
     }
 }

@@ -360,3 +360,40 @@ impl Drop for PortablePtySession {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PortablePtySession;
+    use crate::backend::PtyBackend;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn spawn_command_delivers_output() {
+        let mut session = PortablePtySession::spawn_command(
+            "sh",
+            &["-lc", "printf hi"],
+            24,
+            80,
+            None,
+        )
+        .expect("spawn command");
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut output = Vec::new();
+        while Instant::now() < deadline {
+            session
+                .try_read_output(&mut output)
+                .expect("read pty output");
+            if String::from_utf8_lossy(&output).contains("hi") {
+                return;
+            }
+            if session.try_wait().expect("query child status").is_some() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+
+        assert!(String::from_utf8_lossy(&output).contains("hi"));
+    }
+}

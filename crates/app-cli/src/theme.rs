@@ -259,6 +259,70 @@ mod tests {
         assert_eq!(palette[1], [0.0, 0.0, 0.0]);
     }
 
+        #[test]
+        fn theme_file_defaults_details_when_missing() {
+                let yaml = r#"
+name: sample
+accent: '#ffffff'
+cursor: '#ffffff'
+background: '#000000'
+foreground: '#eeeeee'
+terminal_colors:
+    normal:
+        black: '#000000'
+        red: '#111111'
+        green: '#222222'
+        yellow: '#333333'
+        blue: '#444444'
+        magenta: '#555555'
+        cyan: '#666666'
+        white: '#777777'
+    bright:
+        black: '#888888'
+        red: '#999999'
+        green: '#aaaaaa'
+        yellow: '#bbbbbb'
+        blue: '#cccccc'
+        magenta: '#dddddd'
+        cyan: '#eeeeee'
+        white: '#ffffff'
+"#;
+
+                let theme = serde_yaml::from_str::<ThemeFile>(yaml).expect("valid theme yaml");
+                assert_eq!(theme.details, "darker");
+        }
+
+        #[test]
+        fn theme_file_rejects_missing_required_fields() {
+                let yaml = r#"
+name: sample
+accent: '#ffffff'
+cursor: '#ffffff'
+foreground: '#eeeeee'
+terminal_colors:
+    normal:
+        black: '#000000'
+        red: '#111111'
+        green: '#222222'
+        yellow: '#333333'
+        blue: '#444444'
+        magenta: '#555555'
+        cyan: '#666666'
+        white: '#777777'
+    bright:
+        black: '#888888'
+        red: '#999999'
+        green: '#aaaaaa'
+        yellow: '#bbbbbb'
+        blue: '#cccccc'
+        magenta: '#dddddd'
+        cyan: '#eeeeee'
+        white: '#ffffff'
+"#;
+
+                assert!(serde_yaml::from_str::<ThemeFile>(yaml).is_err());
+        }
+
     #[test]
     fn default_details_is_darker() {
         // Verify the serde default function used by ThemeFile.

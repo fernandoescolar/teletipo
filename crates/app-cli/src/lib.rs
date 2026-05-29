@@ -892,4 +892,36 @@ mod input_smoke_tests {
             Some("smoke-test"),
         );
     }
+
+    #[test]
+    fn startup_snapshot_renders_command_output() {
+        use std::sync::mpsc::channel;
+        use std::time::{Duration, Instant};
+
+        let (update_tx, update_rx) = channel();
+        drop(update_tx);
+
+        let session = tab::PersistentSession::default();
+        let mut state = launch::build_initial_state(
+            24,
+            80,
+            Some("printf 'hello from teletipo\n'"),
+            "/bin/sh",
+            session,
+            update_rx,
+        )
+        .expect("build initial state");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut snapshot = snapshot::build_snapshot(&mut state);
+        while !snapshot.terminal_text.contains("hello from teletipo") {
+            assert!(Instant::now() < deadline, "timed out waiting for PTY output");
+            std::thread::sleep(Duration::from_millis(20));
+            snapshot = snapshot::build_snapshot(&mut state);
+        }
+
+        assert!(snapshot.terminal_text.contains("hello from teletipo"));
+        assert_eq!(snapshot.active_tab, 0);
+        assert_eq!(snapshot.scroll_offset, 0);
+    }
 }
