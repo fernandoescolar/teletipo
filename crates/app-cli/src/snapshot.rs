@@ -23,6 +23,26 @@ fn truncate_display(s: &str, max_chars: usize) -> String {
     }
 }
 
+fn tab_button_label(index: usize, title: Option<&str>, cwd: &str, max_chars: usize) -> String {
+    let label_text = title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(|title| truncate_display(title, max_chars))
+        .unwrap_or_else(|| shorten_cwd_label(cwd, max_chars));
+    format!("Cmd+{}  {}", index + 1, label_text)
+}
+
+fn tab_button_max_chars(tab_width_px: f32, cell_w_px: f32) -> usize {
+    let shortcut_width_chars = 4.0;
+    let close_button_width_chars = 2.0;
+    let padding_chars = 2.0;
+    let title_width_chars = (tab_width_px / cell_w_px).floor()
+        - shortcut_width_chars
+        - close_button_width_chars
+        - padding_chars;
+    title_width_chars.max(4.0) as usize
+}
+
 /// Convert the active `ThemeFile` (if any) to a `ColorTheme` for the renderer.
 /// Falls back to `ColorTheme::default()` when no theme is selected.
 pub(crate) fn theme_from_config(theme_file: Option<&theme::ThemeFile>) -> ColorTheme {
@@ -355,10 +375,18 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         }
     }
     let tab_labels: Vec<String> = if state.tabs.len() > 1 {
+        let n = state.tabs.len();
+        let add_btn_w = state.layout.cell_w as f32 * 2.0;
+        let tab_area_w = state.layout.window_width as f32 - add_btn_w;
+        let tab_w_px = tab_area_w / n as f32;
+        let max_chars = tab_button_max_chars(tab_w_px, state.layout.cell_w as f32);
         state
             .tabs
             .iter()
-            .map(|t| shorten_cwd_label(&t.cwd, 16))
+            .enumerate()
+            .map(|(index, tab)| {
+                tab_button_label(index, tab.app.window_title(), &tab.cwd, max_chars)
+            })
             .collect()
     } else {
         Vec::new()
@@ -493,5 +521,34 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 None
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tab_button_label;
+
+    #[test]
+    fn tab_button_label_uses_title_when_present() {
+        assert_eq!(
+            tab_button_label(0, Some("My Shell"), "/tmp", 16),
+            "Cmd+1  My Shell"
+        );
+    }
+
+    #[test]
+    fn tab_button_label_falls_back_to_cwd() {
+        assert_eq!(
+            tab_button_label(1, None, "/tmp/project", 16),
+            "Cmd+2  /tmp/project"
+        );
+    }
+
+    #[test]
+    fn tab_button_label_truncates_to_fit() {
+        assert_eq!(
+            tab_button_label(2, Some("very long terminal title"), "/tmp", 8),
+            "Cmd+3  very lon…"
+        );
     }
 }
