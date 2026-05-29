@@ -429,6 +429,44 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
+    if !snapshot.search_highlights.is_empty()
+        && size.width > 0
+        && size.height > 0
+        && cell_w_px > 0.0
+        && cell_h_px > 0.0
+    {
+        let px_x = 2.0 / size.width as f32;
+        let px_y = 2.0 / size.height as f32;
+        let pane_top_px = term_top_offset_px;
+        for (row, col_start, col_end) in &snapshot.search_highlights {
+            if col_start >= col_end {
+                continue;
+            }
+            let x0 = (pad_h + *col_start as f32 * cell_w_px) * px_x - 1.0;
+            let x1 = (pad_h + *col_end as f32 * cell_w_px) * px_x - 1.0;
+            let y1 = 1.0 - (pane_top_px + pad_v + *row as f32 * cell_h_px) * px_y;
+            let y0 = 1.0 - (pane_top_px + pad_v + (*row + 1) as f32 * cell_h_px) * px_y;
+            verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, [0.95, 0.85, 0.10, 0.40]));
+        }
+    }
+
+    if let Some((row, col_start, col_end)) = snapshot.search_current_highlight
+        && size.width > 0
+        && size.height > 0
+        && cell_w_px > 0.0
+        && cell_h_px > 0.0
+        && col_start < col_end
+    {
+        let px_x = 2.0 / size.width as f32;
+        let px_y = 2.0 / size.height as f32;
+        let pane_top_px = term_top_offset_px;
+        let x0 = (pad_h + col_start as f32 * cell_w_px) * px_x - 1.0;
+        let x1 = (pad_h + col_end as f32 * cell_w_px) * px_x - 1.0;
+        let y1 = 1.0 - (pane_top_px + pad_v + row as f32 * cell_h_px) * px_y;
+        let y0 = 1.0 - (pane_top_px + pad_v + (row + 1) as f32 * cell_h_px) * px_y;
+        verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, [1.0, 0.65, 0.0, 0.65]));
+    }
+
     // Link underlines: drawn only when Cmd is held (terminal_links is non-empty).
     if !snapshot.terminal_links.is_empty()
         && size.width > 0
@@ -449,6 +487,47 @@ pub(crate) fn build_panel_vertices(
             let y_bot_ndc = 1.0 - y_bot_px * px_y;
             let y_top_ndc = 1.0 - y_top_px * px_y;
             verts.extend_from_slice(&quad_verts(x0, y_bot_ndc, x1, y_top_ndc, underline_color));
+        }
+    }
+
+    if snapshot.search_panel.is_some()
+        && size.width > 0
+        && size.height > 0
+        && cell_w_px > 0.0
+        && cell_h_px > 0.0
+    {
+        let panel_w_px = cell_w_px * 34.0;
+        let panel_h_px = cell_h_px * 1.6;
+        let panel_x_px = (size.width as f32 - pad_h - panel_w_px).max(0.0);
+        let panel_y_px = tab_bar_h + pad_v;
+        let button_w_px = cell_w_px * 2.0;
+
+        let px_x = 2.0 / size.width as f32;
+        let px_y = 2.0 / size.height as f32;
+        let x0 = panel_x_px * px_x - 1.0;
+        let x1 = (panel_x_px + panel_w_px) * px_x - 1.0;
+        let y1 = 1.0 - panel_y_px * px_y;
+        let y0 = 1.0 - (panel_y_px + panel_h_px) * px_y;
+
+        let panel_bg = [0.08, 0.12, 0.20, 0.95];
+        let panel_border = [0.30, 0.46, 0.75, 1.0];
+        verts.extend_from_slice(&quad_verts(
+            x0 - px_x,
+            y0 - px_y,
+            x1 + px_x,
+            y1 + px_y,
+            panel_border,
+        ));
+        verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, panel_bg));
+
+        let btn_prev_x = panel_x_px + panel_w_px - button_w_px * 3.0;
+        let btn_next_x = panel_x_px + panel_w_px - button_w_px * 2.0;
+        let btn_close_x = panel_x_px + panel_w_px - button_w_px;
+        let button_bg = [0.14, 0.20, 0.34, 1.0];
+        for bx in [btn_prev_x, btn_next_x, btn_close_x] {
+            let bx0 = bx * px_x - 1.0;
+            let bx1 = (bx + button_w_px) * px_x - 1.0;
+            verts.extend_from_slice(&quad_verts(bx0, y0, bx1, y1, button_bg));
         }
     }
 

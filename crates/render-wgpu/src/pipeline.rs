@@ -335,6 +335,16 @@ impl<'a> GpuState<'a> {
                 }
             }
         }
+        if let Some(ref panel) = snapshot.search_panel {
+            for ch in panel.query.chars() {
+                if ch != ' ' {
+                    self.ensure_glyph(ch);
+                }
+            }
+            for ch in ['F', 'i', 'n', 'd', ':', '/', '↑', '↓', '×'] {
+                self.ensure_glyph(ch);
+            }
+        }
 
         // Pixel coordinates for the terminal and editor pane boundaries.
         let term_top_px = term_top_offset_px;
@@ -641,6 +651,79 @@ impl<'a> GpuState<'a> {
                     y_item,
                     mx + self.cell_w_px * 0.5,
                     text_color,
+                    &[],
+                    &[],
+                    &self.glyph_cache,
+                    None,
+                    self.cell_w_px,
+                    self.cell_h_px,
+                    self.size,
+                    &mut text_verts,
+                    0,
+                );
+            }
+        }
+
+        if let Some(ref panel) = snapshot.search_panel {
+            let panel_w = self.cell_w_px * 34.0;
+            let panel_h = self.cell_h_px * 1.6;
+            let panel_x = (self.size.width as f32 - pad_h - panel_w).max(0.0);
+            let panel_y = tab_bar_h + pad_v;
+            let button_w = self.cell_w_px * 2.0;
+
+            let max_query_chars = 16usize;
+            let query_display = if panel.query.chars().count() > max_query_chars {
+                let mut s = panel
+                    .query
+                    .chars()
+                    .take(max_query_chars.saturating_sub(1))
+                    .collect::<String>();
+                s.push('…');
+                s
+            } else {
+                panel.query.clone()
+            };
+            let query_text = format!("Find: {query_display}");
+            add_text_verts(
+                &query_text,
+                panel_y + (panel_h - self.cell_h_px) * 0.5,
+                panel_x + self.cell_w_px * 0.6,
+                [0.88, 0.92, 0.98, 1.0],
+                &[],
+                &[],
+                &self.glyph_cache,
+                None,
+                self.cell_w_px,
+                self.cell_h_px,
+                self.size,
+                &mut text_verts,
+                0,
+            );
+
+            let count_text = format!("{} / {}", panel.current_match, panel.match_count);
+            add_text_verts(
+                &count_text,
+                panel_y + (panel_h - self.cell_h_px) * 0.5,
+                panel_x + panel_w - button_w * 3.0 - self.cell_w_px * 6.2,
+                [0.72, 0.80, 0.92, 1.0],
+                &[],
+                &[],
+                &self.glyph_cache,
+                None,
+                self.cell_w_px,
+                self.cell_h_px,
+                self.size,
+                &mut text_verts,
+                0,
+            );
+
+            for (i, glyph) in ['↑', '↓', '×'].iter().enumerate() {
+                let bx = panel_x + panel_w - button_w * (3 - i) as f32;
+                add_text_verts(
+                    &glyph.to_string(),
+                    panel_y + (panel_h - self.cell_h_px) * 0.5,
+                    bx + self.cell_w_px * 0.55,
+                    [0.92, 0.96, 1.0, 1.0],
                     &[],
                     &[],
                     &self.glyph_cache,

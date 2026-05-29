@@ -666,6 +666,33 @@ impl Screen {
         text
     }
 
+    /// Returns plain text for scrollback (oldest first) followed by the
+    /// current visible grid.
+    pub fn dump_text_with_scrollback(&self) -> String {
+        let grid = &self.primary;
+        let cols = grid.cols;
+        let mut out = String::new();
+
+        for (row_cells, _wrapped) in &self.scrollback {
+            for col in 0..cols {
+                out.push(row_cells.get(col).copied().unwrap_or_default().ch);
+            }
+            out.push('\n');
+        }
+
+        for row in 0..grid.rows {
+            let start = row * cols;
+            for col in 0..cols {
+                out.push(grid.cells[start + col].ch);
+            }
+            if row + 1 < grid.rows {
+                out.push('\n');
+            }
+        }
+
+        out
+    }
+
     /// Encodes the scrollback + visible grid as a string of ANSI SGR escape
     /// sequences so that fg/bg colors and text attributes are preserved when
     /// fed back through the terminal parser on next launch.
@@ -898,6 +925,23 @@ mod tests {
         }
 
         assert!(screen.scrollback_len() >= 1);
+    }
+
+    #[test]
+    fn dump_text_with_scrollback_includes_history_rows() {
+        let mut screen = Screen::new(2, 2);
+        for ch in "abcd".chars() {
+            screen.put_char(ch);
+        }
+        screen.linefeed();
+        screen.carriage_return();
+        for ch in "ef".chars() {
+            screen.put_char(ch);
+        }
+
+        let all = screen.dump_text_with_scrollback();
+        assert!(all.contains("ab"));
+        assert!(all.contains("ef"));
     }
 
     #[test]

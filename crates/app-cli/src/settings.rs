@@ -1,9 +1,24 @@
-use crate::GpuRuntimeState;
 use crate::config::{SETTINGS_FIELDS, save_config};
 use crate::consts::SEARCH_MAX_VISIBLE;
+use crate::runtime::GpuRuntimeState;
 use render_wgpu::{SettingsItem, SettingsOverlay};
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};
+
+#[derive(Debug, Default)]
+pub(crate) struct SettingsUiState {
+    pub(crate) open: bool,
+    pub(crate) cursor: usize,
+    pub(crate) edit_buf: Option<String>,
+    pub(crate) dirty: bool,
+    pub(crate) just_saved: bool,
+    /// When `Some`, the focused searchable field is in type-to-filter mode.
+    pub(crate) search_buf: Option<String>,
+    /// Highlighted index within the current `search_matches` list.
+    pub(crate) search_selected: usize,
+    /// First visible index in the search dropdown (scroll offset).
+    pub(crate) search_scroll_offset: usize,
+}
 
 /// Returns the increment step for numeric fields, or `None` if the field is
 /// not numeric.

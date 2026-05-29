@@ -3,6 +3,7 @@ use crate::coords::{
     clamp_editor_scroll, current_line_prefix, cursor_at_line_end, editor_cursor_row_col,
     editor_row_col_to_offset, extract_selection, line_leading_spaces, replace_cursor_line,
 };
+use crate::search;
 use crate::settings;
 use render_wgpu::AppWindowEvent;
 use winit::event::ElementState;
@@ -31,6 +32,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
 
     if state.settings.open {
         settings::handle_settings_key(state, key_event);
+        return;
+    }
+
+    if state.tab().search.active {
+        handle_search_key(state, key_event);
         return;
     }
 
@@ -366,6 +372,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                     state.tab_mut().app.set_editor_cursor(0, false);
                     state.tab_mut().app.set_editor_cursor(end, true);
                 }
+                "f" => {
+                    let tab = state.tab_mut();
+                    tab.search.active = true;
+                    search::refresh_search(tab);
+                }
                 "t" => state.add_new_tab(),
                 "w" => {
                     let idx = state.active_tab;
@@ -392,6 +403,12 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             state.settings.open = true;
             state.settings.cursor = 0;
             state.settings.edit_buf = None;
+        }
+
+        Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "f" => {
+            let tab = state.tab_mut();
+            tab.search.active = true;
+            search::refresh_search(tab);
         }
 
         Key::Character(ch) if state.modifiers.ctrl_down => {
@@ -585,4 +602,31 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         _ => {}
     }
     clamp_editor_scroll(state);
+}
+
+fn handle_search_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+    match &key_event.logical_key {
+        Key::Named(NamedKey::Escape) => {
+            search::close_search(state.tab_mut());
+        }
+        Key::Named(NamedKey::Enter) | Key::Named(NamedKey::ArrowDown) => {
+            search::next_match(state.tab_mut());
+        }
+        Key::Named(NamedKey::ArrowUp) => {
+            search::prev_match(state.tab_mut());
+        }
+        Key::Named(NamedKey::Backspace) => {
+            let tab = state.tab_mut();
+            tab.search.query.pop();
+            search::refresh_search(tab);
+        }
+        Key::Character(_) | Key::Named(NamedKey::Space) => {
+            if let Some(text) = key_event.text.as_ref() {
+                let tab = state.tab_mut();
+                tab.search.query.push_str(text.as_str());
+                search::refresh_search(tab);
+            }
+        }
+        _ => {}
+    }
 }

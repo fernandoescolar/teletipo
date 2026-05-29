@@ -23,7 +23,7 @@ pub use geometry::{
 pub use renderer::{NullRenderer, Renderer, WgpuRenderer};
 pub use types::{
     AppWindowEvent, ColorTheme, DamageRegion, FontConfig, PaneKind, PaneLayout, PipelineStage,
-    RenderCell, RenderConfig, RenderRow, RenderSnapshot, RenderStats, SettingsItem,
+    RenderCell, RenderConfig, RenderRow, RenderSnapshot, RenderStats, SearchPanel, SettingsItem,
     SettingsOverlay, SuggestionDropdown, TabContextMenu, TerminalLink, VsyncMode,
     default_ansi_palette,
 };

@@ -204,6 +204,10 @@ impl AppTerminal {
         self.session.snapshot_text()
     }
 
+    pub fn snapshot_text_with_scrollback(&self) -> String {
+        self.session.snapshot_text_with_scrollback()
+    }
+
     pub fn snapshot_ansi(&self) -> std::sync::Arc<String> {
         self.session.snapshot_ansi()
     }
@@ -433,6 +437,10 @@ impl App {
 
     pub fn terminal_snapshot(&self) -> String {
         self.terminal.snapshot_text()
+    }
+
+    pub fn terminal_snapshot_with_scrollback(&self) -> String {
+        self.terminal.snapshot_text_with_scrollback()
     }
 
     /// Returns the screen's monotonic version counter — incremented on every

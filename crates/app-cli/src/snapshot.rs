@@ -8,8 +8,8 @@ use crate::coords::{
 use crate::settings::build_settings_overlay;
 use crate::theme;
 use render_wgpu::{
-    ColorTheme, DamageRegion, RenderCell, RenderRow, RenderSnapshot, SuggestionDropdown,
-    TabContextMenu, TerminalLink,
+    ColorTheme, DamageRegion, RenderCell, RenderRow, RenderSnapshot, SearchPanel,
+    SuggestionDropdown, TabContextMenu, TerminalLink,
 };
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
@@ -153,6 +153,60 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let terminal_damage = Arc::new(damage);
     state.tabs[active].last_terminal_text = terminal_text.clone();
     state.tabs[active].term_row_count = terminal_text.lines().count().max(1);
+
+    if state.tabs[active].search.active {
+        crate::search::refresh_search(&mut state.tabs[active]);
+    }
+
+    let (search_panel, search_highlights, search_current_highlight) =
+        if state.tabs[active].search.active {
+            let tab = &state.tabs[active];
+            let visible_rows = tab.term_row_count.max(1);
+            let total_rows = tab.search.total_rows.max(visible_rows);
+            let window_start = total_rows
+                .saturating_sub(visible_rows)
+                .saturating_sub(tab.scroll_offset.min(tab.app.scrollback_len()));
+            let window_end = window_start.saturating_add(visible_rows);
+
+            let highlights: Vec<(usize, usize, usize)> = tab
+                .search
+                .matches
+                .iter()
+                .filter_map(|m| {
+                    if m.abs_row >= window_start && m.abs_row < window_end {
+                        Some((m.abs_row - window_start, m.col_start, m.col_end))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let current = tab.search.matches.get(tab.search.current).and_then(|m| {
+                if m.abs_row >= window_start && m.abs_row < window_end {
+                    Some((m.abs_row - window_start, m.col_start, m.col_end))
+                } else {
+                    None
+                }
+            });
+
+            let current_match = if tab.search.matches.is_empty() {
+                0
+            } else {
+                tab.search.current + 1
+            };
+
+            (
+                Some(SearchPanel {
+                    query: tab.search.query.clone(),
+                    match_count: tab.search.matches.len(),
+                    current_match,
+                }),
+                highlights,
+                current,
+            )
+        } else {
+            (None, Vec::new(), None)
+        };
     // Underline only the link the cursor is currently hovering over.
     let terminal_links: Vec<TerminalLink> = {
         let all_links = detect_terminal_links(&terminal_text);
@@ -358,6 +412,8 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         editor_scroll_offset,
         editor_selection,
         selection,
+        search_highlights,
+        search_current_highlight,
         tab_labels,
         active_tab,
         tab_context_menu,
@@ -388,6 +444,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             }
         },
         editor_suggestion,
+        search_panel,
         terminal_links,
         request_exit: state.should_exit,
         cursor_shape: state.tabs[active].app.cursor_shape(),

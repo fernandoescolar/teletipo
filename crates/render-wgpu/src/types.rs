@@ -44,6 +44,10 @@ pub struct RenderSnapshot {
     pub editor_scroll_offset: usize,
     pub editor_selection: Option<(usize, usize)>,
     pub selection: Option<(usize, usize, usize, usize)>,
+    /// Highlight ranges for all terminal search matches in viewport coordinates.
+    pub search_highlights: Vec<(usize, usize, usize)>,
+    /// Highlight range for the active terminal search match in viewport coordinates.
+    pub search_current_highlight: Option<(usize, usize, usize)>,
     /// Label for every open tab (e.g. "Tab 1", "Tab 2"). When empty the tab bar
     /// is not rendered. Populated by the application layer.
     pub tab_labels: Vec<String>,
@@ -74,6 +78,8 @@ pub struct RenderSnapshot {
     /// Only populated while Tab/Shift+Tab cycling is active and there are at
     /// least two candidates.
     pub suggestion_dropdown: Option<SuggestionDropdown>,
+    /// Inline terminal search panel shown near the top-right of the terminal pane.
+    pub search_panel: Option<SearchPanel>,
     /// File paths and URLs detected in the terminal output.  Populated only
     /// when the Cmd key is held so the renderer can draw link underlines.
     pub terminal_links: Vec<TerminalLink>,
@@ -96,6 +102,17 @@ pub struct RenderSnapshot {
     /// version to skip expensive terminal vertex uploads when content is
     /// unchanged.
     pub terminal_screen_version: u64,
+}
+
+/// Visual state for the inline terminal search panel.
+#[derive(Debug, Clone)]
+pub struct SearchPanel {
+    /// Current query text.
+    pub query: String,
+    /// Total number of matches.
+    pub match_count: usize,
+    /// 1-based index of the current match.
+    pub current_match: usize,
 }
 
 impl RenderSnapshot {

@@ -1,6 +1,8 @@
 use app_orchestrator::App;
 use terminal_pty::PortablePtySession;
 
+use crate::search::SearchState;
+
 /// Per-command frecency tracking data persisted across sessions.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct HistoryEntry {
@@ -62,6 +64,8 @@ pub(crate) struct TabState {
     /// `true` when the shell was spawned with OSC 133 exit-code integration.
     /// When `false`, commands are saved to history immediately on Enter.
     pub(crate) shell_integration: bool,
+    /// Inline terminal find panel state (Cmd+F).
+    pub(crate) search: SearchState,
 }
 
 /// Persistent state for a single tab.

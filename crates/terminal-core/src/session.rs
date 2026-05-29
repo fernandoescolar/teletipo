@@ -42,6 +42,7 @@ pub trait TerminalDisplay {
     fn cursor_row(&self) -> usize;
     fn cursor_col(&self) -> usize;
     fn dump_text(&self) -> String;
+    fn dump_text_with_scrollback(&self) -> String;
     fn dump_ansi(&self) -> Arc<String>;
     fn dump_styled(&self) -> StyledChars;
     fn dump_styled_at_offset(&self, scroll_offset: usize) -> StyledChars;
@@ -153,6 +154,10 @@ impl TerminalDisplay for Screen {
 
     fn dump_text(&self) -> String {
         Screen::dump_text(self)
+    }
+
+    fn dump_text_with_scrollback(&self) -> String {
+        Screen::dump_text_with_scrollback(self)
     }
 
     fn dump_ansi(&self) -> Arc<String> {
@@ -332,6 +337,10 @@ where
 
     pub fn snapshot_text(&self) -> String {
         self.screen.dump_text()
+    }
+
+    pub fn snapshot_text_with_scrollback(&self) -> String {
+        self.screen.dump_text_with_scrollback()
     }
 
     pub fn snapshot_ansi(&self) -> Arc<String> {
@@ -532,6 +541,10 @@ mod tests {
         }
 
         fn dump_text(&self) -> String {
+            self.text.clone()
+        }
+
+        fn dump_text_with_scrollback(&self) -> String {
             self.text.clone()
         }
 

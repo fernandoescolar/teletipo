@@ -4,6 +4,7 @@ use crate::coords::{
     expand_tilde, strip_line_col,
 };
 use crate::launch::execute_context_menu_item;
+use crate::search;
 use render_wgpu::{AppWindowEvent, SCROLLBAR_W_PX};
 use std::time::Instant;
 use winit::event::{ElementState, MouseButton};
@@ -238,6 +239,27 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 }
                 state.overlays.tab_context_menu = None;
                 state.overlays.tab_context_hover = None;
+                return true;
+            }
+
+            if state.tab().search.active
+                && let Some(hitbox) = search::search_panel_hitbox(
+                    state.layout.window_width,
+                    state.tab_bar_h(),
+                    state.layout.cell_w,
+                    state.layout.cell_h,
+                    state.user_config.padding.horizontal as f32,
+                    state.user_config.padding.vertical as f32,
+                )
+                && search::in_panel(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y)
+            {
+                if search::hit_close(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
+                    search::close_search(state.tab_mut());
+                } else if search::hit_prev(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
+                    search::prev_match(state.tab_mut());
+                } else if search::hit_next(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
+                    search::next_match(state.tab_mut());
+                }
                 return true;
             }
 
