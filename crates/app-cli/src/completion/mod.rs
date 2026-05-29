@@ -15,6 +15,7 @@ use crate::tab;
 /// completions (Tier 0b) when the user is typing flags for a known command, and
 /// appends man-page command names as a last resort (Tier 4) for single-word
 /// prefixes.
+#[allow(clippy::too_many_lines)] // multi-tier suggestion ranking, intentionally sequential
 pub(crate) fn suggestion_matches_frecency(
     history: &[String],
     entries: &[tab::HistoryEntry],

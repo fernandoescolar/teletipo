@@ -8,6 +8,7 @@ use render_wgpu::AppWindowEvent;
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};
 
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // top-level keyboard dispatcher; flat match
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     let AppWindowEvent::KeyboardInput(key_event) = &event else {
         if let AppWindowEvent::ImeCommit(text) = event

@@ -66,6 +66,7 @@ pub(crate) struct GpuState<'a> {
 }
 
 impl<'a> GpuState<'a> {
+    #[allow(clippy::too_many_lines)] // sequential wgpu adapter/device/queue setup
     pub(crate) async fn new(window: &'a Window, render_config: &RenderConfig) -> Result<Self> {
         let crate::surface::SurfaceInit {
             surface,
@@ -207,6 +208,7 @@ impl<'a> GpuState<'a> {
         self.surface.configure(&self.device, &self.config);
     }
 
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // GPU render loop; tracked as follow-up to T8/T16
     pub(crate) fn render(&mut self, snapshot: &RenderSnapshot) -> Result<()> {
         // Sync theme from snapshot so live config changes are picked up immediately.
         self.theme = snapshot.theme.clone();

@@ -119,6 +119,7 @@ pub(crate) fn quad_verts(
     ]
 }
 
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // top-level snapshot-to-quads pass
 pub(crate) fn build_panel_vertices(
     size: PhysicalSize<u32>,
     snapshot: &RenderSnapshot,
@@ -686,6 +687,7 @@ pub(crate) fn build_panel_vertices(
 /// Returns background geometry for the settings overlay only.
 /// Must be drawn **after** all terminal/editor text so the panel sits on top.
 /// Returns an empty `Vec` when there is no active overlay.
+#[allow(clippy::too_many_lines)] // settings overlay layout: long flat row-list
 pub(crate) fn build_settings_overlay_bg_verts(
     size: PhysicalSize<u32>,
     snapshot: &RenderSnapshot,

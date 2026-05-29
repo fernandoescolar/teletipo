@@ -204,7 +204,7 @@ impl AppTerminal {
         self.session.snapshot_text()
     }
 
-    pub fn snapshot_ansi(&self) -> String {
+    pub fn snapshot_ansi(&self) -> std::sync::Arc<String> {
         self.session.snapshot_ansi()
     }
 
@@ -442,7 +442,7 @@ impl App {
         self.terminal.screen_version()
     }
 
-    pub fn terminal_ansi_snapshot(&self) -> String {
+    pub fn terminal_ansi_snapshot(&self) -> std::sync::Arc<String> {
         self.terminal.snapshot_ansi()
     }
 

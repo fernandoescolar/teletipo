@@ -7,10 +7,8 @@ use self_update::cargo_crate_version;
 use tracing::{error, info, warn};
 
 const SIGNING_KEY: [u8; 32] = [
-    0x1f, 0x4f, 0x40, 0x29, 0x89, 0x63, 0x9a, 0xa1,
-    0x47, 0xb8, 0x37, 0x84, 0x90, 0x6a, 0xdb, 0x96,
-    0xdd, 0xa6, 0x50, 0x84, 0xf4, 0x34, 0x90, 0xf1,
-    0x3d, 0xaf, 0x10, 0x2b, 0xfc, 0x3e, 0x65, 0xe3,
+    0x1f, 0x4f, 0x40, 0x29, 0x89, 0x63, 0x9a, 0xa1, 0x47, 0xb8, 0x37, 0x84, 0x90, 0x6a, 0xdb, 0x96,
+    0xdd, 0xa6, 0x50, 0x84, 0xf4, 0x34, 0x90, 0xf1, 0x3d, 0xaf, 0x10, 0x2b, 0xfc, 0x3e, 0x65, 0xe3,
 ];
 
 fn asset_target() -> &'static str {
@@ -60,7 +58,8 @@ fn build_updater() -> anyhow::Result<Box<dyn self_update::update::ReleaseUpdate>
 
 #[tracing::instrument]
 fn try_update() -> Result<Option<String>, String> {
-    let exe_path = executable_path().map_err(|err| format!("could not resolve current executable: {err}"))?;
+    let exe_path =
+        executable_path().map_err(|err| format!("could not resolve current executable: {err}"))?;
     let backup_path = backup_current_executable(&exe_path)
         .map_err(|err| format!("could not save rollback backup: {err}"))?;
 
@@ -113,12 +112,18 @@ mod tests {
     #[test]
     fn rollback_backup_path_preserves_filename_and_appends_suffix() {
         let path = Path::new("/tmp/teletipo");
-        assert_eq!(rollback_backup_path(path), PathBuf::from("/tmp/teletipo.bak"));
+        assert_eq!(
+            rollback_backup_path(path),
+            PathBuf::from("/tmp/teletipo.bak")
+        );
     }
 
     #[test]
     fn rollback_backup_path_handles_exe_suffix() {
         let path = Path::new("/tmp/teletipo.exe");
-        assert_eq!(rollback_backup_path(path), PathBuf::from("/tmp/teletipo.exe.bak"));
+        assert_eq!(
+            rollback_backup_path(path),
+            PathBuf::from("/tmp/teletipo.exe.bak")
+        );
     }
 }

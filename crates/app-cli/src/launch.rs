@@ -145,7 +145,7 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
         .tabs
         .iter()
         .map(|tab| TabSession {
-            terminal_output: trim_output(&tab.app.terminal_ansi_snapshot()),
+            terminal_output: trim_output(tab.app.terminal_ansi_snapshot().as_str()),
             history: tab.history.clone(),
             split_ratio: tab.split_ratio,
             cwd: tab.cwd.clone(),
@@ -166,15 +166,34 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
         tabs: tab_sessions,
         split_ratio: active.split_ratio,
         history: active.history.clone(),
-        terminal_output: trim_output(&active.app.terminal_ansi_snapshot()),
+        terminal_output: trim_output(active.app.terminal_ansi_snapshot().as_str()),
     };
     if let Ok(json) = serde_json::to_string_pretty(&session) {
-        if let Err(err) = fs::write(&path, json) {
-            tracing::warn!(path = %path.display(), error = %err, "failed to save session file");
+        // PERF-2: hand the write to a detached worker so shutdown isn't blocked
+        // on a slow disk; join with a short timeout so failures still surface.
+        let handle = std::thread::spawn(move || {
+            if let Err(err) = fs::write(&path, json) {
+                tracing::warn!(path = %path.display(), error = %err, "failed to save session file");
+            }
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        loop {
+            if handle.is_finished() {
+                if let Err(err) = handle.join() {
+                    tracing::warn!(?err, "session writer thread panicked");
+                }
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                tracing::warn!("session writer did not finish within 500ms; detaching");
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 }
 
+#[allow(clippy::too_many_lines)] // sequential boot-time wiring; refactor tracked separately
 pub(crate) fn build_initial_state(
     rows: usize,
     cols: usize,
@@ -395,7 +414,10 @@ mod tests {
 
     #[test]
     fn sanitize_terminal_size_clamps_low_values() {
-        assert_eq!(sanitize_terminal_size(0, 0), (TERMINAL_ROWS_MIN, TERMINAL_COLS_MIN));
+        assert_eq!(
+            sanitize_terminal_size(0, 0),
+            (TERMINAL_ROWS_MIN, TERMINAL_COLS_MIN)
+        );
     }
 
     #[test]

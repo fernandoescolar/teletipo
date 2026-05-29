@@ -7,6 +7,10 @@ use crate::cell::{Cell, CellStyle};
 use crate::color::{AnsiColor, ansi_cell_tuple_with_palette};
 use crate::grid::{Grid, reflow_grid};
 
+/// Terminal screen model: cell grid, scrollback, cursor, and damage tracking.
+///
+/// Applies ANSI parser actions to a primary/alternate grid pair and exposes
+/// snapshots, ANSI re-emission, and per-row damage flags for the renderer.
 #[derive(Debug, Clone)]
 pub struct Screen {
     primary: Grid,
@@ -22,22 +26,40 @@ pub struct Screen {
     version: u64,
     /// Cached result of `dump_text()` for the current `version`.
     text_cache: RefCell<Option<(u64, String)>>,
+    // Note: held as Arc<String> so callers can clone the handle in O(1) instead
+    // of copying potentially-large terminal dumps on every hit. See PERF-1.
     /// Cached result of `dump_ansi()` for the current `version`.
-    ansi_cache: RefCell<Option<(u64, String)>>,
+    ansi_cache: RefCell<Option<(u64, Arc<String>)>>,
 }
 
+/// Lightweight, cloneable view of the visible grid for the renderer.
+///
+/// `text` is the flattened character buffer; `version` is the monotonic
+/// counter from the source [`Screen`] so callers can skip work when it has
+/// not advanced.
 #[derive(Debug, Clone)]
 pub struct ScreenSnapshot {
+    /// Flattened visible grid contents.
     pub text: Arc<String>,
+    /// Monotonic version counter from the source `Screen`.
     pub version: u64,
+    /// Row count at the time the snapshot was taken.
     pub rows: usize,
+    /// Column count at the time the snapshot was taken.
     pub cols: usize,
 }
 
+/// Per-frame description of what the screen changed since the last render.
+///
+/// `full_redraw` overrides per-row flags; `dirty_rows` lists row indices that
+/// must be re-rasterised; `version` matches the source `Screen` version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DamageRegion {
+    /// If true the renderer should rebuild every row this frame.
     pub full_redraw: bool,
+    /// Indices of rows that changed since the last `take_damage`.
     pub dirty_rows: Vec<usize>,
+    /// Source `Screen` version this damage was produced for.
     pub version: u64,
 }
 
@@ -647,13 +669,16 @@ impl Screen {
     /// Encodes the scrollback + visible grid as a string of ANSI SGR escape
     /// sequences so that fg/bg colors and text attributes are preserved when
     /// fed back through the terminal parser on next launch.
-    pub fn dump_ansi(&self) -> String {
+    ///
+    /// Returns an `Arc<String>` so repeated callers in the same frame share the
+    /// allocation instead of copying the (potentially large) buffer.
+    pub fn dump_ansi(&self) -> Arc<String> {
         {
             let cache = self.ansi_cache.borrow();
             if let Some((cached_version, ref text)) = *cache
                 && cached_version == self.version
             {
-                return text.clone();
+                return Arc::clone(text);
             }
         }
         let grid = &self.primary;
@@ -677,8 +702,9 @@ impl Screen {
             }
         }
 
-        *self.ansi_cache.borrow_mut() = Some((self.version, out.clone()));
-        out
+        let arc = Arc::new(out);
+        *self.ansi_cache.borrow_mut() = Some((self.version, Arc::clone(&arc)));
+        arc
     }
 
     pub fn dump_styled(&self) -> StyledChars {

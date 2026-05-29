@@ -44,6 +44,7 @@ pub(crate) fn theme_from_config(theme_file: Option<&theme::ThemeFile>) -> ColorT
 }
 
 /// Build a complete `RenderSnapshot` from the current state for the frame closure.
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // gathers every layer's view of the world into one struct
 pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     // Clear one-shot just_saved flag after it has been shown for a frame.
     if state.settings.just_saved {

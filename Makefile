@@ -82,5 +82,8 @@ test:
 lint:
 	cargo clippy --all -- -D warnings
 
+fmt:
+	cargo fmt --all -- --check
+
 perf:
 	cargo bench --workspace

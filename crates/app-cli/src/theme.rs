@@ -259,9 +259,9 @@ mod tests {
         assert_eq!(palette[1], [0.0, 0.0, 0.0]);
     }
 
-        #[test]
-        fn theme_file_defaults_details_when_missing() {
-                let yaml = r#"
+    #[test]
+    fn theme_file_defaults_details_when_missing() {
+        let yaml = r#"
 name: sample
 accent: '#ffffff'
 cursor: '#ffffff'
@@ -288,13 +288,13 @@ terminal_colors:
         white: '#ffffff'
 "#;
 
-                let theme = serde_yaml::from_str::<ThemeFile>(yaml).expect("valid theme yaml");
-                assert_eq!(theme.details, "darker");
-        }
+        let theme = serde_yaml::from_str::<ThemeFile>(yaml).expect("valid theme yaml");
+        assert_eq!(theme.details, "darker");
+    }
 
-        #[test]
-        fn theme_file_rejects_missing_required_fields() {
-                let yaml = r#"
+    #[test]
+    fn theme_file_rejects_missing_required_fields() {
+        let yaml = r#"
 name: sample
 accent: '#ffffff'
 cursor: '#ffffff'
@@ -320,8 +320,8 @@ terminal_colors:
         white: '#ffffff'
 "#;
 
-                assert!(serde_yaml::from_str::<ThemeFile>(yaml).is_err());
-        }
+        assert!(serde_yaml::from_str::<ThemeFile>(yaml).is_err());
+    }
 
     #[test]
     fn default_details_is_darker() {

@@ -1,7 +1,7 @@
 use std::io::{self, Read, Write};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
 use std::thread;
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -32,6 +32,9 @@ pub struct PortablePtySession {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     rx: Receiver<Vec<u8>>,
     queued_chunks: Arc<AtomicUsize>,
+    /// Handle to the reader thread, retained so `Drop` can join with a
+    /// timeout. `Option` so the join can take ownership in `drop`.
+    reader_handle: Option<thread::JoinHandle<()>>,
 }
 
 // ── Shell integration ─────────────────────────────────────────────────────────
@@ -195,7 +198,7 @@ impl PortablePtySession {
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
         let queued_chunks = Arc::new(AtomicUsize::new(0));
         let queued_chunks_for_thread = Arc::clone(&queued_chunks);
-        thread::spawn(move || {
+        let reader_handle = thread::spawn(move || {
             let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
                 match reader.read(&mut buf) {
@@ -205,7 +208,8 @@ impl PortablePtySession {
                             debug!(error = %err, "pty reader exiting: receiver dropped");
                             break;
                         } else {
-                            let depth = queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
+                            let depth =
+                                queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                             metrics::gauge!("pty_channel_depth").set(depth as f64);
                             metrics::counter!("pty_read_bytes").increment(n as u64);
                         }
@@ -224,6 +228,7 @@ impl PortablePtySession {
             child,
             rx,
             queued_chunks: Arc::clone(&queued_chunks),
+            reader_handle: Some(reader_handle),
         };
         Ok((session, integration.is_some()))
     }
@@ -274,7 +279,7 @@ impl PortablePtySession {
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
         let queued_chunks = Arc::new(AtomicUsize::new(0));
         let queued_chunks_for_thread = Arc::clone(&queued_chunks);
-        thread::spawn(move || {
+        let reader_handle = thread::spawn(move || {
             let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
                 match reader.read(&mut buf) {
@@ -284,7 +289,8 @@ impl PortablePtySession {
                             debug!(error = %err, "pty reader exiting: receiver dropped");
                             break;
                         } else {
-                            let depth = queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
+                            let depth =
+                                queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                             metrics::gauge!("pty_channel_depth").set(depth as f64);
                             metrics::counter!("pty_read_bytes").increment(n as u64);
                         }
@@ -303,6 +309,7 @@ impl PortablePtySession {
             child,
             rx,
             queued_chunks: Arc::clone(&queued_chunks),
+            reader_handle: Some(reader_handle),
         })
     }
 
@@ -342,7 +349,10 @@ impl PtyBackend for PortablePtySession {
         let mut total = 0usize;
         while let Ok(chunk) = self.rx.try_recv() {
             total += chunk.len();
-            let depth = self.queued_chunks.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+            let depth = self
+                .queued_chunks
+                .fetch_sub(1, Ordering::Relaxed)
+                .saturating_sub(1);
             metrics::gauge!("pty_channel_depth").set(depth as f64);
             out.extend_from_slice(&chunk);
         }
@@ -358,6 +368,26 @@ impl Drop for PortablePtySession {
         if let Err(err) = self.child.wait() {
             warn!(error = %err, "failed to wait for pty child on drop");
         }
+        // REL-3: join the reader thread with a short timeout. Killing the child
+        // closes the master FD, so `reader.read` should return EOF promptly; we
+        // poll `is_finished` to avoid blocking shutdown forever if the OS
+        // doesn't deliver the close in time.
+        if let Some(handle) = self.reader_handle.take() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+            loop {
+                if handle.is_finished() {
+                    if let Err(err) = handle.join() {
+                        warn!(?err, "pty reader thread panicked");
+                    }
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    warn!("pty reader thread did not exit within 250ms; detaching");
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
     }
 }
 
@@ -370,14 +400,9 @@ mod tests {
     #[test]
     #[cfg(not(target_os = "windows"))]
     fn spawn_command_delivers_output() {
-        let mut session = PortablePtySession::spawn_command(
-            "sh",
-            &["-lc", "printf hi"],
-            24,
-            80,
-            None,
-        )
-        .expect("spawn command");
+        let mut session =
+            PortablePtySession::spawn_command("sh", &["-lc", "printf hi"], 24, 80, None)
+                .expect("spawn command");
 
         let deadline = Instant::now() + Duration::from_secs(1);
         let mut output = Vec::new();

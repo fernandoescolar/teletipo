@@ -120,6 +120,11 @@ pub struct GlyphEntry {
     pub advance: f32,
 }
 
+/// LRU-bounded GPU glyph cache.
+///
+/// Holds rasterised glyphs keyed by `(font, size, codepoint, …)`; on overflow
+/// the least-recently-used entry is evicted, and a sustained high miss rate
+/// triggers a repack that drops the coldest fraction of entries.
 #[derive(Debug)]
 pub struct GlyphAtlas {
     capacity: usize,
@@ -304,7 +309,7 @@ mod tests {
                 GlyphKey { ch: 'h', style: 0 }
             } else {
                 GlyphKey {
-                    ch: ('i' as u8 + (i % 8) as u8) as char,
+                    ch: (b'i' + (i % 8) as u8) as char,
                     style: 0,
                 }
             };

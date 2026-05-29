@@ -2,9 +2,18 @@ use std::ops::Range;
 
 use crate::types::{HighlightRange, IncrementalSnapshot};
 
+/// Pluggable syntax / token highlighter for an editor buffer.
+///
+/// `highlight` returns a fresh full-buffer highlight set; implementors that
+/// can be incremental should override [`LanguageHighlighter::highlight_incremental`]
+/// to skip unchanged regions.
 pub trait LanguageHighlighter {
+    /// Compute highlights for the entire buffer text.
     fn highlight(&self, text: &str) -> Vec<HighlightRange>;
 
+    /// Compute an incremental snapshot relative to a previous one.
+    ///
+    /// Default implementation just re-highlights everything.
     fn highlight_incremental(
         &self,
         text: &str,

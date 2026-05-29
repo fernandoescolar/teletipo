@@ -117,6 +117,7 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
 /// Handle a key event while the settings overlay is open.
 /// Returns `true` if the event was consumed (caller should `return`).
 /// Must only be called when `state.settings.open` is true.
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // overlay dispatcher: flat match on every key
 pub(crate) fn handle_settings_key(
     state: &mut GpuRuntimeState,
     key_event: &winit::event::KeyEvent,
@@ -295,15 +296,13 @@ pub(crate) fn handle_settings_key(
                 let is_selectable = field.key == "theme"
                     || (field.section == "font" && field.key == "family")
                     || numeric_step(field.section, field.key).is_some();
-                if !is_selectable {
-                    if !state.user_config.set_field(field.section, field.key, &buf) {
-                        tracing::warn!(
-                            section = field.section,
-                            key = field.key,
-                            value = %buf,
-                            "rejected invalid setting value"
-                        );
-                    }
+                if !is_selectable && !state.user_config.set_field(field.section, field.key, &buf) {
+                    tracing::warn!(
+                        section = field.section,
+                        key = field.key,
+                        value = %buf,
+                        "rejected invalid setting value"
+                    );
                 }
             }
             save_config(&state.user_config);

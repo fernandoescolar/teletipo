@@ -21,6 +21,11 @@ enum ParserState {
     Osc,
 }
 
+/// Incremental ANSI / VT escape-sequence parser.
+///
+/// Feed it raw PTY bytes via [`Parser::advance`] to produce a vector of
+/// [`crate::Action`] events.  The parser keeps internal state across calls so
+/// sequences split across reads are handled correctly.
 #[derive(Debug, Default)]
 pub struct Parser {
     state: ParserState,
@@ -253,6 +258,7 @@ mod tests {
         expected: Vec<Action>,
     }
 
+    #[allow(clippy::too_many_lines)] // long-but-flat fixture table
     fn fixture_matrix() -> Vec<Fixture> {
         let mut out = Vec::new();
 

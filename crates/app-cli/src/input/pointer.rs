@@ -8,6 +8,7 @@ use render_wgpu::{AppWindowEvent, SCROLLBAR_W_PX};
 use std::time::Instant;
 use winit::event::{ElementState, MouseButton};
 
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // top-level pointer dispatcher; flat match
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) -> bool {
     if let AppWindowEvent::WindowMoved { x, y } = event {
         state.layout.window_x = *x;

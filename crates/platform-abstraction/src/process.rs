@@ -50,9 +50,9 @@ impl ProcessInfo for SystemProcessInfo {
                 .iter()
                 .position(|&b| b == 0)
                 .unwrap_or(MAXPATHLEN);
-            return String::from_utf8(path_bytes[..end].to_vec())
+            String::from_utf8(path_bytes[..end].to_vec())
                 .ok()
-                .filter(|s| !s.is_empty());
+                .filter(|s| !s.is_empty())
         }
 
         #[cfg(not(target_os = "macos"))]

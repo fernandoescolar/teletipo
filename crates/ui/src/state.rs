@@ -43,6 +43,7 @@ impl<B: TabBackend> UiState<B> {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // dispatcher: long flat match arms by design
     pub fn apply_action(&mut self, action: UiAction) {
         match action {
             UiAction::NewTab => {

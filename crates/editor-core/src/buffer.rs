@@ -2,6 +2,11 @@ use crate::gap_buffer::GapBuffer;
 use crate::history::{Edit, EditHistory};
 use crate::types::{BufferEngineKind, Cursor, Selection, SemanticCommand};
 
+/// Top-level editable text buffer used by the command-line editor.
+///
+/// Wraps a [`GapBuffer`] for efficient near-cursor edits while keeping a
+/// materialised [`String`] copy for cheap `&str` access and pairs it with
+/// cursor / selection state and an undo history.
 #[derive(Debug, Default)]
 pub struct EditorBuffer {
     /// Gap-buffer engine: provides O(1) insert/delete near the cursor.

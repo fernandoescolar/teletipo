@@ -1,3 +1,8 @@
+/// A semantic event decoded by the ANSI parser.
+///
+/// `Action` is the intermediate representation between raw PTY bytes and the
+/// terminal screen model; the parser emits a stream of these and the screen
+/// applies them to its grid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Print(char),

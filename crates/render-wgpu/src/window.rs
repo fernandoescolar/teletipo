@@ -97,6 +97,7 @@ where
     run_gpu_window_live_with_events_and_window(next_snapshot, on_event, |_| {}, config)
 }
 
+#[allow(clippy::too_many_lines)] // winit event-loop wiring; refactor tracked separately
 pub fn run_gpu_window_live_with_events_and_window<F, E, W>(
     mut next_snapshot: F,
     mut on_event: E,

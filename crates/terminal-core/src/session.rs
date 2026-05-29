@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use terminal_ansi::{Action, Parser};
 use terminal_screen::{DamageRegion, Screen, ScreenSnapshot, StyledChars};
 
@@ -40,7 +42,7 @@ pub trait TerminalDisplay {
     fn cursor_row(&self) -> usize;
     fn cursor_col(&self) -> usize;
     fn dump_text(&self) -> String;
-    fn dump_ansi(&self) -> String;
+    fn dump_ansi(&self) -> Arc<String>;
     fn dump_styled(&self) -> StyledChars;
     fn dump_styled_at_offset(&self, scroll_offset: usize) -> StyledChars;
     fn dump_styled_at_offset_with_palette(
@@ -153,7 +155,7 @@ impl TerminalDisplay for Screen {
         Screen::dump_text(self)
     }
 
-    fn dump_ansi(&self) -> String {
+    fn dump_ansi(&self) -> Arc<String> {
         Screen::dump_ansi(self)
     }
 
@@ -198,6 +200,11 @@ impl TerminalDisplay for Screen {
     }
 }
 
+/// Generic terminal session: pairs a [`TerminalParser`] with a [`TerminalDisplay`].
+///
+/// Owns the bytes-to-actions decoder and the screen model and threads parsed
+/// actions through to it. Instantiating with custom `P` / `D` parameters lets
+/// tests substitute fake parsers or screens.
 #[derive(Debug)]
 pub struct GenericTerminalSession<P = Parser, D = Screen> {
     parser: P,
@@ -212,6 +219,8 @@ pub struct GenericTerminalSession<P = Parser, D = Screen> {
     application_cursor_keys: bool,
 }
 
+/// Default `GenericTerminalSession` specialised with the production parser
+/// (`terminal_ansi::Parser`) and screen (`terminal_screen::Screen`).
 pub type TerminalSession = GenericTerminalSession<Parser, Screen>;
 
 impl GenericTerminalSession<Parser, Screen> {
@@ -325,7 +334,7 @@ where
         self.screen.dump_text()
     }
 
-    pub fn snapshot_ansi(&self) -> String {
+    pub fn snapshot_ansi(&self) -> Arc<String> {
         self.screen.dump_ansi()
     }
 
@@ -526,15 +535,12 @@ mod tests {
             self.text.clone()
         }
 
-        fn dump_ansi(&self) -> String {
-            self.text.clone()
+        fn dump_ansi(&self) -> Arc<String> {
+            Arc::new(self.text.clone())
         }
 
         fn dump_styled(&self) -> StyledChars {
-            self.text
-                .chars()
-                .map(|ch| (ch, None, None, 0))
-                .collect()
+            self.text.chars().map(|ch| (ch, None, None, 0)).collect()
         }
 
         fn dump_styled_at_offset(&self, _scroll_offset: usize) -> StyledChars {
@@ -583,7 +589,8 @@ mod tests {
 
     #[test]
     fn generic_session_accepts_fake_components() {
-        let mut session = GenericTerminalSession::with_components(FakeParser, FakeDisplay::default());
+        let mut session =
+            GenericTerminalSession::with_components(FakeParser, FakeDisplay::default());
 
         session.feed(b"hello");
 

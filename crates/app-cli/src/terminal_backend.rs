@@ -1,7 +1,7 @@
 use app_orchestrator::App;
 use terminal_pty::PortablePtySession;
-use ui::TabBackend;
 use tracing::{debug, warn};
+use ui::TabBackend;
 
 /// Concrete [`TabBackend`] implementation for `app-cli`.
 ///

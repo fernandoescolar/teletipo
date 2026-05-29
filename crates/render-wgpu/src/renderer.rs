@@ -6,8 +6,15 @@ use crate::types::{
     DamageRegion, PaneLayout, PipelineStage, RenderConfig, RenderSnapshot, RenderStats,
 };
 
+/// Public renderer interface used by the application layer.
+///
+/// Implementations consume a [`RenderSnapshot`] each frame and emit GPU
+/// draw calls; [`Renderer::ingest_damage`] lets the caller hint which rows
+/// changed so the renderer can skip clean cells.
 pub trait Renderer {
+    /// Provide the screen damage description for the upcoming frame.
     fn ingest_damage(&mut self, damage: DamageRegion);
+    /// Render one frame from `snapshot`.
     fn render(&mut self, snapshot: &RenderSnapshot);
 }
 

@@ -358,10 +358,9 @@ pub fn load_config_result() -> Result<UserConfig, ConfigError> {
 pub fn save_config(cfg: &UserConfig) {
     if let Some(path) = config_path()
         && let Ok(s) = toml::to_string_pretty(cfg)
+        && let Err(err) = fs::write(&path, s)
     {
-        if let Err(err) = fs::write(&path, s) {
-            tracing::warn!(path = %path.display(), error = %err, "failed to save config file");
-        }
+        tracing::warn!(path = %path.display(), error = %err, "failed to save config file");
     }
 }
 

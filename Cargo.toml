@@ -43,6 +43,7 @@ invalid_codeblock_attributes = "warn"
 invalid_rust_codeblocks = "warn"
 
 [workspace.lints.clippy]
-# Surfaced as guidance, not blocking. Phase 2 tasks T4/T14 will reduce these.
-too_many_lines = "allow"
-cognitive_complexity = "allow"
+# Surfaced as warnings after T8/T9 split the largest functions; revisit if
+# noise returns.
+too_many_lines = "warn"
+cognitive_complexity = "warn"

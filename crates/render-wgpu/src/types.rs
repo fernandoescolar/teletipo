@@ -117,6 +117,7 @@ impl RenderSnapshot {
         out
     }
 
+    #[allow(clippy::type_complexity)] // three parallel buffers, not worth a named tuple type
     pub fn terminal_flatten_fg_bg_style(
         &self,
     ) -> (Vec<Option<[f32; 3]>>, Vec<Option<[f32; 3]>>, Vec<u8>) {
