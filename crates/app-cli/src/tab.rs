@@ -66,6 +66,12 @@ pub(crate) struct TabState {
     pub(crate) shell_integration: bool,
     /// Inline terminal find panel state (Cmd+F).
     pub(crate) search: SearchState,
+    /// `true` when the shell is currently waiting on a foreground child
+    /// command (vim, sudo, ssh, scripts, …) as reported by `tcgetpgrp` on
+    /// the PTY slave.  Refreshed each frame in `pump_all_ptys`.  When set
+    /// the UI bypasses the command editor and routes keystrokes directly to
+    /// the PTY, so the running program sees them verbatim.
+    pub(crate) command_running: bool,
 }
 
 /// Persistent state for a single tab.

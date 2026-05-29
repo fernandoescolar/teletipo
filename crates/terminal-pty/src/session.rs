@@ -325,6 +325,36 @@ impl PortablePtySession {
         self.child.process_id()
     }
 
+    /// Returns the foreground process-group of the slave PTY (the value of
+    /// `tcgetpgrp` on the slave fd).  When this differs from `child_pid()`
+    /// the shell has spawned a child that is currently in the foreground
+    /// (e.g. `vim`, `sudo`, a long-running script).
+    ///
+    /// Always returns `None` on Windows.
+    pub fn foreground_pgrp(&self) -> Option<i32> {
+        #[cfg(unix)]
+        {
+            use portable_pty::MasterPty;
+            MasterPty::process_group_leader(&*self.master)
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
+    /// Returns `true` when the slave PTY's foreground process group is a
+    /// child of the spawned shell — i.e. the shell is currently waiting on
+    /// a foreground command (vim, sudo, ssh, a script, …) rather than
+    /// displaying its prompt.  Used by the UI to bypass the command editor
+    /// and route keystrokes directly to the running program.
+    pub fn foreground_child_running(&self) -> bool {
+        match (self.foreground_pgrp(), self.child_pid()) {
+            (Some(fg), Some(shell)) => fg as u32 != shell,
+            _ => false,
+        }
+    }
+
     /// Notifies the PTY child process of a terminal size change (sends SIGWINCH).
     #[tracing::instrument(skip(self))]
     pub fn resize(&mut self, rows: u16, cols: u16) {

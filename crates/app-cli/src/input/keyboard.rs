@@ -17,7 +17,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             && text != "\r"
             && text != "\n"
         {
-            if state.tab().app.is_alternate_screen() {
+            if state.tab().app.is_alternate_screen() || state.tab().command_running {
                 state.send_terminal_input(text.as_bytes());
             } else {
                 state.tab_mut().app.insert_editor_input(text.as_str());
@@ -40,9 +40,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         return;
     }
 
-    // In alternate-screen fullscreen mode (vim/less/htop), route typing and
-    // navigation keys directly to the terminal PTY instead of the command editor.
-    if state.tab().app.is_alternate_screen() && !state.modifiers.super_down {
+    // When the shell is waiting on a foreground command (vim, less, htop,
+    // sudo, a running script, ssh, …) route typing and navigation keys
+    // straight to the PTY instead of the command editor.  Also covers the
+    // legacy alternate-screen detection so apps that switch screens without
+    // a separate process group keep working.
+    let route_to_pty = state.tab().app.is_alternate_screen() || state.tab().command_running;
+    if route_to_pty && !state.modifiers.super_down {
         let app_cursor = state.tab().app.application_cursor_keys();
         match &key_event.logical_key {
             // Keep settings shortcut available even in fullscreen mode.
@@ -346,7 +350,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             if let Some(text) = state.shell_services.clipboard_get() {
                 let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
                 if !normalized.is_empty() {
-                    if state.tab().app.is_alternate_screen() {
+                    if state.tab().app.is_alternate_screen() || state.tab().command_running {
                         if state.tab().app.bracketed_paste() {
                             let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
                             state.send_terminal_input(bracketed.as_bytes());

@@ -125,6 +125,14 @@ impl GpuRuntimeState {
             if i == active && had_data {
                 active_had_data = true;
             }
+            // Refresh the command-running flag via a cheap `tcgetpgrp` on
+            // the PTY master.  True when the shell has spawned a foreground
+            // child (vim, sudo, a script, …) and is waiting for it to exit.
+            if let Some(ref pty_ref) = tab.pty {
+                tab.command_running = pty_ref.foreground_child_running();
+            } else {
+                tab.command_running = false;
+            }
             if tab.app.take_bell() && self.user_config.terminal.bell {
                 self.overlays.bell_flash_until =
                     Some(Instant::now() + std::time::Duration::from_millis(150));
@@ -418,6 +426,7 @@ impl GpuRuntimeState {
             pending_cmd: None,
             shell_integration: integration,
             search: crate::search::SearchState::default(),
+            command_running: false,
         });
         self.active_tab = self.tabs.len() - 1;
     }

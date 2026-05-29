@@ -293,6 +293,7 @@ pub(crate) fn build_initial_state(
             pending_cmd: None,
             shell_integration: integration,
             search: crate::search::SearchState::default(),
+            command_running: false,
         });
     }
 
