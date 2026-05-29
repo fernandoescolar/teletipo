@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{HashMap, VecDeque};
 
 use crate::types::FontConfig;
 
@@ -119,19 +120,117 @@ pub struct GlyphEntry {
     pub advance: f32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct GlyphAtlas {
+    capacity: usize,
     entries: HashMap<GlyphKey, GlyphEntry>,
+    lru: VecDeque<GlyphKey>,
+    lookups_since_repack: Cell<u64>,
+    misses_since_repack: Cell<u64>,
 }
 
 impl GlyphAtlas {
+    pub const DEFAULT_CAPACITY: usize = 4096;
+    const REPACK_LOOKUP_WINDOW: u64 = 256;
+    const REPACK_MISS_RATE_THRESHOLD: f64 = 0.35;
+    const REPACK_DROP_FRACTION: usize = 4;
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            entries: HashMap::new(),
+            lru: VecDeque::new(),
+            lookups_since_repack: Cell::new(0),
+            misses_since_repack: Cell::new(0),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn get(&self, key: &GlyphKey) -> Option<&GlyphEntry> {
-        self.entries.get(key)
+        self.lookups_since_repack
+            .set(self.lookups_since_repack.get().saturating_add(1));
+        match self.entries.get(key) {
+            Some(entry) => {
+                metrics::counter!("atlas_cache_hits").increment(1);
+                Some(entry)
+            }
+            None => {
+                self.misses_since_repack
+                    .set(self.misses_since_repack.get().saturating_add(1));
+                metrics::counter!("atlas_cache_misses").increment(1);
+                None
+            }
+        }
     }
 
     pub fn insert(&mut self, key: GlyphKey, entry: GlyphEntry) {
-        metrics::counter!("atlas_glyphs").increment(1);
-        self.entries.insert(key, entry);
+        let is_new = self.entries.insert(key.clone(), entry).is_none();
+        self.touch_lru(&key);
+        if is_new {
+            metrics::counter!("atlas_glyphs").increment(1);
+            self.evict_to_capacity();
+        }
+        self.repack_if_needed();
+    }
+
+    fn touch_lru(&mut self, key: &GlyphKey) {
+        if let Some(pos) = self.lru.iter().position(|k| k == key) {
+            let _ = self.lru.remove(pos);
+        }
+        self.lru.push_back(key.clone());
+    }
+
+    fn evict_to_capacity(&mut self) {
+        while self.entries.len() > self.capacity {
+            let Some(oldest) = self.lru.pop_front() else {
+                break;
+            };
+            if self.entries.remove(&oldest).is_some() {
+                metrics::counter!("atlas_evictions").increment(1);
+            }
+        }
+    }
+
+    fn repack_if_needed(&mut self) {
+        let lookups = self.lookups_since_repack.get();
+        if lookups < Self::REPACK_LOOKUP_WINDOW {
+            return;
+        }
+        let misses = self.misses_since_repack.get();
+        let miss_rate = misses as f64 / lookups as f64;
+        self.lookups_since_repack.set(0);
+        self.misses_since_repack.set(0);
+        if miss_rate <= Self::REPACK_MISS_RATE_THRESHOLD || self.entries.len() < 2 {
+            return;
+        }
+
+        let drop_count = (self.entries.len() / Self::REPACK_DROP_FRACTION).max(1);
+        let mut dropped = 0u64;
+        for _ in 0..drop_count {
+            let Some(oldest) = self.lru.pop_front() else {
+                break;
+            };
+            if self.entries.remove(&oldest).is_some() {
+                dropped += 1;
+            }
+        }
+        if dropped > 0 {
+            metrics::counter!("atlas_repacks").increment(1);
+            metrics::counter!("atlas_repack_dropped").increment(dropped);
+        }
+    }
+}
+
+impl Default for GlyphAtlas {
+    fn default() -> Self {
+        Self::with_capacity(Self::DEFAULT_CAPACITY)
     }
 }
 
@@ -153,6 +252,75 @@ mod tests {
         let stored = atlas.get(&key).expect("glyph entry stored");
         assert_eq!(stored.uv, entry.uv);
         assert_eq!(stored.advance, entry.advance);
+    }
+
+    #[test]
+    fn atlas_evicts_oldest_when_capacity_reached() {
+        let mut atlas = GlyphAtlas::with_capacity(2);
+        atlas.insert(
+            GlyphKey { ch: 'a', style: 0 },
+            GlyphEntry {
+                uv: [0.0, 0.0, 0.1, 0.1],
+                advance: 1.0,
+            },
+        );
+        atlas.insert(
+            GlyphKey { ch: 'b', style: 0 },
+            GlyphEntry {
+                uv: [0.1, 0.0, 0.2, 0.1],
+                advance: 1.0,
+            },
+        );
+        atlas.insert(
+            GlyphKey { ch: 'c', style: 0 },
+            GlyphEntry {
+                uv: [0.2, 0.0, 0.3, 0.1],
+                advance: 1.0,
+            },
+        );
+
+        assert_eq!(atlas.len(), 2);
+        assert!(atlas.get(&GlyphKey { ch: 'a', style: 0 }).is_none());
+        assert!(atlas.get(&GlyphKey { ch: 'b', style: 0 }).is_some());
+        assert!(atlas.get(&GlyphKey { ch: 'c', style: 0 }).is_some());
+    }
+
+    #[test]
+    fn atlas_repack_drops_cold_entries_after_sustained_miss_rate() {
+        let mut atlas = GlyphAtlas::with_capacity(8);
+        for ch in ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] {
+            atlas.insert(
+                GlyphKey { ch, style: 0 },
+                GlyphEntry {
+                    uv: [0.0, 0.0, 0.0, 0.0],
+                    advance: 1.0,
+                },
+            );
+        }
+
+        for i in 0..GlyphAtlas::REPACK_LOOKUP_WINDOW {
+            let hit = i % 4 == 0;
+            let key = if hit {
+                GlyphKey { ch: 'h', style: 0 }
+            } else {
+                GlyphKey {
+                    ch: ('i' as u8 + (i % 8) as u8) as char,
+                    style: 0,
+                }
+            };
+            let _ = atlas.get(&key);
+        }
+
+        let before = atlas.len();
+        atlas.insert(
+            GlyphKey { ch: 'z', style: 0 },
+            GlyphEntry {
+                uv: [0.9, 0.9, 1.0, 1.0],
+                advance: 1.0,
+            },
+        );
+
+        assert!(atlas.len() < before + 1);
     }
 }
 
