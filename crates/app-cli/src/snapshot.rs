@@ -376,10 +376,10 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     }
     let tab_labels: Vec<String> = if state.tabs.len() > 1 {
         let n = state.tabs.len();
-        let add_btn_w = state.layout.cell_w as f32 * 2.0;
+        let add_btn_w = state.layout.cell_w * 2.0;
         let tab_area_w = state.layout.window_width as f32 - add_btn_w;
         let tab_w_px = tab_area_w / n as f32;
-        let max_chars = tab_button_max_chars(tab_w_px, state.layout.cell_w as f32);
+        let max_chars = tab_button_max_chars(tab_w_px, state.layout.cell_w);
         state
             .tabs
             .iter()
