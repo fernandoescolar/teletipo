@@ -11,7 +11,6 @@ mod runtime;
 mod search;
 mod shell;
 mod state;
-mod terminal_backend;
 
 mod config;
 mod coords;
@@ -27,12 +26,11 @@ use platform_abstraction::default_shell;
 use render_wgpu::{FontConfig, RenderConfig, run_gpu_window_live_with_events_and_window};
 use std::cell::RefCell;
 use std::rc::Rc;
-use ui::UiConfig;
 
 pub(crate) use completion::suggestion_matches_frecency;
 use launch::{build_initial_state, load_session, sanitize_terminal_size, save_session};
+use runtime::EventCtx;
 pub(crate) use runtime::GpuRuntimeState;
-use runtime::{EventCtx, UiComponentBridge};
 pub(crate) use settings::SettingsUiState;
 pub(crate) use state::{
     CursorState, DragState, LayoutState, ModifierState, OverlayState, ThemeFontState, UpdateBanner,
@@ -89,47 +87,11 @@ pub fn run(
                 return std::process::ExitCode::FAILURE;
             }
         };
-    let ui_bridge = Rc::new(RefCell::new({
-        let s = state.borrow();
-        match UiComponentBridge::new(
-            shell.clone(),
-            UiConfig {
-                padding_horizontal: s.user_config.padding.horizontal as f32,
-                padding_vertical: s.user_config.padding.vertical as f32,
-                active_theme_idx: s.themes_fonts.active_theme_idx,
-                active_font_idx: s.themes_fonts.active_font_idx,
-                font_size: s.user_config.font.size,
-                font_family: s.user_config.font.family.clone(),
-                terminal_shell: s.user_config.terminal.shell.clone(),
-                terminal_scrollback_lines: s.user_config.terminal.scrollback_lines,
-                terminal_bell: s.user_config.terminal.bell,
-                active_theme: s.user_config.active_theme.clone(),
-                available_themes: s
-                    .themes_fonts
-                    .available_themes
-                    .iter()
-                    .map(|t| t.name.clone())
-                    .collect(),
-                available_fonts: s
-                    .themes_fonts
-                    .available_fonts
-                    .iter()
-                    .map(|f| f.family.clone())
-                    .collect(),
-            },
-        ) {
-            Ok(bridge) => bridge,
-            Err(err) => {
-                tracing::error!(error = %err, "failed to initialize UI bridge");
-                return std::process::ExitCode::FAILURE;
-            }
-        }
-    }));
     let (initial_font_family, initial_font_size) = {
         let s = state.borrow();
         (s.user_config.font.family.clone(), s.user_config.font.size)
     };
-    let event_ctx = EventCtx::new(Rc::clone(&state), Rc::clone(&ui_bridge));
+    let event_ctx = EventCtx::new(Rc::clone(&state));
     let event_ctx_for_frame = event_ctx.clone();
     let event_ctx_for_events = event_ctx.clone();
     let event_ctx_for_window = event_ctx;

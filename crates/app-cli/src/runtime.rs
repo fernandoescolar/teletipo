@@ -9,57 +9,20 @@ use crate::state::{
     CursorState, DragState, LayoutState, ModifierState, OverlayState, ThemeFontState,
 };
 use crate::tab::{HistoryEntry, TabState};
-use crate::terminal_backend::TerminalBackend;
-use app_orchestrator::App;
 use platform_abstraction::WindowControl;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 use tracing::{debug, warn};
-use ui::{InputRouter, TabPane, UiConfig, UiState};
-
-pub(crate) struct UiComponentBridge {
-    state: UiState<TerminalBackend>,
-}
-
-impl UiComponentBridge {
-    pub(crate) fn new(shell: String, config: UiConfig) -> anyhow::Result<Self> {
-        const DEFAULT_ROWS: usize = 24;
-        const DEFAULT_COLS: usize = 80;
-        let app = build_app(DEFAULT_ROWS, DEFAULT_COLS)?;
-        let initial_tab = TabPane::new(TerminalBackend::new(app, None), String::new());
-        let tab_factory: Box<dyn Fn() -> TabPane<TerminalBackend>> = Box::new(|| {
-            let app = build_app(DEFAULT_ROWS, DEFAULT_COLS).unwrap_or_else(|err| {
-                tracing::error!(error = %err, "failed to create default tab app");
-                App::new(DEFAULT_ROWS, DEFAULT_COLS)
-                    .unwrap_or_else(|_| unreachable!("default app size must be valid"))
-            });
-            TabPane::new(TerminalBackend::new(app, None), String::new())
-        });
-        let state = UiState::new(shell, config, initial_tab, tab_factory);
-        Ok(Self { state })
-    }
-
-    pub(crate) fn handle_event(&mut self, event: &render_wgpu::AppWindowEvent) {
-        let actions = InputRouter::process(&self.state, event);
-        for action in actions {
-            self.state.apply_action(action);
-        }
-    }
-}
 
 #[derive(Clone)]
 pub(crate) struct EventCtx {
     state: Rc<RefCell<GpuRuntimeState>>,
-    ui_bridge: Rc<RefCell<UiComponentBridge>>,
 }
 
 impl EventCtx {
-    pub(crate) fn new(
-        state: Rc<RefCell<GpuRuntimeState>>,
-        ui_bridge: Rc<RefCell<UiComponentBridge>>,
-    ) -> Self {
-        Self { state, ui_bridge }
+    pub(crate) fn new(state: Rc<RefCell<GpuRuntimeState>>) -> Self {
+        Self { state }
     }
 
     pub(crate) fn build_snapshot(&self) -> render_wgpu::RenderSnapshot {
@@ -71,7 +34,6 @@ impl EventCtx {
     }
 
     pub(crate) fn handle_event(&self, event: render_wgpu::AppWindowEvent) {
-        self.ui_bridge.borrow_mut().handle_event(&event);
         let mut state = self.state.borrow_mut();
         input::handle_event(&mut state, event);
     }

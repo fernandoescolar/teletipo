@@ -175,7 +175,10 @@ pub(crate) fn extract_selection(
 pub(crate) fn current_line_prefix(text: &str, cursor: usize) -> &str {
     let cursor = cursor.min(text.len());
     let line_start = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    text[line_start..cursor].trim()
+    // Strip only leading whitespace (editor indent). Trailing whitespace is
+    // semantically meaningful — e.g. "cd " signals that the user is about to
+    // type a path argument and suggestion lookup needs the trailing space.
+    text[line_start..cursor].trim_start()
 }
 
 /// Returns the leading whitespace of the line containing `cursor`.
