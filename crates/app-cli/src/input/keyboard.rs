@@ -327,7 +327,8 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 if !selected.is_empty() {
                     state.shell_services.clipboard_set(selected);
                 }
-            } else if let (Some(anchor), Some(sel_end)) = (saved_terminal_anchor, saved_terminal_end)
+            } else if let (Some(anchor), Some(sel_end)) =
+                (saved_terminal_anchor, saved_terminal_end)
             {
                 // Adjust stored rows to the current scroll offset so that
                 // copy picks the correct text even after scrolling.
@@ -364,45 +365,43 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             }
         }
 
-        Key::Character(ch) if state.modifiers.super_down => {
-            match ch.as_str() {
-                "," => {
-                    state.settings.open = true;
-                    state.settings.cursor = 0;
-                    state.settings.edit_buf = None;
-                    return;
-                }
-                "a" => {
-                    let end = state.tab().app.editor_snapshot().len();
-                    state.tab_mut().app.set_editor_cursor(0, false);
-                    state.tab_mut().app.set_editor_cursor(end, true);
-                }
-                "f" => {
-                    let tab = state.tab_mut();
-                    tab.search.active = true;
-                    search::refresh_search(tab);
-                }
-                "t" => state.add_new_tab(),
-                "w" => {
-                    let idx = state.active_tab;
-                    state.close_tab(idx);
-                }
-                "[" => {
-                    state.active_tab = state.active_tab.saturating_sub(1);
-                }
-                "]" => {
-                    let last = state.tabs.len() - 1;
-                    state.active_tab = (state.active_tab + 1).min(last);
-                }
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
-                    if let Some(d) = ch.as_str().chars().next().and_then(|c| c.to_digit(10)) {
-                        let idx = (d as usize - 1).min(state.tabs.len() - 1);
-                        state.active_tab = idx;
-                    }
-                }
-                _ => {}
+        Key::Character(ch) if state.modifiers.super_down => match ch.as_str() {
+            "," => {
+                state.settings.open = true;
+                state.settings.cursor = 0;
+                state.settings.edit_buf = None;
+                return;
             }
-        }
+            "a" => {
+                let end = state.tab().app.editor_snapshot().len();
+                state.tab_mut().app.set_editor_cursor(0, false);
+                state.tab_mut().app.set_editor_cursor(end, true);
+            }
+            "f" => {
+                let tab = state.tab_mut();
+                tab.search.active = true;
+                search::refresh_search(tab);
+            }
+            "t" => state.add_new_tab(),
+            "w" => {
+                let idx = state.active_tab;
+                state.close_tab(idx);
+            }
+            "[" => {
+                state.active_tab = state.active_tab.saturating_sub(1);
+            }
+            "]" => {
+                let last = state.tabs.len() - 1;
+                state.active_tab = (state.active_tab + 1).min(last);
+            }
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
+                if let Some(d) = ch.as_str().chars().next().and_then(|c| c.to_digit(10)) {
+                    let idx = (d as usize - 1).min(state.tabs.len() - 1);
+                    state.active_tab = idx;
+                }
+            }
+            _ => {}
+        },
 
         Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "," => {
             state.settings.open = true;

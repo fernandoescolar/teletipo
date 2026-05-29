@@ -9,7 +9,7 @@ LINUX_TARGET := x86_64-unknown-linux-gnu
 WINDOWS_TARGET := x86_64-pc-windows-gnu
 INSTALLER_DIR := scripts/install
 
-.PHONY: release release-macos release-linux release-windows release-installers verify-installers clean test lint perf
+.PHONY: release release-macos release-linux release-windows release-installers verify-installers clean test lint fmt perf ci
 
 release: release-macos release-linux release-windows release-installers
 
@@ -137,3 +137,7 @@ fmt:
 
 perf:
 	cargo bench --workspace
+
+# Local CI: same gates the CI pipeline enforces (formatting, lint, tests).
+# Run with `make ci` before pushing.
+ci: fmt lint test

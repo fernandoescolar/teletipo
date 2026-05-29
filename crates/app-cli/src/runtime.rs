@@ -92,6 +92,7 @@ impl GpuRuntimeState {
     }
 
     /// Pump PTY output for ALL tabs; returns `true` if the active tab received data.
+    #[allow(clippy::too_many_lines)] // sequential housekeeping over every tab
     pub(crate) fn pump_all_ptys(&mut self) -> bool {
         let mut active_had_data = false;
         let active = self.active_tab;
