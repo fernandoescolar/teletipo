@@ -26,6 +26,12 @@ pub trait FontFallback {
     fn fallback_for_char(&self, ch: char) -> Option<String>;
 }
 
+/// Read-only process metadata used by the application layer.
+pub trait ProcessInfo {
+    /// Return the current working directory of the process, if available.
+    fn read_child_cwd(&self, pid: u32) -> Option<String>;
+}
+
 /// Operations the application layer needs to perform on the host window or
 /// shell that don't fit any of the other trait boundaries. Backends owning the
 /// window (`render-wgpu`) provide a concrete implementation and hand it to the

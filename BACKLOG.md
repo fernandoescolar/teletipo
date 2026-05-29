@@ -44,7 +44,7 @@ Full per-task detail (steps, AC, tests, risks) lives in plan.md. Summary:
 | **T7**  | `TerminalParser` / `TerminalDisplay` traits; generic `TerminalSession` | modularity | P2 | M | MOD-3 | Yes |
 | **T8**  | Split `geometry.rs` into module + `LayoutContext` + snapshot tests | maintainability | P2 | M | MOD-1, TST-1 (geom) | Yes |
 | **T9**  | Extract `app_cli::run` event handlers into named fns with `EventCtx` | maintainability | P2 | S | MOD-2 | Yes |
-| **T10** | Move macOS FFI + `proc_pidinfo` behind `platform-abstraction` | modularity | P2 | M | MOD-4 | |
+| **T10** | Move macOS FFI + `proc_pidinfo` behind `platform-abstraction` | modularity | P2 | M | MOD-4 | Yes |
 | **T11** | Hoist common deps into `[workspace.dependencies]`; unify `thiserror` on v2 | dep hygiene | P1 | S | DEP-1, DEP-2, DEP-3, MOD-5 | Yes |
 | **T12** | Add `cargo-deny` (advisories + licenses + bans) to CI | security/CI | P1 | S | DEP-4 | Yes (b652f48) |
 | **T13** | LICENSE + per-crate license metadata | legal | P0 | S | LIC-1 | Yes |

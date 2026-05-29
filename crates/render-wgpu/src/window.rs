@@ -1,8 +1,3 @@
-// macOS FFI (NSApplication / NSWindow) and the platform integration paths
-// below require `unsafe` blocks. The crate-level `unsafe_code` lint stays
-// `warn` so any future unsafe use elsewhere shows up.
-#![cfg_attr(target_os = "macos", allow(unsafe_code))]
-
 use anyhow::Context;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{Event, Ime, MouseScrollDelta, WindowEvent};
@@ -13,7 +8,7 @@ use crate::error::RenderError;
 use crate::geometry::snapshot_to_ime_area;
 use crate::pipeline::GpuState;
 use crate::types::{AppWindowEvent, RenderConfig, RenderSnapshot};
-use platform_abstraction::WindowControl;
+use platform_abstraction::{WindowControl, apply_app_icon, apply_titlebar_color};
 
 type Result<T> = std::result::Result<T, RenderError>;
 
@@ -23,93 +18,6 @@ fn load_window_icon() -> Option<Icon> {
     let image = image::load_from_memory(APP_ICON_PNG).ok()?.into_rgba8();
     let (width, height) = image.dimensions();
     Icon::from_rgba(image.into_raw(), width, height).ok()
-}
-
-/// On macOS, set the Dock/application icon to the embedded Teletipo logo.
-#[cfg(target_os = "macos")]
-fn apply_app_icon() {
-    use objc2::class;
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-
-    unsafe {
-        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-        if app.is_null() {
-            return;
-        }
-        let data: *mut AnyObject = msg_send![
-            class!(NSData),
-            dataWithBytes: APP_ICON_PNG.as_ptr() as *const core::ffi::c_void
-            length: APP_ICON_PNG.len()
-        ];
-        if data.is_null() {
-            return;
-        }
-        let img_alloc: *mut AnyObject = msg_send![class!(NSImage), alloc];
-        if img_alloc.is_null() {
-            return;
-        }
-        let img: *mut AnyObject = msg_send![img_alloc, initWithData: &*data];
-        if img.is_null() {
-            return;
-        }
-        let _: () = msg_send![app, setApplicationIconImage: &*img];
-    }
-}
-
-/// On macOS, make the native title bar take the given RGBA colour so it blends
-/// with the rendered content rather than showing the default vibrancy.
-#[cfg(target_os = "macos")]
-fn apply_titlebar_color(window: &Window, [r, g, b, a]: [f32; 4]) {
-    use objc2::class;
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    let Ok(handle) = window.window_handle() else {
-        return;
-    };
-    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-        return;
-    };
-    let ns_view = appkit.ns_view.as_ptr() as *mut AnyObject;
-
-    unsafe {
-        // Get the NSWindow from the NSView.
-        let ns_window: *mut AnyObject = msg_send![&*ns_view, window];
-        if ns_window.is_null() {
-            return;
-        }
-        let cls = class!(NSColor);
-        let color: *mut AnyObject = msg_send![
-            cls,
-            colorWithSRGBRed: (r as f64)
-            green: (g as f64)
-            blue: (b as f64)
-            alpha: (a as f64)
-        ];
-        let _: () = msg_send![&*ns_window, setBackgroundColor: &*color];
-
-        // Pick dark or light NSAppearance so the title bar text colour (which
-        // macOS controls automatically) matches the theme background.
-        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        let name_bytes: &[u8] = if lum < 0.5 {
-            b"NSAppearanceNameDarkAqua\0"
-        } else {
-            b"NSAppearanceNameAqua\0"
-        };
-        let ns_name: *mut AnyObject = msg_send![
-            class!(NSString),
-            stringWithUTF8String: name_bytes.as_ptr()
-        ];
-        let appearance: *mut AnyObject = msg_send![
-            class!(NSAppearance),
-            appearanceNamed: &*ns_name
-        ];
-        if !appearance.is_null() {
-            let _: () = msg_send![&*ns_window, setAppearance: &*appearance];
-        }
-    }
 }
 
 pub fn run_gpu_window(snapshot: RenderSnapshot, config: RenderConfig) -> Result<()> {
@@ -224,9 +132,7 @@ where
     let window: &'static Window = Box::leak(Box::new(window));
     window.set_ime_allowed(true);
     on_window_ready(Box::new(WinitWindowControl { window }));
-    #[cfg(target_os = "macos")]
-    apply_app_icon();
-    #[cfg(target_os = "macos")]
+    apply_app_icon(APP_ICON_PNG);
     apply_titlebar_color(window, initial.theme.terminal_bg);
 
     let base_font_size = config.font.font_size;

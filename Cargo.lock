@@ -2446,6 +2446,7 @@ name = "platform-abstraction"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "objc2 0.4.1",
  "tracing",
  "winit",
 ]
@@ -2899,7 +2900,6 @@ dependencies = [
  "fontdue",
  "image",
  "metrics",
- "objc2 0.4.1",
  "platform-abstraction",
  "pollster",
  "rustybuzz",
