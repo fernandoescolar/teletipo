@@ -58,6 +58,7 @@ fn build_updater() -> anyhow::Result<Box<dyn self_update::update::ReleaseUpdate>
     Ok(builder.build()?)
 }
 
+#[tracing::instrument]
 fn try_update() -> Result<Option<String>, String> {
     let exe_path = executable_path().map_err(|err| format!("could not resolve current executable: {err}"))?;
     let backup_path = backup_current_executable(&exe_path)
@@ -81,6 +82,7 @@ fn try_update() -> Result<Option<String>, String> {
     }
 }
 
+#[tracing::instrument]
 pub fn spawn_update() -> mpsc::Receiver<Result<Option<String>, String>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -92,6 +94,7 @@ pub fn spawn_update() -> mpsc::Receiver<Result<Option<String>, String>> {
     rx
 }
 
+#[tracing::instrument]
 pub(crate) fn rollback_latest_update() -> anyhow::Result<bool> {
     let exe_path = executable_path()?;
     let backup_path = rollback_backup_path(&exe_path);

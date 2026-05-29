@@ -334,6 +334,7 @@ pub fn config_path() -> Option<PathBuf> {
 ///
 /// If the config file does not exist yet, a richly commented default file is
 /// written to disk and `UserConfig::default()` is returned.
+#[tracing::instrument]
 pub fn load_config_result() -> Result<UserConfig, ConfigError> {
     let path = config_path().ok_or(ConfigError::NoConfigDir)?;
     if !path.exists() {
@@ -353,6 +354,7 @@ pub fn load_config_result() -> Result<UserConfig, ConfigError> {
     Ok(cfg)
 }
 
+#[tracing::instrument(skip(cfg))]
 pub fn save_config(cfg: &UserConfig) {
     if let Some(path) = config_path()
         && let Ok(s) = toml::to_string_pretty(cfg)

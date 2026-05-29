@@ -24,6 +24,7 @@ pub(crate) struct FontEntry {
 
 /// Enumerate installed font family names. The first entry is always a
 /// synthetic "(default)" item so that index 0 means "no override".
+#[tracing::instrument]
 pub(crate) fn enumerate_font_families() -> Vec<FontEntry> {
     let mut db = Database::new();
     db.load_system_fonts();
@@ -53,6 +54,7 @@ pub(crate) fn enumerate_font_families() -> Vec<FontEntry> {
 
 // ── PTY spawning ──────────────────────────────────────────────────────────────
 
+#[tracing::instrument(skip(shell, exec, cwd))]
 pub(crate) fn spawn_pty(
     shell: &str,
     rows: u16,
@@ -95,6 +97,7 @@ pub(crate) fn session_path() -> Option<PathBuf> {
     Some(dir.join("session.json"))
 }
 
+#[tracing::instrument]
 pub(crate) fn load_session() -> PersistentSession {
     let path = match session_path() {
         Some(p) => p,

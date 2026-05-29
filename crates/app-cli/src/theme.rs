@@ -91,6 +91,7 @@ pub fn themes_dir() -> Option<PathBuf> {
 /// Load all valid `*.yaml`/`*.yml` files from the themes directory.
 /// Files that fail to parse log a `tracing::warn!` with the offending path
 /// and are skipped.
+#[tracing::instrument]
 pub fn load_themes() -> Vec<ThemeFile> {
     let dir = match themes_dir() {
         Some(d) => d,
@@ -134,6 +135,7 @@ pub fn load_themes() -> Vec<ThemeFile> {
 
 /// Copies the bundled default theme files into the user themes directory if
 /// the directory is empty (i.e. first run or after manual deletion).
+#[tracing::instrument]
 pub fn install_default_themes() {
     let dir = match themes_dir() {
         Some(d) => d,

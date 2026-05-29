@@ -41,6 +41,7 @@ struct IntegrationSetup {
 /// Writes per-shell integration scripts that make the shell emit
 /// `ESC ] 133 ; D ; <exit_code> BEL` before each prompt (OSC 133).
 /// Returns `None` if the shell is not supported or the files cannot be written.
+#[tracing::instrument(skip(shell))]
 fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
     let shell_name = std::path::Path::new(shell)
         .file_name()
@@ -137,6 +138,7 @@ impl PortablePtySession {
     /// Returns `(session, integration_active)`.  When `integration_active` is
     /// `false` the shell does not emit OSC 133 and exit-code tracking is
     /// unavailable (fallback: all commands are saved to history).
+    #[tracing::instrument(skip(shell, cwd))]
     pub fn spawn_shell(
         shell: &str,
         rows: u16,
@@ -216,6 +218,7 @@ impl PortablePtySession {
         Ok((session, integration.is_some()))
     }
 
+    #[tracing::instrument(skip(program, args, cwd))]
     pub fn spawn_command(
         program: &str,
         args: &[&str],
@@ -286,6 +289,7 @@ impl PortablePtySession {
         })
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn try_wait(&mut self) -> Result<Option<portable_pty::ExitStatus>> {
         self.child
             .try_wait()
@@ -298,6 +302,7 @@ impl PortablePtySession {
     }
 
     /// Notifies the PTY child process of a terminal size change (sends SIGWINCH).
+    #[tracing::instrument(skip(self))]
     pub fn resize(&mut self, rows: u16, cols: u16) {
         if let Err(err) = self.master.resize(PtySize {
             rows,
