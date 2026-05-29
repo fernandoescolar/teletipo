@@ -23,6 +23,15 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
         return None;
     }
     let mut items: Vec<SettingsItem> = Vec::new();
+    if let Some(ref err) = state.config_error {
+        items.push(SettingsItem {
+            is_header: true,
+            is_selectable: false,
+            is_searchable: false,
+            key: format!("[startup] config error: {err}"),
+            value: String::new(),
+        });
+    }
     let mut last_section = "";
     for field in SETTINGS_FIELDS {
         if field.section != last_section {

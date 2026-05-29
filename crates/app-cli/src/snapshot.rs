@@ -200,6 +200,13 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             }
             crate::UpdateBanner::Failed(err) => format!("Update failed: {err}"),
         })
+    } else if let Some((ref t, ref message)) = state.overlays.pty_status {
+        if t.elapsed().as_secs_f32() < 2.5 {
+            Some(message.clone())
+        } else {
+            state.overlays.pty_status = None;
+            None
+        }
     } else if let Some((ref t, cols, rows)) = state.overlays.last_resize {
         if t.elapsed().as_secs_f32() < 1.0 {
             Some(format!("{cols}\u{d7}{rows}"))

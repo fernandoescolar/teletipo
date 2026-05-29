@@ -353,22 +353,6 @@ pub fn load_config_result() -> Result<UserConfig, ConfigError> {
     Ok(cfg)
 }
 
-/// Load config from disk.  If the file does not exist yet, write a default
-/// one with inline comments so the user can discover all options.
-///
-/// On any I/O or parse failure this function logs a `tracing::warn!` event
-/// with the offending path and returns `UserConfig::default()`. Callers that
-/// need the underlying error should use [`load_config_result`].
-pub fn load_config() -> UserConfig {
-    match load_config_result() {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            tracing::warn!(error = %err, "falling back to default config");
-            UserConfig::default()
-        }
-    }
-}
-
 pub fn save_config(cfg: &UserConfig) {
     if let Some(path) = config_path()
         && let Ok(s) = toml::to_string_pretty(cfg)

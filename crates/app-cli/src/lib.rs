@@ -155,6 +155,8 @@ pub(crate) struct LayoutState {
 pub(crate) struct OverlayState {
     /// Time and dimensions of the last PTY resize, shown as an overlay for 1 s.
     pub(crate) last_resize: Option<(Instant, u16, u16)>,
+    /// Transient PTY/session status message shown in the resize overlay slot.
+    pub(crate) pty_status: Option<(Instant, String)>,
     /// Context menu opened by right-clicking a tab. (tab_idx, menu_x_px, menu_y_px)
     pub(crate) tab_context_menu: Option<(usize, f64, f64)>,
     /// Currently highlighted item inside the open context menu (0-3).
@@ -180,6 +182,7 @@ impl Default for OverlayState {
     fn default() -> Self {
         Self {
             last_resize: None,
+            pty_status: None,
             tab_context_menu: None,
             tab_context_hover: None,
             pending_update: None,
@@ -218,6 +221,8 @@ struct GpuRuntimeState {
     overlays: OverlayState,
     /// Loaded user configuration (applied per frame to the render snapshot).
     user_config: UserConfig,
+    /// Startup config error, if the config file could not be loaded cleanly.
+    config_error: Option<String>,
     themes_fonts: ThemeFontState,
     /// Receiver for the background update-check result (consumed once after the
     /// check completes; set to `None` afterwards).
@@ -256,6 +261,7 @@ impl GpuRuntimeState {
         let mut dead_tabs: Vec<usize> = Vec::new();
         let mut exit_codes: Vec<(usize, i32)> = Vec::new();
         let mut resize_tabs: Vec<usize> = Vec::new();
+        let mut pty_status: Option<String> = None;
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             let Some(mut pty) = tab.pty.take() else {
                 continue;
@@ -336,11 +342,21 @@ impl GpuRuntimeState {
         }
         // Close tabs whose shell exited; if it is the last tab, quit the app.
         for &idx in dead_tabs.iter().rev() {
+            if pty_status.is_none() {
+                pty_status = Some(if self.tabs.len() == 1 {
+                    "PTY closed".to_owned()
+                } else {
+                    format!("PTY closed in tab {}", idx + 1)
+                });
+            }
             if self.tabs.len() == 1 {
                 self.should_exit = true;
             } else {
                 self.close_tab(idx);
             }
+        }
+        if let Some(message) = pty_status {
+            self.overlays.pty_status = Some((Instant::now(), message));
         }
         active_had_data
     }
@@ -785,6 +801,7 @@ mod input_smoke_tests {
             drag: DragState::default(),
             overlays: OverlayState::default(),
             user_config: config::UserConfig::default(),
+            config_error: None,
             themes_fonts: ThemeFontState::default(),
             update_rx: None,
             settings: SettingsUiState::default(),

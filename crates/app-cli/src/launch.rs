@@ -1,5 +1,5 @@
 use crate::GpuRuntimeState;
-use crate::config::load_config;
+use crate::config::{UserConfig, load_config_result};
 use crate::tab::{HistoryEntry, PersistentSession, TabSession, TabState};
 use crate::theme;
 use app_orchestrator::App;
@@ -273,6 +273,14 @@ pub(crate) fn build_initial_state(
         });
     }
 
+    let (user_config, config_error) = match load_config_result() {
+        Ok(cfg) => (cfg, None),
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to load config; using defaults");
+            (UserConfig::default(), Some(err.to_string()))
+        }
+    };
+
     let mut state = GpuRuntimeState {
         tabs,
         active_tab: 0,
@@ -290,7 +298,8 @@ pub(crate) fn build_initial_state(
         cursor: crate::CursorState::default(),
         drag: crate::DragState::default(),
         overlays: crate::OverlayState::default(),
-        user_config: load_config(),
+        user_config,
+        config_error,
         themes_fonts: crate::ThemeFontState {
             available_themes: {
                 theme::install_default_themes();
