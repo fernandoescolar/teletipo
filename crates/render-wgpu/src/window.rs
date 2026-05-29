@@ -14,6 +14,18 @@ type Result<T> = std::result::Result<T, RenderError>;
 
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../docs/teletipo128x128.png");
 
+fn format_window_title(title_cwd: &str) -> String {
+    #[cfg(target_os = "linux")]
+    {
+        // Some Linux titlebar fonts do not include emoji glyphs.
+        format!("teletipo - {title_cwd}")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        format!("\u{1F4C2} {title_cwd}")
+    }
+}
+
 fn load_window_icon() -> Option<Icon> {
     let image = image::load_from_memory(APP_ICON_PNG).ok()?.into_rgba8();
     let (width, height) = image.dimensions();
@@ -111,7 +123,7 @@ where
 {
     let initial = next_snapshot();
     let event_loop = EventLoop::new().map_err(RenderError::event_loop)?;
-    let title = format!("\u{1F4C2} {}", initial.title_cwd);
+    let title = format_window_title(&initial.title_cwd);
     let window = {
         let mut builder = WindowBuilder::new()
             .with_title(title)
@@ -144,7 +156,7 @@ where
         pollster::block_on(GpuState::new(window, &config)).map_err(RenderError::gpu_init)?;
     #[cfg(target_os = "macos")]
     let mut last_titlebar_bg = initial.theme.terminal_bg;
-    let mut last_title: String = format!("\u{1F4C2} {}", initial.title_cwd);
+    let mut last_title: String = format_window_title(&initial.title_cwd);
 
     // Fire an initial resize event so the caller can size the terminal grid to match
     // the actual window dimensions and font metrics before the first frame is drawn.
@@ -234,7 +246,7 @@ where
                                 last_titlebar_bg = snapshot.theme.terminal_bg;
                                 apply_titlebar_color(window, last_titlebar_bg);
                             }
-                            let new_title = format!("\u{1F4C2} {}", snapshot.title_cwd);
+                            let new_title = format_window_title(&snapshot.title_cwd);
                             if new_title != last_title {
                                 last_title = new_title.clone();
                                 window.set_title(&new_title);

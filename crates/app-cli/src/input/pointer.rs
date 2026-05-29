@@ -337,8 +337,19 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 return true;
             }
 
-            // Cmd+click: open a detected terminal link without starting selection.
-            if state.modifiers.super_down {
+            // Open a detected terminal link without starting selection.
+            // macOS uses Command; Linux/Windows use Ctrl.
+            let open_link_modifier_down = {
+                #[cfg(target_os = "macos")]
+                {
+                    state.modifiers.super_down
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    state.modifiers.ctrl_down || state.modifiers.super_down
+                }
+            };
+            if open_link_modifier_down {
                 let pad_h = state.user_config.padding.horizontal as f32;
                 let pad_v = state.user_config.padding.vertical as f32;
                 let term_row_count = state.tab().term_row_count;
