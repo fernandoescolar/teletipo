@@ -4,7 +4,7 @@
 
 A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with rich color support and a code-editor-like command input.
 
-![Teletipo screenshot](docs/teletipo-screenshot.png)
+![Teletipo screenshot](docs/teletipo-screenshot.gif)
 
 ## Install
 
