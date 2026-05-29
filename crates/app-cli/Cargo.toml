@@ -19,6 +19,8 @@ serde_yaml = { workspace = true }
 dirs = "5"
 toml = "0.8"
 fontdb = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 self_update = { version = "0.44", default-features = false, features = [
     "archive-tar",
     "archive-zip",

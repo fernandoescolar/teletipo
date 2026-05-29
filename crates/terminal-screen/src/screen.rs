@@ -749,6 +749,7 @@ impl Screen {
             dirty_rows,
             version: self.version,
         };
+        metrics::histogram!("screen_damage_rows").record(damage.dirty_rows.len() as f64);
         self.full_redraw = false;
         damage
     }

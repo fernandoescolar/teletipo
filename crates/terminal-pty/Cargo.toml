@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 portable-pty = "0.9"
+metrics = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 

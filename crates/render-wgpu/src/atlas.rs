@@ -130,6 +130,7 @@ impl GlyphAtlas {
     }
 
     pub fn insert(&mut self, key: GlyphKey, entry: GlyphEntry) {
+        metrics::counter!("atlas_glyphs").increment(1);
         self.entries.insert(key, entry);
     }
 }

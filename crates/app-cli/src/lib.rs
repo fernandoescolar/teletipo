@@ -2,6 +2,7 @@ mod commands;
 mod completion;
 mod consts;
 mod layout;
+mod metrics;
 mod shell;
 mod terminal_backend;
 
@@ -77,6 +78,9 @@ struct Cli {
 
     #[arg(long, help = "Execute a command and exit")]
     exec: Option<String>,
+
+    #[arg(long, help = "Expose Prometheus metrics on 127.0.0.1:9898")]
+    metrics: bool,
 
     #[command(subcommand)]
     command: Option<commands::Commands>,
@@ -637,6 +641,7 @@ pub fn run(
     if let Some(cmd) = cli.command {
         return commands::dispatch(cmd);
     }
+    let metrics_handle = metrics::install_metrics(cli.metrics);
     let shell = cli.shell.unwrap_or_else(default_shell);
 
     // ── GPU path ─────────────────────────────────────────────────────────────
@@ -711,8 +716,11 @@ pub fn run(
 
     if let Err(err) = run_gpu_window_live_with_events_and_window(
         move || {
+            let frame_start = Instant::now();
             let mut state = state_for_frames.borrow_mut();
-            snapshot::build_snapshot(&mut state)
+            let snapshot = snapshot::build_snapshot(&mut state);
+            ::metrics::histogram!("frame_us").record(frame_start.elapsed().as_secs_f64() * 1_000_000.0);
+            snapshot
         },
         move |event| {
             bridge_for_events.borrow_mut().handle_event(&event);
@@ -737,6 +745,8 @@ pub fn run(
     ) {
         tracing::error!(error = %err, "failed to start gpu backend");
     }
+
+    drop(metrics_handle);
 
     // Persist session state so the next run can restore it.
     save_session(&state.borrow());

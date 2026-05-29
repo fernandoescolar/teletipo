@@ -39,6 +39,7 @@ impl TerminalSession {
 
     pub fn feed(&mut self, bytes: &[u8]) {
         let actions = self.parser.advance(bytes);
+        metrics::histogram!("parse_actions").record(actions.len() as f64);
         for action in actions {
             match action {
                 Action::Print(ch) => self.screen.put_char(ch),

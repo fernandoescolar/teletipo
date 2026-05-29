@@ -63,6 +63,12 @@ teletipo
 
 # Run a specific command on startup
 teletipo --exec "htop"
+
+# Expose Prometheus metrics on 127.0.0.1:9898
+teletipo --metrics
+
+# Increase runtime logging verbosity
+RUST_LOG=app_cli=debug,render_wgpu=info teletipo
 ```
 
 ## Features

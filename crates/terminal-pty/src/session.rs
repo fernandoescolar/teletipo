@@ -1,5 +1,7 @@
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 use std::thread;
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -29,6 +31,7 @@ pub struct PortablePtySession {
     master: Box<dyn portable_pty::MasterPty>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     rx: Receiver<Vec<u8>>,
+    queued_chunks: Arc<AtomicUsize>,
 }
 
 // ── Shell integration ─────────────────────────────────────────────────────────
@@ -190,6 +193,8 @@ impl PortablePtySession {
             .map_err(|e| PtyError::stage("take pty writer", e))?;
 
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
+        let queued_chunks = Arc::new(AtomicUsize::new(0));
+        let queued_chunks_for_thread = Arc::clone(&queued_chunks);
         thread::spawn(move || {
             let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
@@ -199,6 +204,10 @@ impl PortablePtySession {
                         if let Err(err) = tx.send(buf[..n].to_vec()) {
                             debug!(error = %err, "pty reader exiting: receiver dropped");
                             break;
+                        } else {
+                            let depth = queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
+                            metrics::gauge!("pty_channel_depth").set(depth as f64);
+                            metrics::counter!("pty_read_bytes").increment(n as u64);
                         }
                     }
                     Err(err) => {
@@ -214,6 +223,7 @@ impl PortablePtySession {
             master: pair.master,
             child,
             rx,
+            queued_chunks: Arc::clone(&queued_chunks),
         };
         Ok((session, integration.is_some()))
     }
@@ -262,6 +272,8 @@ impl PortablePtySession {
             .map_err(|e| PtyError::stage("take pty writer", e))?;
 
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
+        let queued_chunks = Arc::new(AtomicUsize::new(0));
+        let queued_chunks_for_thread = Arc::clone(&queued_chunks);
         thread::spawn(move || {
             let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
@@ -271,6 +283,10 @@ impl PortablePtySession {
                         if let Err(err) = tx.send(buf[..n].to_vec()) {
                             debug!(error = %err, "pty reader exiting: receiver dropped");
                             break;
+                        } else {
+                            let depth = queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
+                            metrics::gauge!("pty_channel_depth").set(depth as f64);
+                            metrics::counter!("pty_read_bytes").increment(n as u64);
                         }
                     }
                     Err(err) => {
@@ -286,6 +302,7 @@ impl PortablePtySession {
             master: pair.master,
             child,
             rx,
+            queued_chunks: Arc::clone(&queued_chunks),
         })
     }
 
@@ -325,6 +342,8 @@ impl PtyBackend for PortablePtySession {
         let mut total = 0usize;
         while let Ok(chunk) = self.rx.try_recv() {
             total += chunk.len();
+            let depth = self.queued_chunks.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+            metrics::gauge!("pty_channel_depth").set(depth as f64);
             out.extend_from_slice(&chunk);
         }
         Ok(total)

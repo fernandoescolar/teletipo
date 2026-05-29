@@ -9,6 +9,8 @@ terminal-ansi = { path = "../terminal-ansi" }
 terminal-screen = { path = "../terminal-screen" }
 thiserror = { workspace = true }
 
+metrics = { workspace = true }
+
 [dev-dependencies]
 criterion = "0.5"
 
