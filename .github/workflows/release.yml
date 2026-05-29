@@ -139,6 +139,7 @@ jobs:
             'Icon=teletipo' \
             'Terminal=false' \
             'Categories=System;TerminalEmulator;' \
+            'StartupWMClass=teletipo' \
             > "$PKG_DIR/share/applications/teletipo.desktop"
           cp scripts/install/install.sh "$PKG_DIR/install.sh"
           cp scripts/install/uninstall.sh "$PKG_DIR/uninstall.sh"

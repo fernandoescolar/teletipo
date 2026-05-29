@@ -8,3 +8,4 @@ Icon=teletipo
 Terminal=false
 Categories=System;TerminalEmulator;
 StartupNotify=true
+StartupWMClass=teletipo

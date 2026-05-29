@@ -132,6 +132,15 @@ where
                 config.initial_size.map_or(1280, |(w, _)| w) as f64,
                 config.initial_size.map_or(720, |(_, h)| h) as f64,
             ));
+        #[cfg(target_os = "linux")]
+        {
+            // Keep X11/Wayland app identity stable so desktop launchers and
+            // running windows are grouped as a single application in docks.
+            use winit::platform::wayland::WindowBuilderExtWayland;
+            use winit::platform::x11::WindowBuilderExtX11;
+            builder = WindowBuilderExtX11::with_name(builder, "teletipo", "teletipo");
+            builder = WindowBuilderExtWayland::with_name(builder, "teletipo", "teletipo");
+        }
         if let Some((px, py)) = config.initial_position {
             builder = builder.with_position(PhysicalPosition::new(px, py));
         }

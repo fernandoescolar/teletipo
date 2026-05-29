@@ -134,6 +134,7 @@ Icon=teletipo
 Terminal=false
 Categories=System;TerminalEmulator;
 StartupNotify=true
+StartupWMClass=teletipo
 EOF
 
     if have_cmd update-desktop-database; then
