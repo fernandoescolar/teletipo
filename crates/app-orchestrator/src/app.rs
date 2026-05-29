@@ -390,7 +390,14 @@ impl App {
     ) -> io::Result<bool> {
         if let Some(payload) = self.editor.command_payload(prefer_selection) {
             pty.write_input(payload.as_bytes())?;
-            pty.write_input(b"\n")?;
+            #[cfg(windows)]
+            {
+                pty.write_input(b"\r\n")?;
+            }
+            #[cfg(not(windows))]
+            {
+                pty.write_input(b"\n")?;
+            }
             self.editor.clear();
             Ok(true)
         } else {

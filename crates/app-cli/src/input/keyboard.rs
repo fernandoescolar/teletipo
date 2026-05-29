@@ -60,7 +60,14 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 return;
             }
             Key::Named(NamedKey::Enter) => {
-                state.send_terminal_input(b"\r");
+                #[cfg(windows)]
+                {
+                    state.send_terminal_input(b"\r\n");
+                }
+                #[cfg(not(windows))]
+                {
+                    state.send_terminal_input(b"\r");
+                }
                 return;
             }
             Key::Named(NamedKey::Backspace) => {
