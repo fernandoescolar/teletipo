@@ -173,6 +173,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn detects_macos_app_bundle_layout() {
         let path = Path::new("/Applications/Teletipo.app/Contents/MacOS/teletipo");
         assert!(is_running_from_macos_app_bundle(path));

@@ -1,7 +1,7 @@
-use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::{fs, path::PathBuf, process::Command};
 
+#[cfg(target_os = "macos")]
 const MARKER_FILE: &str = "macos_fda_onboarding_v1.seen";
 
 pub(crate) fn show_macos_privacy_onboarding_once() {
@@ -27,6 +27,7 @@ pub(crate) fn show_macos_privacy_onboarding_once() {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn marker_path() -> Option<PathBuf> {
     let dir = dirs::data_local_dir()?.join("teletipo");
     Some(dir.join(MARKER_FILE))
@@ -61,7 +62,7 @@ fn open_full_disk_access_settings() {
         .status();
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
