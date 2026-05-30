@@ -7,6 +7,7 @@ mod completion;
 mod consts;
 mod layout;
 mod metrics;
+mod onboarding;
 mod runtime;
 mod search;
 mod shell;
@@ -65,6 +66,7 @@ pub fn run(
     if let Some(cmd) = cli.command {
         return commands::dispatch(cmd);
     }
+    onboarding::show_macos_privacy_onboarding_once();
     let metrics_handle = metrics::install_metrics(cli.metrics);
     let shell = cli.shell.unwrap_or_else(default_shell);
 

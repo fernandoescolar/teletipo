@@ -27,6 +27,41 @@ fn executable_path() -> io::Result<PathBuf> {
     std::env::current_exe()
 }
 
+fn is_running_from_macos_app_bundle(exe_path: &Path) -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    let Some(macos_dir) = exe_path.parent() else {
+        return false;
+    };
+    if macos_dir.file_name().and_then(|s| s.to_str()) != Some("MacOS") {
+        return false;
+    }
+    let Some(contents_dir) = macos_dir.parent() else {
+        return false;
+    };
+    if contents_dir.file_name().and_then(|s| s.to_str()) != Some("Contents") {
+        return false;
+    }
+    let Some(app_dir) = contents_dir.parent() else {
+        return false;
+    };
+    app_dir
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+}
+
+fn self_update_allowed(exe_path: &Path) -> bool {
+    if cfg!(target_os = "macos")
+        && is_running_from_macos_app_bundle(exe_path)
+        && std::env::var_os("TELETIPO_ALLOW_APP_BUNDLE_SELF_UPDATE").is_none()
+    {
+        return false;
+    }
+    true
+}
+
 fn rollback_backup_path(exe_path: &Path) -> PathBuf {
     let file_name = exe_path
         .file_name()
@@ -84,6 +119,16 @@ fn try_update() -> Result<Option<String>, String> {
 #[tracing::instrument]
 pub fn spawn_update() -> mpsc::Receiver<Result<Option<String>, String>> {
     let (tx, rx) = mpsc::channel();
+    let exe_path = executable_path().ok();
+    if let Some(ref path) = exe_path {
+        if !self_update_allowed(path) {
+            info!(
+                exe = %path.display(),
+                "self-update disabled for macOS app bundle; use installer-based app updates"
+            );
+            return rx;
+        }
+    }
     std::thread::spawn(move || {
         let result = try_update();
         if let Err(err) = tx.send(result) {
@@ -125,5 +170,17 @@ mod tests {
             rollback_backup_path(path),
             PathBuf::from("/tmp/teletipo.exe.bak")
         );
+    }
+
+    #[test]
+    fn detects_macos_app_bundle_layout() {
+        let path = Path::new("/Applications/Teletipo.app/Contents/MacOS/teletipo");
+        assert!(is_running_from_macos_app_bundle(path));
+    }
+
+    #[test]
+    fn rejects_non_bundle_layout() {
+        let path = Path::new("/usr/local/bin/teletipo");
+        assert!(!is_running_from_macos_app_bundle(path));
     }
 }
