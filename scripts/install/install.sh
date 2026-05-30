@@ -189,7 +189,26 @@ install_macos_app() {
 
     rm -rf "$app_dest"
     cp -R "$app_src" "$app_dest"
+
+    # Remove quarantine metadata so Gatekeeper/TCC sees a normal installed app.
+    if have_cmd xattr; then
+        xattr -dr com.apple.quarantine "$app_dest" >/dev/null 2>&1 || true
+    fi
+
+    # Ad-hoc sign when no Developer ID signature is present.
+    # This helps keep a stable code identity for local TCC decisions.
+    if have_cmd codesign; then
+        if ! codesign --verify --deep --strict "$app_dest" >/dev/null 2>&1; then
+            if codesign --force --deep --sign - "$app_dest" >/dev/null 2>&1; then
+                log "applied ad-hoc signature to ${app_dest}"
+            else
+                log "warning: could not ad-hoc sign ${app_dest}"
+            fi
+        fi
+    fi
+
     log "installed ${app_dest}"
+    log "if Full Disk Access is needed: System Settings > Privacy & Security > Full Disk Access > + > ${app_dest}"
 }
 
 install_macos_cli() {
@@ -227,6 +246,7 @@ run_uninstall() {
     rm -f "${PREFIX}/bin/teletipo"
     rm -f "${PREFIX}/share/applications/teletipo.desktop"
     rm -f "${PREFIX}/share/icons/hicolor/128x128/apps/teletipo.png"
+    rm -rf "/Applications/Teletipo.app"
     rm -rf "${HOME}/Applications/Teletipo.app"
     log "uninstalled"
     exit 0
