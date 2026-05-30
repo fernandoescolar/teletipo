@@ -669,6 +669,21 @@ pub(crate) fn load_emoji_font_bytes(db: Option<&fontdb::Database>) -> Option<Vec
         }
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        let paths = [
+            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+            "/usr/local/share/fonts/NotoColorEmoji.ttf",
+            "/usr/share/fonts/google-noto-color-emoji/NotoColorEmoji.ttf",
+        ];
+        for path in &paths {
+            if let Ok(bytes) = std::fs::read(path) {
+                return Some(bytes);
+            }
+        }
+    }
+
     None
 }
 

@@ -18,11 +18,12 @@ impl<'a> GpuState<'a> {
             return;
         }
         self.emoji_load_attempted = true;
-        // Pass `None` so we skip rebuilding the (slow, large) system font
-        // database.  On macOS the direct-path fallback finds Apple Color Emoji
-        // immediately; on Linux/Windows we'd need a fontdb scan, which is
-        // accepted as a one-off cost on first emoji use.
-        match load_emoji_font_bytes(None) {
+        // One-time scan on first emoji usage so Linux can discover
+        // Noto Color Emoji via fontdb.
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        let bytes = load_emoji_font_bytes(Some(&db)).or_else(|| load_emoji_font_bytes(None));
+        match bytes {
             Some(bytes) => {
                 self.emoji_font_bytes = Some(bytes.into_boxed_slice());
             }
