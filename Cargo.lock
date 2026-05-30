@@ -152,7 +152,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "app-cli"
-version = "0.0.2"
+version = "9.9.9"
 dependencies = [
  "anyhow",
  "app-orchestrator",
@@ -3617,7 +3617,7 @@ dependencies = [
 
 [[package]]
 name = "teletipo"
-version = "0.0.2"
+version = "9.9.9"
 dependencies = [
  "app-cli",
  "dirs",

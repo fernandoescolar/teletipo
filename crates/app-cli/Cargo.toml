@@ -1,6 +1,6 @@
 [package]
 name = "app-cli"
-version = "0.0.2"
+version = "9.9.9"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
