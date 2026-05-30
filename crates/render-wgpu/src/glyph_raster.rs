@@ -5,10 +5,33 @@
 //! Split out of `pipeline.rs` to keep the renderer constructor focused on
 //! resource wiring.
 
-use crate::atlas::{pack_emoji_glyph, pack_glyph};
+use crate::atlas::{load_emoji_font_bytes, pack_emoji_glyph, pack_glyph};
 use crate::pipeline::GpuState;
 
 impl<'a> GpuState<'a> {
+    /// Lazily load the colour-emoji font on first need.  Emoji fonts are
+    /// huge (Apple Color Emoji is ~180 MB) and most sessions never render an
+    /// emoji, so we defer the allocation until it's actually required.
+    /// `emoji_load_attempted` ensures we only try once per renderer lifetime.
+    fn ensure_emoji_font_loaded(&mut self) {
+        if self.emoji_load_attempted {
+            return;
+        }
+        self.emoji_load_attempted = true;
+        // Pass `None` so we skip rebuilding the (slow, large) system font
+        // database.  On macOS the direct-path fallback finds Apple Color Emoji
+        // immediately; on Linux/Windows we'd need a fontdb scan, which is
+        // accepted as a one-off cost on first emoji use.
+        match load_emoji_font_bytes(None) {
+            Some(bytes) => {
+                self.emoji_font_bytes = Some(bytes.into_boxed_slice());
+            }
+            None => {
+                tracing::warn!("no colour emoji font found; emoji will not be rendered");
+            }
+        }
+    }
+
     /// Recompute glyph metrics for a new font size and invalidate every cached
     /// rasterisation. Cheap no-op if the size change is below half a pixel.
     pub(crate) fn rescale_font(&mut self, base_font_size: f32, scale_factor: f64) {
@@ -100,6 +123,7 @@ impl<'a> GpuState<'a> {
 
         // Last resort: colour emoji font (SBIX/CBDT) for chars not found above.
         if !found {
+            self.ensure_emoji_font_loaded();
             let target_px = self.cell_h_px as u32;
             let emoji_result = if let Some(bytes) = self.emoji_font_bytes.as_deref() {
                 pack_emoji_glyph(

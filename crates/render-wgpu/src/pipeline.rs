@@ -6,7 +6,7 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::atlas::{
-    CachedGlyph, load_bold_font_bytes, load_emoji_font_bytes, load_font_bytes,
+    CachedGlyph, load_bold_font_bytes, load_font_bytes, load_system_font_database,
     load_unicode_fallback_font_bytes, pack_glyph, shape_terminal_text,
 };
 use crate::geometry::{
@@ -49,7 +49,13 @@ pub(crate) struct GpuState<'a> {
     pub(crate) unicode_fallback_font: Option<fontdue::Font>,
     /// Raw bytes of a colour emoji font (Apple Color Emoji / Noto Color Emoji / Segoe UI Emoji).
     /// Used to extract SBIX/CBDT raster images for characters fontdue cannot render.
+    ///
+    /// Lazily populated on first emoji rasterisation (emoji fonts are large —
+    /// Apple Color Emoji is ~180 MB — so we avoid paying that cost upfront).
     pub(crate) emoji_font_bytes: Option<Box<[u8]>>,
+    /// Set once we've attempted to load the emoji font, so we don't retry on
+    /// every miss when no emoji font is available on the system.
+    pub(crate) emoji_load_attempted: bool,
     /// The `terminal_screen_version` value from the last successfully rendered
     /// snapshot.  When the incoming snapshot carries the same version and the
     /// terminal cursor / scroll position haven't changed, the terminal text
@@ -96,14 +102,23 @@ impl<'a> GpuState<'a> {
             vertex_buf: text_vertex_buf,
         } = crate::surface::build_text_pipeline(&device, format, &atlas_bgl);
 
-        // Font loading and ASCII glyph pre-rasterization
+        // Font loading and ASCII glyph pre-rasterization.
+        //
+        // The system-font database is expensive to build (scans hundreds of
+        // files on macOS and keeps mmap handles open), so we build it once,
+        // share it across all font lookups, and drop it before this function
+        // returns — releasing the backing mmaps so they don't inflate RSS for
+        // the lifetime of the renderer.
+        let font_db = load_system_font_database();
         let font_size = render_config.font.font_size;
-        let font_bytes = load_font_bytes(&render_config.font);
-        let font_data: Option<Box<[u8]>> =
-            font_bytes.as_deref().map(|b| b.to_vec().into_boxed_slice());
+        // `font_bytes` is consumed below: the same allocation is reused as
+        // `font_data` (for rustybuzz shaping) so we don't keep two copies of
+        // the font in memory.
+        let font_bytes = load_font_bytes(&font_db, &render_config.font);
         let font = font_bytes.as_ref().and_then(|bytes| {
             fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
         });
+        let font_data: Option<Box<[u8]>> = font_bytes.map(Vec::into_boxed_slice);
         let (cell_w_px, cell_h_px) = font
             .as_ref()
             .map(|f| (f.metrics('M', font_size).advance_width, font_size * 1.2))
@@ -131,18 +146,16 @@ impl<'a> GpuState<'a> {
         }
 
         // Unicode fallback font for non-ASCII symbols not in the primary monospace font.
-        let unicode_fallback_font = load_unicode_fallback_font_bytes().and_then(|bytes| {
-            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
-        });
+        let unicode_fallback_font =
+            load_unicode_fallback_font_bytes(&font_db).and_then(|bytes| {
+                fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+            });
 
-        // Colour emoji font for characters fontdue cannot render (SBIX/CBDT bitmaps).
-        let emoji_font_bytes = load_emoji_font_bytes().map(|b| b.into_boxed_slice());
-        if emoji_font_bytes.is_none() {
-            tracing::warn!("no colour emoji font found; emoji will not be rendered");
-        }
+        // Colour emoji font is loaded lazily on first use — see
+        // `glyph_raster::ensure_emoji_font_loaded`.
 
         // Bold font: load and rasterize into the same atlas with a separate cache.
-        let bold_font_bytes = load_bold_font_bytes(&render_config.font);
+        let bold_font_bytes = load_bold_font_bytes(&font_db, &render_config.font);
         let bold_font = bold_font_bytes.as_ref().and_then(|bytes| {
             fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
         });
@@ -163,6 +176,10 @@ impl<'a> GpuState<'a> {
                 bold_glyph_cache.insert(ch, cached);
             }
         }
+
+        // Done with the system font database — drop it now so the indexed
+        // file handles / mmaps don't sit around for the renderer's lifetime.
+        drop(font_db);
 
         Ok(Self {
             surface,
@@ -190,7 +207,8 @@ impl<'a> GpuState<'a> {
             font_data,
             shaped_glyph_cache: HashMap::new(),
             unicode_fallback_font,
-            emoji_font_bytes,
+            emoji_font_bytes: None,
+            emoji_load_attempted: false,
             last_terminal_version: 0,
             last_cursor_pos: (usize::MAX, usize::MAX),
             last_scroll_offset: usize::MAX,

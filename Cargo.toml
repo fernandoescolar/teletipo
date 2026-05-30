@@ -29,6 +29,11 @@ app-cli = { path = "crates/app-cli" }
 dirs = "5"
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
+# `mimalloc` replaces the default system allocator. On macOS in particular the
+# default allocator is reluctant to return freed memory to the OS, inflating
+# RSS for long-running GUI processes. mimalloc returns memory aggressively and
+# fragments less, typically cutting RSS by 20–40 % for wgpu/winit applications.
+mimalloc = { version = "0.1", default-features = false }
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }

@@ -131,13 +131,18 @@ fn encode_ansi_row(out: &mut String, cur: &mut CellStyle, cells: &[Cell]) {
 }
 
 impl Screen {
+    /// Default scrollback line cap. Kept moderate (5 000 lines) so a single
+    /// terminal stays under ~20 MB even with wide rows; users who need more
+    /// history can raise it via `set_scrollback_limit`.
+    pub const DEFAULT_SCROLLBACK_LIMIT: usize = 5_000;
+
     pub fn new(rows: usize, cols: usize) -> Self {
         Self {
             primary: Grid::new(rows, cols),
             alternate: Grid::new(rows, cols),
             use_alternate: false,
             scrollback: VecDeque::new(),
-            scrollback_limit: 10_000,
+            scrollback_limit: Self::DEFAULT_SCROLLBACK_LIMIT,
             current_style: CellStyle::default(),
             saved_cursor: None,
             scroll_region: None,
@@ -147,6 +152,17 @@ impl Screen {
             text_cache: RefCell::new(None),
             ansi_cache: RefCell::new(None),
         }
+    }
+
+    /// Override the scrollback line cap. If the new limit is smaller than the
+    /// current backlog, the oldest lines are dropped immediately so memory is
+    /// reclaimed on the next allocator pass.
+    pub fn set_scrollback_limit(&mut self, limit: usize) {
+        self.scrollback_limit = limit;
+        while self.scrollback.len() > self.scrollback_limit {
+            self.scrollback.pop_front();
+        }
+        self.scrollback.shrink_to_fit();
     }
 
     fn active_grid(&self) -> &Grid {

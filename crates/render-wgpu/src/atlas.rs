@@ -355,8 +355,21 @@ const MONOSPACE_FONT_FAMILIES: &[&str] = &[
     "Menlo",
 ];
 
+/// Builds a `fontdb::Database` populated with the system fonts.
+///
+/// Scanning the system font directories is expensive (it touches hundreds of
+/// files on macOS) and the resulting database also keeps file metadata in
+/// memory.  Callers should build this **once** at startup, reuse it for every
+/// font query, and drop it before entering the render loop so the backing
+/// mmaps/handles can be released.
+pub(crate) fn load_system_font_database() -> fontdb::Database {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    db
+}
+
 /// Tries to load raw font bytes from the configured family or system fallbacks.
-pub(crate) fn load_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
+pub(crate) fn load_font_bytes(db: &fontdb::Database, config: &FontConfig) -> Option<Vec<u8>> {
     fn query_bytes_by_family(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
         let query = fontdb::Query {
             families: &[fontdb::Family::Name(family)],
@@ -375,23 +388,20 @@ pub(crate) fn load_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
         db.with_face_data(id, |data, _| data.to_vec())
     }
 
-    let mut db = fontdb::Database::new();
-    db.load_system_fonts();
-
     if let Some(ref family) = config.font_family {
-        if let Some(bytes) = query_bytes_by_family(&db, family) {
+        if let Some(bytes) = query_bytes_by_family(db, family) {
             return Some(bytes);
         }
         tracing::warn!(family = %family, "cannot load font family, trying fallback");
     }
 
     for &family in MONOSPACE_FONT_FAMILIES {
-        if let Some(bytes) = query_bytes_by_family(&db, family) {
+        if let Some(bytes) = query_bytes_by_family(db, family) {
             return Some(bytes);
         }
     }
 
-    if let Some(bytes) = query_monospace_bytes(&db) {
+    if let Some(bytes) = query_monospace_bytes(db) {
         return Some(bytes);
     }
 
@@ -401,7 +411,10 @@ pub(crate) fn load_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
 
 /// Tries to load the **bold** variant of the configured font family (or system fallbacks).
 /// Falls back gracefully so callers can treat `None` as "use regular font for bold".
-pub(crate) fn load_bold_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
+pub(crate) fn load_bold_font_bytes(
+    db: &fontdb::Database,
+    config: &FontConfig,
+) -> Option<Vec<u8>> {
     fn query_bold_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
         let query = fontdb::Query {
             families: &[fontdb::Family::Name(family)],
@@ -422,28 +435,25 @@ pub(crate) fn load_bold_font_bytes(config: &FontConfig) -> Option<Vec<u8>> {
         db.with_face_data(id, |data, _| data.to_vec())
     }
 
-    let mut db = fontdb::Database::new();
-    db.load_system_fonts();
-
     if let Some(ref family) = config.font_family
-        && let Some(bytes) = query_bold_bytes(&db, family)
+        && let Some(bytes) = query_bold_bytes(db, family)
     {
         return Some(bytes);
     }
 
     for &family in MONOSPACE_FONT_FAMILIES {
-        if let Some(bytes) = query_bold_bytes(&db, family) {
+        if let Some(bytes) = query_bold_bytes(db, family) {
             return Some(bytes);
         }
     }
 
-    query_bold_monospace_bytes(&db)
+    query_bold_monospace_bytes(db)
 }
 
 /// Tries to load a Unicode-capable fallback font for rendering characters not
 /// supported by the primary monospace font (box-drawing, block elements, symbols).
 /// Returns raw font bytes suitable for `fontdue::Font::from_bytes`.
-pub(crate) fn load_unicode_fallback_font_bytes() -> Option<Vec<u8>> {
+pub(crate) fn load_unicode_fallback_font_bytes(db: &fontdb::Database) -> Option<Vec<u8>> {
     fn query_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
         let query = fontdb::Query {
             families: &[fontdb::Family::Name(family)],
@@ -452,9 +462,6 @@ pub(crate) fn load_unicode_fallback_font_bytes() -> Option<Vec<u8>> {
         let id = db.query(&query)?;
         db.with_face_data(id, |data, _| data.to_vec())
     }
-
-    let mut db = fontdb::Database::new();
-    db.load_system_fonts();
 
     // Ordered by Unicode coverage preference: macOS first, then Linux/Windows
     for family in [
@@ -465,7 +472,7 @@ pub(crate) fn load_unicode_fallback_font_bytes() -> Option<Vec<u8>> {
         "DejaVu Sans",      // Linux fallback
         "FreeSans",         // another Linux option
     ] {
-        if let Some(bytes) = query_bytes(&db, family) {
+        if let Some(bytes) = query_bytes(db, family) {
             return Some(bytes);
         }
     }
@@ -627,7 +634,12 @@ pub(crate) fn pack_color_glyph(
 
 /// Tries to load the bytes of a colour emoji font from the system.
 /// On macOS this is Apple Color Emoji; on Linux Noto Color Emoji; on Windows Segoe UI Emoji.
-pub(crate) fn load_emoji_font_bytes() -> Option<Vec<u8>> {
+///
+/// Emoji fonts are **large** (Apple Color Emoji is ~180 MB) so callers should
+/// only invoke this lazily, the first time an emoji glyph actually needs to be
+/// rasterised.  Pass `None` to skip the (slow) system font scan and only try
+/// the platform-specific direct path fallback.
+pub(crate) fn load_emoji_font_bytes(db: Option<&fontdb::Database>) -> Option<Vec<u8>> {
     fn query_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
         let query = fontdb::Query {
             families: &[fontdb::Family::Name(family)],
@@ -637,16 +649,16 @@ pub(crate) fn load_emoji_font_bytes() -> Option<Vec<u8>> {
         db.with_face_data(id, |data, _| data.to_vec())
     }
 
-    let mut db = fontdb::Database::new();
-    db.load_system_fonts();
-
-    for family in ["Apple Color Emoji", "Noto Color Emoji", "Segoe UI Emoji"] {
-        if let Some(bytes) = query_bytes(&db, family) {
-            return Some(bytes);
+    if let Some(db) = db {
+        for family in ["Apple Color Emoji", "Noto Color Emoji", "Segoe UI Emoji"] {
+            if let Some(bytes) = query_bytes(db, family) {
+                return Some(bytes);
+            }
         }
     }
 
-    // macOS direct-path fallback in case fontdb does not index the .ttc
+    // macOS direct-path fallback: fast (single `read`) and reliable even when
+    // the caller doesn't have a `fontdb::Database` handy.
     #[cfg(target_os = "macos")]
     {
         let paths = [
