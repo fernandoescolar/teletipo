@@ -23,6 +23,15 @@ fn asset_target() -> &'static str {
     }
 }
 
+fn bin_path_in_archive() -> String {
+    let bin = format!("teletipo{}", std::env::consts::EXE_SUFFIX);
+    if cfg!(target_os = "windows") {
+        bin
+    } else {
+        format!("teletipo-{}/{bin}", asset_target())
+    }
+}
+
 fn executable_path() -> io::Result<PathBuf> {
     std::env::current_exe()
 }
@@ -78,10 +87,12 @@ fn backup_current_executable(exe_path: &Path) -> io::Result<PathBuf> {
 
 fn build_updater() -> anyhow::Result<Box<dyn self_update::update::ReleaseUpdate>> {
     let mut builder = self_update::backends::github::Update::configure();
+    let bin_path = bin_path_in_archive();
     builder
         .repo_owner("fernandoescolar")
         .repo_name("teletipo")
         .bin_name("teletipo")
+        .bin_path_in_archive(&bin_path)
         .target(asset_target())
         .show_download_progress(false)
         .show_output(false)
@@ -169,6 +180,21 @@ mod tests {
         assert_eq!(
             rollback_backup_path(path),
             PathBuf::from("/tmp/teletipo.exe.bak")
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn bin_path_in_archive_matches_windows_layout() {
+        assert_eq!(bin_path_in_archive(), "teletipo.exe");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn bin_path_in_archive_matches_unix_layout() {
+        assert_eq!(
+            bin_path_in_archive(),
+            format!("teletipo-{}/teletipo", asset_target())
         );
     }
 
