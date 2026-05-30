@@ -15,12 +15,12 @@ type Result<T> = std::result::Result<T, RenderError>;
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../docs/teletipo128x128.png");
 
 fn format_window_title(title_cwd: &str) -> String {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
-        // Some Linux titlebar fonts do not include emoji glyphs.
+        // Linux/Windows titlebar fonts may not include emoji glyphs.
         format!("teletipo - {title_cwd}")
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     {
         format!("\u{1F4C2} {title_cwd}")
     }
