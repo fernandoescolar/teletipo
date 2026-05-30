@@ -120,14 +120,14 @@ fn try_update() -> Result<Option<String>, String> {
 pub fn spawn_update() -> mpsc::Receiver<Result<Option<String>, String>> {
     let (tx, rx) = mpsc::channel();
     let exe_path = executable_path().ok();
-    if let Some(ref path) = exe_path {
-        if !self_update_allowed(path) {
-            info!(
-                exe = %path.display(),
-                "self-update disabled for macOS app bundle; use installer-based app updates"
-            );
-            return rx;
-        }
+    if let Some(ref path) = exe_path
+        && !self_update_allowed(path)
+    {
+        info!(
+            exe = %path.display(),
+            "self-update disabled for macOS app bundle; use installer-based app updates"
+        );
+        return rx;
     }
     std::thread::spawn(move || {
         let result = try_update();

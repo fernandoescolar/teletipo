@@ -146,10 +146,9 @@ impl<'a> GpuState<'a> {
         }
 
         // Unicode fallback font for non-ASCII symbols not in the primary monospace font.
-        let unicode_fallback_font =
-            load_unicode_fallback_font_bytes(&font_db).and_then(|bytes| {
-                fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
-            });
+        let unicode_fallback_font = load_unicode_fallback_font_bytes(&font_db).and_then(|bytes| {
+            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+        });
 
         // Colour emoji font is loaded lazily on first use — see
         // `glyph_raster::ensure_emoji_font_loaded`.

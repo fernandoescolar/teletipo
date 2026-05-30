@@ -411,10 +411,7 @@ pub(crate) fn load_font_bytes(db: &fontdb::Database, config: &FontConfig) -> Opt
 
 /// Tries to load the **bold** variant of the configured font family (or system fallbacks).
 /// Falls back gracefully so callers can treat `None` as "use regular font for bold".
-pub(crate) fn load_bold_font_bytes(
-    db: &fontdb::Database,
-    config: &FontConfig,
-) -> Option<Vec<u8>> {
+pub(crate) fn load_bold_font_bytes(db: &fontdb::Database, config: &FontConfig) -> Option<Vec<u8>> {
     fn query_bold_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
         let query = fontdb::Query {
             families: &[fontdb::Family::Name(family)],
