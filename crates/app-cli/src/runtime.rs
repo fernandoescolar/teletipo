@@ -390,6 +390,68 @@ impl GpuRuntimeState {
         }
     }
 
+    pub(crate) fn jump_to_prev_prompt(&mut self) {
+        self.jump_to_prompt(false);
+    }
+
+    pub(crate) fn jump_to_next_prompt(&mut self) {
+        self.jump_to_prompt(true);
+    }
+
+    fn jump_to_prompt(&mut self, forward: bool) {
+        let tab = self.tab_mut();
+        let prompt_marks = tab.app.prompt_marks();
+        if prompt_marks.is_empty() {
+            self.push_toast("No prompt markers yet", crate::state::ToastKind::Info);
+            return;
+        }
+
+        let visible_rows = tab.term_row_count.max(1);
+        let scrollback = tab.app.scrollback_len();
+        let total_rows = scrollback.saturating_add(visible_rows);
+        let window_start = total_rows
+            .saturating_sub(visible_rows)
+            .saturating_sub(tab.scroll_offset.min(scrollback));
+        let pivot_row = if let Some((selected_row, _)) = tab.selection_anchor {
+            window_start.saturating_add(selected_row)
+        } else {
+            window_start.saturating_add(visible_rows / 2)
+        };
+
+        let target = if forward {
+            prompt_marks.iter().copied().find(|&row| row > pivot_row)
+        } else {
+            prompt_marks.iter().copied().rfind(|&row| row < pivot_row)
+        };
+
+        let Some(target_row) = target else {
+            let msg = if forward {
+                "No later prompt"
+            } else {
+                "No earlier prompt"
+            };
+            self.push_toast(msg, crate::state::ToastKind::Info);
+            return;
+        };
+
+        let center_target = target_row.saturating_sub(visible_rows / 2);
+        let max_start = total_rows.saturating_sub(visible_rows);
+        let clamped_start = center_target.min(max_start);
+        tab.scroll_offset = total_rows
+            .saturating_sub(visible_rows)
+            .saturating_sub(clamped_start)
+            .min(scrollback);
+        let new_window_start = total_rows
+            .saturating_sub(visible_rows)
+            .saturating_sub(tab.scroll_offset.min(scrollback));
+        let row_in_view = target_row.saturating_sub(new_window_start);
+        tab.selection_anchor = Some((row_in_view, 0));
+        tab.selection_anchor_scroll = tab.scroll_offset;
+        tab.selection_end = Some((row_in_view, 0));
+        tab.selection_end_scroll = tab.scroll_offset;
+        tab.is_selecting = false;
+    }
+
     pub(crate) fn resize_tab(&mut self, idx: usize, rows: u16, cols: u16) {
         let tab = &mut self.tabs[idx];
         if let Some(pty) = tab.pty.as_mut() {

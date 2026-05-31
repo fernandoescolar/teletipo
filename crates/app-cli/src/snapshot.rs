@@ -32,6 +32,30 @@ fn tab_button_label(index: usize, title: Option<&str>, cwd: &str, max_chars: usi
     format!("Cmd+{}  {}", index + 1, label_text)
 }
 
+fn tab_button_label_for_tab(
+    index: usize,
+    title: Option<&str>,
+    cwd: &str,
+    command_running: bool,
+    pending_cmd: Option<&str>,
+    max_chars: usize,
+) -> String {
+    let resolved_title = title.map(str::trim).filter(|title| !title.is_empty());
+    let fallback = if command_running {
+        if let Some(cmd) = pending_cmd.map(str::trim).filter(|cmd| !cmd.is_empty()) {
+            truncate_display(&format!("[run] {cmd}"), max_chars)
+        } else {
+            truncate_display(
+                &format!("[run] {}", shorten_cwd_label(cwd, max_chars)),
+                max_chars,
+            )
+        }
+    } else {
+        shorten_cwd_label(cwd, max_chars)
+    };
+    tab_button_label(index, resolved_title.or(Some(&fallback)), cwd, max_chars)
+}
+
 fn tab_button_max_chars(tab_width_px: f32, cell_w_px: f32) -> usize {
     let shortcut_width_chars = 4.0;
     let close_button_width_chars = 2.0;
@@ -402,7 +426,14 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             .iter()
             .enumerate()
             .map(|(index, tab)| {
-                let label = tab_button_label(index, tab.app.window_title(), &tab.cwd, max_chars);
+                let label = tab_button_label_for_tab(
+                    index,
+                    tab.app.window_title(),
+                    &tab.cwd,
+                    tab.command_running,
+                    tab.pending_cmd.as_deref(),
+                    max_chars,
+                );
                 if index != state.active_tab {
                     let mut marker = String::new();
                     if tab.bell_pending {
@@ -588,7 +619,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::tab_button_label;
+    use super::{tab_button_label, tab_button_label_for_tab};
 
     #[test]
     fn tab_button_label_uses_title_when_present() {
@@ -611,6 +642,22 @@ mod tests {
         assert_eq!(
             tab_button_label(2, Some("very long terminal title"), "/tmp", 8),
             "Cmd+3  very lon…"
+        );
+    }
+
+    #[test]
+    fn tab_button_label_uses_running_command_when_no_title() {
+        assert_eq!(
+            tab_button_label_for_tab(0, None, "/tmp/project", true, Some("cargo test"), 20),
+            "Cmd+1  [run] cargo test"
+        );
+    }
+
+    #[test]
+    fn tab_button_label_uses_running_cwd_when_no_title_or_command() {
+        assert_eq!(
+            tab_button_label_for_tab(0, None, "/tmp/project", true, None, 20),
+            "Cmd+1  [run] /tmp/project"
         );
     }
 }

@@ -24,6 +24,8 @@ pub(crate) enum CommandId {
     CloseTab,
     MoveTabLeft,
     MoveTabRight,
+    JumpToPrevPrompt,
+    JumpToNextPrompt,
     OpenSettings,
     OpenConfigInEditor,
     RevealConfigInFinder,
@@ -44,6 +46,8 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
         CommandId::CloseTab => state.close_tab(idx),
         CommandId::MoveTabLeft => state.move_tab_to(idx, idx.saturating_sub(1)),
         CommandId::MoveTabRight => state.move_tab_to(idx, idx + 2),
+        CommandId::JumpToPrevPrompt => state.jump_to_prev_prompt(),
+        CommandId::JumpToNextPrompt => state.jump_to_next_prompt(),
         CommandId::OpenSettings => state.open_settings_modal(),
         CommandId::OpenConfigInEditor => {
             if let Some(path) = crate::config::config_path() {
@@ -86,6 +90,14 @@ pub(crate) fn palette_commands(state: &GpuRuntimeState) -> Vec<(String, CommandI
     let mut out = vec![
         ("New Tab".to_owned(), CommandId::NewTab),
         ("Close Tab".to_owned(), CommandId::CloseTab),
+        (
+            "Jump to Previous Prompt".to_owned(),
+            CommandId::JumpToPrevPrompt,
+        ),
+        (
+            "Jump to Next Prompt".to_owned(),
+            CommandId::JumpToNextPrompt,
+        ),
         ("Open Settings".to_owned(), CommandId::OpenSettings),
         (
             "Open Config in Editor".to_owned(),

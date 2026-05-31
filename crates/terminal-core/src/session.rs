@@ -222,6 +222,7 @@ pub struct GenericTerminalSession<P = Parser, D = Screen> {
     window_title: Option<String>,
     bell_pending: bool,
     application_cursor_keys: bool,
+    prompt_marks: Vec<usize>,
 }
 
 /// Default `GenericTerminalSession` specialised with the production parser
@@ -245,6 +246,7 @@ impl GenericTerminalSession<Parser, Screen> {
             window_title: None,
             bell_pending: false,
             application_cursor_keys: false,
+            prompt_marks: Vec::new(),
         })
     }
 }
@@ -266,6 +268,17 @@ where
             window_title: None,
             bell_pending: false,
             application_cursor_keys: false,
+            prompt_marks: Vec::new(),
+        }
+    }
+
+    fn record_prompt_mark(&mut self) {
+        let abs_row = self
+            .screen
+            .scrollback_len()
+            .saturating_add(self.screen.cursor_row());
+        if self.prompt_marks.last().copied() != Some(abs_row) {
+            self.prompt_marks.push(abs_row);
         }
     }
 
@@ -313,6 +326,9 @@ where
                     _ => {}
                 },
                 Action::Osc(s) => {
+                    if s == "133;A" {
+                        self.record_prompt_mark();
+                    }
                     // OSC 133;D;N — shell integration exit-code report.
                     if let Some(rest) = s.strip_prefix("133;D;")
                         && let Ok(code) = rest.parse::<i32>()
@@ -447,6 +463,11 @@ where
     /// Returns whether application cursor keys mode (DECCKM, DEC private mode 1) is active.
     pub fn application_cursor_keys(&self) -> bool {
         self.application_cursor_keys
+    }
+
+    /// Absolute rows of prompts reported by OSC 133 hooks.
+    pub fn prompt_marks(&self) -> &[usize] {
+        &self.prompt_marks
     }
 }
 
@@ -738,5 +759,18 @@ mod tests {
         assert_eq!(session.mouse_mode(), 1006);
         session.feed(b"\x1b[?1006l");
         assert_eq!(session.mouse_mode(), 0);
+    }
+
+    #[test]
+    fn osc_133_prompt_marks_are_recorded_once_per_row() {
+        let mut session = make_session(3, 10);
+
+        session.feed(b"\x1b]133;A\x07");
+        session.feed(b"prompt\n");
+        session.feed(b"\x1b]133;B\x07");
+        session.feed(b"cmd\n");
+        session.feed(b"\x1b]133;A\x07");
+
+        assert_eq!(session.prompt_marks(), &[0, 2]);
     }
 }

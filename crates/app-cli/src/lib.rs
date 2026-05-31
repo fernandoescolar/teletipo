@@ -269,6 +269,49 @@ mod input_smoke_tests {
     }
 
     #[test]
+    fn jump_to_prev_prompt_scrolls_back() {
+        let mut state = build_test_state(Box::new(shell::NullShell::default()));
+        state.resize_tab(0, 4, 80);
+        state.tabs[0].term_row_count = 4;
+        state.tabs[0].app.feed_terminal(
+            b"\x1b]133;A\x07p1\nout1\n\x1b]133;A\x07p2\nout2\n\x1b]133;A\x07p3\nout3\n",
+        );
+
+        state.jump_to_prev_prompt();
+
+        assert!(state.tabs[0].scroll_offset > 0);
+    }
+
+    #[test]
+    fn jump_to_next_prompt_scrolls_forward_after_backjump() {
+        let mut state = build_test_state(Box::new(shell::NullShell::default()));
+        state.resize_tab(0, 4, 80);
+        state.tabs[0].term_row_count = 4;
+        state.tabs[0].app.feed_terminal(
+            b"\x1b]133;A\x07p1\nout1\n\x1b]133;A\x07p2\nout2\n\x1b]133;A\x07p3\nout3\n\x1b]133;A\x07p4\nout4\n\x1b]133;A\x07p5\nout5\n",
+        );
+
+        state.jump_to_prev_prompt();
+        state.jump_to_prev_prompt();
+        let visible_rows = state.tabs[0].term_row_count.max(1);
+        let scrollback = state.tabs[0].app.scrollback_len();
+        let total_rows = scrollback.saturating_add(visible_rows);
+        let prev_window_start = total_rows
+            .saturating_sub(visible_rows)
+            .saturating_sub(state.tabs[0].scroll_offset.min(scrollback));
+        let prev_selected = prev_window_start + state.tabs[0].selection_anchor.unwrap().0;
+
+        state.jump_to_next_prompt();
+
+        let next_window_start = total_rows
+            .saturating_sub(visible_rows)
+            .saturating_sub(state.tabs[0].scroll_offset.min(scrollback));
+        let next_selected = next_window_start + state.tabs[0].selection_anchor.unwrap().0;
+
+        assert!(next_selected > prev_selected);
+    }
+
+    #[test]
     fn null_shell_clipboard_roundtrip_via_state() {
         // Verifies the NullShell wired through `shell_services` is reachable
         // from within state and round-trips clipboard text correctly — the

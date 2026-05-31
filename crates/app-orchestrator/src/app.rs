@@ -280,6 +280,10 @@ impl AppTerminal {
     pub fn application_cursor_keys(&self) -> bool {
         self.session.application_cursor_keys()
     }
+
+    pub fn prompt_marks(&self) -> &[usize] {
+        self.session.prompt_marks()
+    }
 }
 
 // ============================================================================
@@ -455,6 +459,10 @@ impl App {
     /// terminal content has not changed.
     pub fn terminal_screen_version(&self) -> u64 {
         self.terminal.screen_version()
+    }
+
+    pub fn prompt_marks(&self) -> &[usize] {
+        self.terminal.prompt_marks()
     }
 
     pub fn terminal_ansi_snapshot(&self) -> std::sync::Arc<String> {
