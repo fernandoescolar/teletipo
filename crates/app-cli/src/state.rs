@@ -1,5 +1,6 @@
 use crate::launch::FontEntry;
-use std::time::Instant;
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 /// Currently held keyboard modifier keys, refreshed on every
 /// [`winit::event::WindowEvent::ModifiersChanged`].
@@ -9,6 +10,8 @@ pub(crate) struct ModifierState {
     /// Whether the Super/Command key (⌘ on macOS) is currently held.
     pub(crate) super_down: bool,
     pub(crate) shift_down: bool,
+    /// Whether the Alt/Option key is currently held.
+    pub(crate) alt_down: bool,
 }
 
 /// State for the various pointer-driven drag interactions (separator,
@@ -74,6 +77,30 @@ pub(crate) struct OverlayState {
     pub(crate) cursor_blink_last: Instant,
     /// `true` = cursor visible (on-phase); `false` = cursor hidden (off-phase).
     pub(crate) cursor_blink_phase: bool,
+    /// Queue of transient toast notifications shown at the bottom-right.
+    pub(crate) toasts: VecDeque<Toast>,
+    /// The last search query entered by the user so it can be restored on re-open.
+    pub(crate) last_search_query: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ToastKind {
+    Info,
+    Success,
+    Warn,
+    Error,
+}
+
+pub(crate) struct Toast {
+    pub(crate) text: String,
+    pub(crate) kind: ToastKind,
+    pub(crate) expires_at: Instant,
+}
+
+impl Toast {
+    pub(crate) fn new(text: impl Into<String>, kind: ToastKind, ttl: Duration) -> Self {
+        Self { text: text.into(), kind, expires_at: Instant::now() + ttl }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +120,8 @@ impl Default for OverlayState {
             bell_flash_until: None,
             cursor_blink_last: Instant::now(),
             cursor_blink_phase: true,
+            toasts: VecDeque::new(),
+            last_search_query: None,
         }
     }
 }

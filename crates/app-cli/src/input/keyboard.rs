@@ -7,7 +7,7 @@ use crate::search;
 use crate::settings;
 use render_wgpu::AppWindowEvent;
 use winit::event::ElementState;
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 
 #[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // top-level keyboard dispatcher; flat match
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
@@ -387,7 +387,12 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             "f" => {
                 let tab = state.tab_mut();
                 tab.search.active = true;
-                search::refresh_search(tab);
+                if tab.search.query.is_empty() {
+                    if let Some(q) = state.overlays.last_search_query.clone() {
+                        state.tab_mut().search.query = q;
+                    }
+                }
+                search::refresh_search(state.tab_mut());
             }
             "t" => state.add_new_tab(),
             "w" => {
@@ -419,7 +424,12 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "f" => {
             let tab = state.tab_mut();
             tab.search.active = true;
-            search::refresh_search(tab);
+            if tab.search.query.is_empty() {
+                if let Some(q) = state.overlays.last_search_query.clone() {
+                    state.tab_mut().search.query = q;
+                }
+            }
+            search::refresh_search(state.tab_mut());
         }
 
         Key::Character(ch) if state.modifiers.ctrl_down => {
@@ -571,13 +581,24 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             }
         }
         Key::Named(NamedKey::Home) => {
-            let extend = state.modifiers.shift_down;
-            state.tab_mut().app.set_editor_cursor(0, extend);
+            if state.modifiers.super_down {
+                // Cmd+Home: scroll to the very beginning of scrollback.
+                let tab = state.tab_mut();
+                tab.scroll_offset = tab.app.scrollback_len();
+            } else {
+                let extend = state.modifiers.shift_down;
+                state.tab_mut().app.set_editor_cursor(0, extend);
+            }
         }
         Key::Named(NamedKey::End) => {
-            let extend = state.modifiers.shift_down;
-            let end = state.tab().app.editor_snapshot().len();
-            state.tab_mut().app.set_editor_cursor(end, extend);
+            if state.modifiers.super_down {
+                // Cmd+End: scroll back to the live view.
+                state.tab_mut().scroll_offset = 0;
+            } else {
+                let extend = state.modifiers.shift_down;
+                let end = state.tab().app.editor_snapshot().len();
+                state.tab_mut().app.set_editor_cursor(end, extend);
+            }
         }
         Key::Named(NamedKey::Space) => {
             state.tab_mut().app.insert_editor_input(" ");
@@ -616,26 +637,139 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
 }
 
 fn handle_search_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+    let shift = state.modifiers.shift_down;
+    let alt = state.modifiers.alt_down;
+    let super_ = state.modifiers.super_down;
+
     match &key_event.logical_key {
+        // ── Close ────────────────────────────────────────────────────────────
         Key::Named(NamedKey::Escape) => {
+            let query = state.tab().search.query.clone();
+            if !query.is_empty() {
+                state.overlays.last_search_query = Some(query);
+            }
             search::close_search(state.tab_mut());
         }
-        Key::Named(NamedKey::Enter) | Key::Named(NamedKey::ArrowDown) => {
-            search::next_match(state.tab_mut());
+
+        // ── Navigate matches ─────────────────────────────────────────────────
+        Key::Named(NamedKey::Enter) => {
+            if shift {
+                search::prev_match(state.tab_mut());
+            } else {
+                search::next_match(state.tab_mut());
+            }
+        }
+
+        // ── Cursor movement ──────────────────────────────────────────────────
+        Key::Named(NamedKey::ArrowLeft) => {
+            if super_ {
+                search::search_move_home(state.tab_mut(), shift);
+            } else if alt {
+                search::search_move_word_left(state.tab_mut(), shift);
+            } else {
+                search::search_move_left(state.tab_mut(), shift);
+            }
+        }
+        Key::Named(NamedKey::ArrowRight) => {
+            if super_ {
+                search::search_move_end(state.tab_mut(), shift);
+            } else if alt {
+                search::search_move_word_right(state.tab_mut(), shift);
+            } else {
+                search::search_move_right(state.tab_mut(), shift);
+            }
         }
         Key::Named(NamedKey::ArrowUp) => {
+            // Navigate to previous match (Up arrow outside the input).
             search::prev_match(state.tab_mut());
         }
-        Key::Named(NamedKey::Backspace) => {
-            let tab = state.tab_mut();
-            tab.search.query.pop();
-            search::refresh_search(tab);
+        Key::Named(NamedKey::ArrowDown) => {
+            search::next_match(state.tab_mut());
         }
-        Key::Character(_) | Key::Named(NamedKey::Space) => {
+        Key::Named(NamedKey::Home) => {
+            search::search_move_home(state.tab_mut(), shift);
+        }
+        Key::Named(NamedKey::End) => {
+            search::search_move_end(state.tab_mut(), shift);
+        }
+
+        // ── Deletion ──────────────────────────────────────────────────────────
+        Key::Named(NamedKey::Backspace) => {
+            if alt {
+                search::search_delete_word_backward(state.tab_mut());
+            } else {
+                search::search_delete_backward(state.tab_mut());
+            }
+        }
+        Key::Named(NamedKey::Delete) => {
+            search::search_delete_forward(state.tab_mut());
+        }
+
+        // ── Character input / shortcuts ───────────────────────────────────────
+        Key::Character(ch) => {
+            if super_ {
+                match ch.as_str() {
+                    "a" | "A" => {
+                        search::search_select_all(state.tab_mut());
+                        return;
+                    }
+                    "c" | "C" => {
+                        let text = search::search_selected_text(state.tab()).to_owned();
+                        if !text.is_empty() {
+                            state.shell_services.clipboard_set(text);
+                        }
+                        return;
+                    }
+                    "x" | "X" => {
+                        let text = search::search_selected_text(state.tab()).to_owned();
+                        if !text.is_empty() {
+                            state.shell_services.clipboard_set(text);
+                            search::search_delete_backward(state.tab_mut());
+                        }
+                        return;
+                    }
+                    "v" | "V" => {
+                        if let Some(text) = state.shell_services.clipboard_get() {
+                            let filtered: String =
+                                text.chars().filter(|c| *c != '\n' && *c != '\r').collect();
+                            if !filtered.is_empty() {
+                                search::search_insert(state.tab_mut(), &filtered);
+                            }
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            // Alt+R — toggle regex mode; Alt+C — toggle case-sensitive.
+            // Use physical_key so the check is layout-independent (on macOS, Alt+R
+            // produces '®' as logical_key, not 'r').
+            if alt {
+                match key_event.physical_key {
+                    PhysicalKey::Code(KeyCode::KeyR) => {
+                        let tab = state.tab_mut();
+                        tab.search.regex_mode = !tab.search.regex_mode;
+                        search::refresh_search(tab);
+                        return;
+                    }
+                    PhysicalKey::Code(KeyCode::KeyC) => {
+                        let tab = state.tab_mut();
+                        tab.search.case_sensitive = !tab.search.case_sensitive;
+                        search::refresh_search(tab);
+                        return;
+                    }
+                    _ => {}
+                }
+                // Don't insert alt-generated symbols (e.g. '®', 'ç') into the query.
+                return;
+            }
             if let Some(text) = key_event.text.as_ref() {
-                let tab = state.tab_mut();
-                tab.search.query.push_str(text.as_str());
-                search::refresh_search(tab);
+                search::search_insert(state.tab_mut(), text.as_str());
+            }
+        }
+        Key::Named(NamedKey::Space) => {
+            if let Some(text) = key_event.text.as_ref() {
+                search::search_insert(state.tab_mut(), text.as_str());
             }
         }
         _ => {}

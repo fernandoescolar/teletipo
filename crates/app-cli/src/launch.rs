@@ -294,6 +294,7 @@ pub(crate) fn build_initial_state(
             shell_integration: integration,
             search: crate::search::SearchState::default(),
             command_running: false,
+            unread_output: false,
         });
     }
 

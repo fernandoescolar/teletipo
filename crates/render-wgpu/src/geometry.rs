@@ -490,44 +490,92 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
-    if snapshot.search_panel.is_some()
-        && size.width > 0
-        && size.height > 0
-        && cell_w_px > 0.0
-        && cell_h_px > 0.0
-    {
-        let panel_w_px = cell_w_px * 34.0;
-        let panel_h_px = cell_h_px * 1.6;
-        let panel_x_px = (size.width as f32 - pad_h - panel_w_px).max(0.0);
-        let panel_y_px = tab_bar_h + pad_v;
-        let button_w_px = cell_w_px * 2.0;
+    if let Some(ref panel) = snapshot.search_panel {
+        if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
+            let panel_w_px = cell_w_px * 40.0;
+            let panel_h_px = cell_h_px * 1.6;
+            let panel_x_px = (size.width as f32 - pad_h - panel_w_px).max(0.0);
+            let panel_y_px = tab_bar_h + pad_v;
+            let button_w_px = cell_w_px * 2.0;
 
-        let px_x = 2.0 / size.width as f32;
-        let px_y = 2.0 / size.height as f32;
-        let x0 = panel_x_px * px_x - 1.0;
-        let x1 = (panel_x_px + panel_w_px) * px_x - 1.0;
-        let y1 = 1.0 - panel_y_px * px_y;
-        let y0 = 1.0 - (panel_y_px + panel_h_px) * px_y;
+            let px_x = 2.0 / size.width as f32;
+            let px_y = 2.0 / size.height as f32;
+            let x0 = panel_x_px * px_x - 1.0;
+            let x1 = (panel_x_px + panel_w_px) * px_x - 1.0;
+            let y1 = 1.0 - panel_y_px * px_y;
+            let y0 = 1.0 - (panel_y_px + panel_h_px) * px_y;
 
-        let panel_bg = [0.08, 0.12, 0.20, 0.95];
-        let panel_border = [0.30, 0.46, 0.75, 1.0];
-        verts.extend_from_slice(&quad_verts(
-            x0 - px_x,
-            y0 - px_y,
-            x1 + px_x,
-            y1 + px_y,
-            panel_border,
-        ));
-        verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, panel_bg));
+            let panel_bg = [0.08, 0.12, 0.20, 0.95];
+            let panel_border = [0.30, 0.46, 0.75, 1.0];
+            verts.extend_from_slice(&quad_verts(
+                x0 - px_x,
+                y0 - px_y,
+                x1 + px_x,
+                y1 + px_y,
+                panel_border,
+            ));
+            verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, panel_bg));
 
-        let btn_prev_x = panel_x_px + panel_w_px - button_w_px * 3.0;
-        let btn_next_x = panel_x_px + panel_w_px - button_w_px * 2.0;
-        let btn_close_x = panel_x_px + panel_w_px - button_w_px;
-        let button_bg = [0.14, 0.20, 0.34, 1.0];
-        for bx in [btn_prev_x, btn_next_x, btn_close_x] {
-            let bx0 = bx * px_x - 1.0;
-            let bx1 = (bx + button_w_px) * px_x - 1.0;
-            verts.extend_from_slice(&quad_verts(bx0, y0, bx1, y1, button_bg));
+            // Three button backgrounds (prev, next, close) at the rightmost 6 cells.
+            let btn_prev_x = panel_x_px + panel_w_px - button_w_px * 3.0;
+            let btn_next_x = panel_x_px + panel_w_px - button_w_px * 2.0;
+            let btn_close_x = panel_x_px + panel_w_px - button_w_px;
+            let button_bg = [0.14, 0.20, 0.34, 1.0];
+            for bx in [btn_prev_x, btn_next_x, btn_close_x] {
+                let bx0 = bx * px_x - 1.0;
+                let bx1 = (bx + button_w_px) * px_x - 1.0;
+                verts.extend_from_slice(&quad_verts(bx0, y0, bx1, y1, button_bg));
+            }
+
+            // ── Query-input area: selection highlight and cursor caret ─────────
+            // Query text starts at QUERY_TEXT_OFFSET_CELLS (6.6) from the panel left.
+            // We show at most QUERY_VISIBLE_CHARS (13) characters at once.
+            const QUERY_TEXT_X: f32 = 6.6;
+            const VISIBLE: usize = 13;
+
+            let query_chars: Vec<char> = panel.query.chars().collect();
+            let cursor_char = panel.cursor_char.min(query_chars.len());
+            let view_start = cursor_char.saturating_sub(VISIBLE - 1).min(
+                query_chars.len().saturating_sub(VISIBLE),
+            );
+            let cursor_in_view = cursor_char - view_start;
+
+            let text_x0_px = panel_x_px + cell_w_px * QUERY_TEXT_X;
+
+            // Selection highlight quad.
+            if let Some((sel_s, sel_e)) = panel.sel_char_range {
+                let sel_s = sel_s.max(view_start);
+                let sel_e = sel_e.min(view_start + VISIBLE).min(query_chars.len());
+                if sel_s < sel_e {
+                    let s_in_view = sel_s - view_start;
+                    let e_in_view = sel_e - view_start;
+                    let sx0 = text_x0_px + s_in_view as f32 * cell_w_px;
+                    let sx1 = text_x0_px + e_in_view as f32 * cell_w_px;
+                    let sy0_ndc = y0 + (panel_h_px * 0.1) * px_y;
+                    let sy1_ndc = y1 - (panel_h_px * 0.1) * px_y;
+                    verts.extend_from_slice(&quad_verts(
+                        sx0 * px_x - 1.0,
+                        sy0_ndc,
+                        sx1 * px_x - 1.0,
+                        sy1_ndc,
+                        [0.25, 0.45, 0.80, 0.55],
+                    ));
+                }
+            }
+
+            // Cursor caret — a 2-pixel-wide vertical bar.
+            {
+                let caret_x_px = text_x0_px + cursor_in_view as f32 * cell_w_px;
+                let caret_x0 = caret_x_px * px_x - 1.0;
+                let caret_x1 = (caret_x_px + 2.0) * px_x - 1.0;
+                verts.extend_from_slice(&quad_verts(
+                    caret_x0,
+                    y0 + (panel_h_px * 0.1) * px_y,
+                    caret_x1,
+                    y1 - (panel_h_px * 0.1) * px_y,
+                    [0.90, 0.95, 1.0, 0.9],
+                ));
+            }
         }
     }
 
@@ -758,6 +806,74 @@ pub(crate) fn build_panel_vertices(
             pad_h,
             pad_v,
         ));
+    }
+
+    verts
+}
+
+/// Returns background geometry for toast notification quads — stacked
+/// bottom-right.  Drawn **after** the settings overlay so toasts appear on top
+/// of it as well.  Returns an empty `Vec` when there are no active toasts.
+pub(crate) fn build_toast_bg_verts(
+    size: PhysicalSize<u32>,
+    snapshot: &RenderSnapshot,
+    cell_w_px: f32,
+    cell_h_px: f32,
+) -> Vec<f32> {
+    let mut verts = Vec::new();
+    if snapshot.toast_stack.is_empty()
+        || size.width == 0
+        || size.height == 0
+        || cell_w_px <= 0.0
+        || cell_h_px <= 0.0
+    {
+        return verts;
+    }
+
+    use crate::types::ToastKind;
+    let px_x = 2.0 / size.width as f32;
+    let px_y = 2.0 / size.height as f32;
+    let toast_h_px = cell_h_px * 1.5;
+    let toast_margin_px = cell_h_px * 0.35;
+    let toast_pad_h_px = cell_w_px * 1.2;
+    let win_h_px = size.height as f32;
+    let win_w_px = size.width as f32;
+
+    for (rev_idx, toast) in snapshot.toast_stack.iter().rev().enumerate() {
+        let max_chars = toast.text.chars().count().max(4) as f32;
+        let toast_w_px = (max_chars * cell_w_px + toast_pad_h_px * 2.0).min(win_w_px * 0.45);
+        let bottom_edge_px =
+            win_h_px - toast_margin_px - rev_idx as f32 * (toast_h_px + toast_margin_px);
+        let top_edge_px = bottom_edge_px - toast_h_px;
+        let right_edge_px = win_w_px - toast_margin_px;
+        let left_edge_px = right_edge_px - toast_w_px;
+
+        let bg_color: [f32; 4] = match toast.kind {
+            ToastKind::Info => [0.12, 0.15, 0.25, 0.93],
+            ToastKind::Success => [0.08, 0.20, 0.10, 0.93],
+            ToastKind::Warn => [0.22, 0.18, 0.05, 0.93],
+            ToastKind::Error => [0.22, 0.08, 0.08, 0.93],
+        };
+        let border_color: [f32; 4] = match toast.kind {
+            ToastKind::Info => [0.35, 0.50, 0.90, 1.0],
+            ToastKind::Success => [0.25, 0.78, 0.35, 1.0],
+            ToastKind::Warn => [0.90, 0.72, 0.20, 1.0],
+            ToastKind::Error => [0.90, 0.30, 0.30, 1.0],
+        };
+
+        let x0 = left_edge_px * px_x - 1.0;
+        let x1 = right_edge_px * px_x - 1.0;
+        let y0 = 1.0 - bottom_edge_px * px_y;
+        let y1 = 1.0 - top_edge_px * px_y;
+
+        verts.extend_from_slice(&quad_verts(
+            x0 - px_x,
+            y0 - px_y,
+            x1 + px_x,
+            y1 + px_y,
+            border_color,
+        ));
+        verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, bg_color));
     }
 
     verts

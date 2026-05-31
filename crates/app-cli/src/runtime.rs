@@ -126,6 +126,9 @@ impl GpuRuntimeState {
             if i == active && had_data {
                 active_had_data = true;
             }
+            if i != active && had_data {
+                tab.unread_output = true;
+            }
             // Refresh the command-running flag via a cheap `tcgetpgrp` on
             // the PTY master.  True when the shell has spawned a foreground
             // child (vim, sudo, a script, …) and is waiting for it to exit.
@@ -425,6 +428,7 @@ impl GpuRuntimeState {
             shell_integration: integration,
             search: crate::search::SearchState::default(),
             command_running: false,
+            unread_output: false,
         });
         self.active_tab = self.tabs.len() - 1;
     }
@@ -474,5 +478,19 @@ impl GpuRuntimeState {
                 self.active_tab += 1;
             }
         }
+    }
+
+    /// Push a transient toast notification visible for `secs` seconds.
+    pub(crate) fn push_toast(
+        &mut self,
+        text: impl Into<String>,
+        kind: crate::state::ToastKind,
+    ) {
+        use std::time::Duration;
+        self.overlays.toasts.push_back(crate::state::Toast::new(
+            text,
+            kind,
+            Duration::from_secs(4),
+        ));
     }
 }

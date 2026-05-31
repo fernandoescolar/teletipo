@@ -12,6 +12,7 @@ use crate::atlas::{
 use crate::geometry::{
     TEXT_VERTEX_BUF_CAPACITY, VERTEX_BUF_CAPACITY, add_text_verts, add_text_verts_shaped,
     build_panel_vertices, build_settings_overlay_bg_verts, build_suggestion_dropdown_bg_verts,
+    build_toast_bg_verts,
     floats_as_bytes,
 };
 use crate::shell_highlight::highlight_shell;
@@ -298,11 +299,16 @@ impl<'a> GpuState<'a> {
             build_settings_overlay_bg_verts(self.size, snapshot, self.cell_w_px, self.cell_h_px);
         let overlay_bg_start = dropdown_bg_start + dropdown_bg_count;
         let overlay_bg_count = (overlay_bg_verts.len() / 6) as u32;
+        let toast_bg_verts =
+            build_toast_bg_verts(self.size, snapshot, self.cell_w_px, self.cell_h_px);
+        let toast_bg_start = overlay_bg_start + overlay_bg_count;
+        let toast_bg_count = (toast_bg_verts.len() / 6) as u32;
         {
-            // Upload main bg + dropdown bg + settings overlay bg, in draw order.
+            // Upload main bg + dropdown bg + settings overlay bg + toast bg, in draw order.
             let mut all_bg = panel_verts;
             all_bg.extend_from_slice(&dropdown_bg_verts);
             all_bg.extend_from_slice(&overlay_bg_verts);
+            all_bg.extend_from_slice(&toast_bg_verts);
             if !all_bg.is_empty() {
                 let bytes = floats_as_bytes(&all_bg);
                 let cap = VERTEX_BUF_CAPACITY as usize;
@@ -358,8 +364,15 @@ impl<'a> GpuState<'a> {
                     self.ensure_glyph(ch);
                 }
             }
-            for ch in ['F', 'i', 'n', 'd', ':', '/', '↑', '↓', '×'] {
+            for ch in ['F', 'i', 'n', 'd', ':', '/', '↑', '↓', '×', 'R', 'C', 'c', '[', ']'] {
                 self.ensure_glyph(ch);
+            }
+        }
+        for toast in &snapshot.toast_stack {
+            for ch in toast.text.chars() {
+                if ch != ' ' {
+                    self.ensure_glyph(ch);
+                }
             }
         }
 
@@ -682,29 +695,56 @@ impl<'a> GpuState<'a> {
         }
 
         if let Some(ref panel) = snapshot.search_panel {
-            let panel_w = self.cell_w_px * 34.0;
+            // Panel layout (40 cells wide):
+            //  [Find: ____query_____  [R]  [Cc]  NNN/MMM  ↑  ↓  × ]
+            //   0    6.6            20   23    27         34  36  38  40
+            let panel_w = self.cell_w_px * 40.0;
             let panel_h = self.cell_h_px * 1.6;
             let panel_x = (self.size.width as f32 - pad_h - panel_w).max(0.0);
             let panel_y = tab_bar_h + pad_v;
             let button_w = self.cell_w_px * 2.0;
+            let text_y = panel_y + (panel_h - self.cell_h_px) * 0.5;
 
-            let max_query_chars = 16usize;
-            let query_display = if panel.query.chars().count() > max_query_chars {
-                let mut s = panel
-                    .query
-                    .chars()
-                    .take(max_query_chars.saturating_sub(1))
-                    .collect::<String>();
-                s.push('…');
-                s
-            } else {
-                panel.query.clone()
-            };
-            let query_text = format!("Find: {query_display}");
+            // ── "Find: " label ────────────────────────────────────────────────
             add_text_verts(
-                &query_text,
-                panel_y + (panel_h - self.cell_h_px) * 0.5,
+                "Find: ",
+                text_y,
                 panel_x + self.cell_w_px * 0.6,
+                [0.55, 0.62, 0.78, 1.0],
+                &[],
+                &[],
+                &self.glyph_cache,
+                None,
+                self.cell_w_px,
+                self.cell_h_px,
+                self.size,
+                &mut text_verts,
+                0,
+            );
+
+            // ── Query text (viewport-aware, up to 13 visible chars) ───────────
+            const QUERY_TEXT_X: f32 = 6.6;
+            const VISIBLE: usize = 13;
+
+            let query_chars: Vec<char> = panel.query.chars().collect();
+            let cursor_char = panel.cursor_char.min(query_chars.len());
+            let view_start = cursor_char.saturating_sub(VISIBLE - 1).min(
+                query_chars.len().saturating_sub(VISIBLE),
+            );
+            let view_end = (view_start + VISIBLE).min(query_chars.len());
+            let display_query: String = query_chars[view_start..view_end].iter().collect();
+
+            // Show an ellipsis at the left when the query is scrolled.
+            let (query_display_text, query_x_offset) = if view_start > 0 {
+                (format!("…{}", &display_query[display_query.char_indices().nth(1).map(|(i,_)|i).unwrap_or(0)..]), 0.0f32)
+            } else {
+                (display_query, 0.0f32)
+            };
+
+            add_text_verts(
+                &query_display_text,
+                text_y,
+                panel_x + self.cell_w_px * (QUERY_TEXT_X + query_x_offset),
                 [0.88, 0.92, 0.98, 1.0],
                 &[],
                 &[],
@@ -717,12 +757,32 @@ impl<'a> GpuState<'a> {
                 0,
             );
 
-            let count_text = format!("{} / {}", panel.current_match, panel.match_count);
+            // ── Regex / case-sensitive flag indicators ─────────────────────────
+            // [R] at cell 20.0, [Cc] at cell 23.0
+            let dim_color = [0.45_f32, 0.45, 0.55, 1.0];
+            let bright_color = [0.90_f32, 0.92, 1.0, 1.0];
+            let regex_color = if panel.regex_mode { bright_color } else { dim_color };
+            let case_color = if panel.case_sensitive { bright_color } else { dim_color };
             add_text_verts(
-                &count_text,
-                panel_y + (panel_h - self.cell_h_px) * 0.5,
-                panel_x + panel_w - button_w * 3.0 - self.cell_w_px * 6.2,
-                [0.72, 0.80, 0.92, 1.0],
+                "[R]",
+                text_y,
+                panel_x + self.cell_w_px * 20.0,
+                regex_color,
+                &[],
+                &[],
+                &self.glyph_cache,
+                None,
+                self.cell_w_px,
+                self.cell_h_px,
+                self.size,
+                &mut text_verts,
+                0,
+            );
+            add_text_verts(
+                "[Cc]",
+                text_y,
+                panel_x + self.cell_w_px * 23.0,
+                case_color,
                 &[],
                 &[],
                 &self.glyph_cache,
@@ -734,11 +794,42 @@ impl<'a> GpuState<'a> {
                 0,
             );
 
+            // ── Match count or error message ─────────────────────────────────
+            // Count at cell 27.0, format "N/M" (compact, no spaces).
+            let count_or_err = if let Some(ref err) = panel.error {
+                // Truncate regex error to fit the available space (~7 chars).
+                let s: String = err.chars().take(7).collect();
+                s
+            } else {
+                format!("{}/{}", panel.current_match, panel.match_count)
+            };
+            let count_color = if panel.error.is_some() {
+                [1.0_f32, 0.45, 0.45, 1.0]
+            } else {
+                [0.72_f32, 0.80, 0.92, 1.0]
+            };
+            add_text_verts(
+                &count_or_err,
+                text_y,
+                panel_x + self.cell_w_px * 27.0,
+                count_color,
+                &[],
+                &[],
+                &self.glyph_cache,
+                None,
+                self.cell_w_px,
+                self.cell_h_px,
+                self.size,
+                &mut text_verts,
+                0,
+            );
+
+            // ── Navigation / close button glyphs ─────────────────────────────
             for (i, glyph) in ['↑', '↓', '×'].iter().enumerate() {
                 let bx = panel_x + panel_w - button_w * (3 - i) as f32;
                 add_text_verts(
                     &glyph.to_string(),
-                    panel_y + (panel_h - self.cell_h_px) * 0.5,
+                    text_y,
                     bx + self.cell_w_px * 0.55,
                     [0.92, 0.96, 1.0, 1.0],
                     &[],
@@ -1124,6 +1215,56 @@ impl<'a> GpuState<'a> {
             }
         }
 
+        // Toast text — rendered after settings overlay so toasts appear on top.
+        let toast_text_vert_start = (text_verts.len() / 8) as u32;
+        if !snapshot.toast_stack.is_empty()
+            && self.size.width > 0
+            && self.size.height > 0
+            && self.cell_w_px > 0.0
+            && self.cell_h_px > 0.0
+        {
+            use crate::types::ToastKind;
+            let toast_h_px = self.cell_h_px * 1.5;
+            let toast_margin_px = self.cell_h_px * 0.35;
+            let toast_pad_h_px = self.cell_w_px * 1.2;
+            let win_h_px = self.size.height as f32;
+            let win_w_px = self.size.width as f32;
+
+            for (rev_idx, toast) in snapshot.toast_stack.iter().rev().enumerate() {
+                let max_chars = toast.text.chars().count().max(4) as f32;
+                let toast_w_px =
+                    (max_chars * self.cell_w_px + toast_pad_h_px * 2.0).min(win_w_px * 0.45);
+                let bottom_edge_px = win_h_px
+                    - toast_margin_px
+                    - rev_idx as f32 * (toast_h_px + toast_margin_px);
+                let text_y = bottom_edge_px - toast_h_px + (toast_h_px - self.cell_h_px) * 0.5;
+                let right_edge_px = win_w_px - toast_margin_px;
+                let text_x = right_edge_px - toast_w_px + toast_pad_h_px;
+
+                let text_color: [f32; 4] = match toast.kind {
+                    ToastKind::Info => [0.88, 0.92, 1.00, 1.0],
+                    ToastKind::Success => [0.40, 1.00, 0.50, 1.0],
+                    ToastKind::Warn => [1.00, 0.85, 0.30, 1.0],
+                    ToastKind::Error => [1.00, 0.40, 0.40, 1.0],
+                };
+                add_text_verts(
+                    &toast.text,
+                    text_y,
+                    text_x,
+                    text_color,
+                    &[],
+                    &[],
+                    &self.glyph_cache,
+                    None,
+                    self.cell_w_px,
+                    self.cell_h_px,
+                    self.size,
+                    &mut text_verts,
+                    0,
+                );
+            }
+        }
+
         let total_vert_count = (text_verts.len() / 8) as u32;
         if !text_verts.is_empty() {
             let bytes = floats_as_bytes(&text_verts);
@@ -1247,12 +1388,30 @@ impl<'a> GpuState<'a> {
                 }
 
                 // Settings overlay text: on top of the panel background.
-                if total_capped > settings_text_vert_start {
+                if toast_text_vert_start > settings_text_vert_start {
                     pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
                     pass.draw(
-                        settings_text_vert_start.min(total_capped)..total_capped,
+                        settings_text_vert_start.min(total_capped)
+                            ..toast_text_vert_start.min(total_capped),
                         0..1,
                     );
+                }
+
+                // Toast backgrounds — drawn last so they appear on top of settings overlay.
+                if toast_bg_count > 0 {
+                    pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
+                    pass.set_pipeline(&self.pipeline);
+                    pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
+                    pass.draw(toast_bg_start..toast_bg_start + toast_bg_count, 0..1);
+                    pass.set_pipeline(&self.text_pipeline);
+                    pass.set_bind_group(0, &self.atlas_bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.text_vertex_buf.slice(..));
+                }
+
+                // Toast text — on top of toast backgrounds.
+                if total_capped > toast_text_vert_start {
+                    pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
+                    pass.draw(toast_text_vert_start.min(total_capped)..total_capped, 0..1);
                 }
 
                 pass.set_scissor_rect(0, 0, self.size.width, self.size.height);

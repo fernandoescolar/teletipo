@@ -24,7 +24,7 @@ pub use renderer::{NullRenderer, Renderer, WgpuRenderer};
 pub use types::{
     AppWindowEvent, ColorTheme, DamageRegion, FontConfig, PaneKind, PaneLayout, PipelineStage,
     RenderCell, RenderConfig, RenderRow, RenderSnapshot, RenderStats, SearchPanel, SettingsItem,
-    SettingsOverlay, SuggestionDropdown, TabContextMenu, TerminalLink, VsyncMode,
+    SettingsOverlay, SuggestionDropdown, TabContextMenu, TerminalLink, Toast, ToastKind, VsyncMode,
     default_ansi_palette,
 };
 pub use window::{

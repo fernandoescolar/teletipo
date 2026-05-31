@@ -9,7 +9,7 @@ use crate::settings::build_settings_overlay;
 use crate::theme;
 use render_wgpu::{
     ColorTheme, DamageRegion, RenderCell, RenderRow, RenderSnapshot, SearchPanel,
-    SuggestionDropdown, TabContextMenu, TerminalLink,
+    SuggestionDropdown, TabContextMenu, TerminalLink, Toast, ToastKind,
 };
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
@@ -106,6 +106,14 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     if state.overlays.cursor_blink_last.elapsed().as_millis() >= crate::consts::BLINK_HALF_MS {
         state.overlays.cursor_blink_phase = !state.overlays.cursor_blink_phase;
         state.overlays.cursor_blink_last = std::time::Instant::now();
+    }
+
+    // The active tab is always "read" — clear any pending unread indicator.
+    state.tabs[state.active_tab].unread_output = false;
+
+    // Show a one-shot toast for config parse errors on startup.
+    if let Some(err) = state.config_error.take() {
+        state.push_toast(format!("Config error: {err}"), crate::state::ToastKind::Error);
     }
 
     let active = state.active_tab;
@@ -220,6 +228,11 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                     query: tab.search.query.clone(),
                     match_count: tab.search.matches.len(),
                     current_match,
+                    regex_mode: tab.search.regex_mode,
+                    case_sensitive: tab.search.case_sensitive,
+                    error: tab.search.error.clone(),
+                    cursor_char: tab.search.cursor_char_index(),
+                    sel_char_range: tab.search.sel_char_range(),
                 }),
                 highlights,
                 current,
@@ -385,7 +398,12 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             .iter()
             .enumerate()
             .map(|(index, tab)| {
-                tab_button_label(index, tab.app.window_title(), &tab.cwd, max_chars)
+                let label = tab_button_label(index, tab.app.window_title(), &tab.cwd, max_chars);
+                if index != state.active_tab && tab.unread_output {
+                    format!("• {label}")
+                } else {
+                    label
+                }
             })
             .collect()
     } else {
@@ -421,6 +439,24 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     } else {
         None
     };
+
+    // GC expired toasts.
+    let now = std::time::Instant::now();
+    state.overlays.toasts.retain(|t| t.expires_at > now);
+    let toast_stack: Vec<Toast> = state
+        .overlays
+        .toasts
+        .iter()
+        .map(|t| Toast {
+            text: t.text.clone(),
+            kind: match t.kind {
+                crate::state::ToastKind::Info => ToastKind::Info,
+                crate::state::ToastKind::Success => ToastKind::Success,
+                crate::state::ToastKind::Warn => ToastKind::Warn,
+                crate::state::ToastKind::Error => ToastKind::Error,
+            },
+        })
+        .collect();
 
     RenderSnapshot {
         terminal_rows,
@@ -485,6 +521,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         terminal_cursor_col: state.tabs[active].app.terminal_cursor_pos().1,
         terminal_fullscreen: state.tabs[active].was_terminal_fullscreen,
         terminal_screen_version: state.tabs[active].app.terminal_screen_version(),
+        toast_stack,
         suggestion_dropdown: {
             if let Some(idx) = state.tabs[active].suggestion_index {
                 let prefix = state.tabs[active]

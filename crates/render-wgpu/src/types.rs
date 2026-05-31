@@ -4,6 +4,22 @@ use std::time::Duration;
 // `AppWindowEvent` is defined in `platform-abstraction` so that the UI crate
 // can consume window events without depending on the GPU renderer.
 pub use platform_abstraction::AppWindowEvent;
+
+/// Severity level for a transient toast notification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToastKind {
+    Info,
+    Success,
+    Warn,
+    Error,
+}
+
+/// A transient notification entry for display in the bottom-right corner.
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub text: String,
+    pub kind: ToastKind,
+}
 #[derive(Debug, Clone)]
 pub struct TerminalLink {
     /// Row index in the terminal grid (0-based).
@@ -102,6 +118,8 @@ pub struct RenderSnapshot {
     /// version to skip expensive terminal vertex uploads when content is
     /// unchanged.
     pub terminal_screen_version: u64,
+    /// Transient toast notifications to display at the bottom-right corner.
+    pub toast_stack: Vec<Toast>,
 }
 
 /// Visual state for the inline terminal search panel.
@@ -113,6 +131,16 @@ pub struct SearchPanel {
     pub match_count: usize,
     /// 1-based index of the current match.
     pub current_match: usize,
+    /// When `true`, the search uses regex matching.
+    pub regex_mode: bool,
+    /// When `true`, the search is case-sensitive.
+    pub case_sensitive: bool,
+    /// Non-empty when the current regex query failed to compile.
+    pub error: Option<String>,
+    /// Character index (not byte) of the input cursor within `query`.
+    pub cursor_char: usize,
+    /// Active selection: `(start_char, end_char)` where `start < end`, or `None`.
+    pub sel_char_range: Option<(usize, usize)>,
 }
 
 impl RenderSnapshot {

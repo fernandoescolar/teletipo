@@ -163,6 +163,7 @@ mod input_smoke_tests {
             shell_integration: false,
             search: search::SearchState::default(),
             command_running: false,
+            unread_output: false,
         };
         GpuRuntimeState {
             tabs: vec![tab],

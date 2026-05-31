@@ -259,6 +259,18 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     search::prev_match(state.tab_mut());
                 } else if search::hit_next(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
                     search::next_match(state.tab_mut());
+                } else {
+                    // Click inside the query input area — position the cursor.
+                    let query_text_x =
+                        hitbox.panel_x + state.layout.cell_w as f64 * search::QUERY_TEXT_OFFSET_CELLS as f64;
+                    let click_x = state.cursor.cursor_x - query_text_x;
+                    let cell_w = state.layout.cell_w as f64;
+                    let char_idx = if click_x <= 0.0 {
+                        0
+                    } else {
+                        ((click_x + cell_w * 0.5) / cell_w) as usize
+                    };
+                    search::search_set_cursor(state.tab_mut(), char_idx);
                 }
                 return true;
             }
@@ -547,6 +559,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         state.modifiers.ctrl_down = mods.control_key();
         state.modifiers.super_down = mods.super_key();
         state.modifiers.shift_down = mods.shift_key();
+        state.modifiers.alt_down = mods.alt_key();
         return true;
     }
 

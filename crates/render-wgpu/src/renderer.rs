@@ -185,6 +185,7 @@ mod tests {
             terminal_screen_version: 0,
             terminal_styles: vec![],
             cursor_blink_on: true,
+            toast_stack: vec![],
         }
     }
 

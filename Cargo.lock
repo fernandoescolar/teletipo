@@ -162,6 +162,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "platform-abstraction",
+ "regex",
  "render-wgpu",
  "self_update",
  "serde",
