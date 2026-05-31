@@ -36,10 +36,8 @@ fn executable_path() -> io::Result<PathBuf> {
     std::env::current_exe()
 }
 
+#[cfg(target_os = "macos")]
 fn is_running_from_macos_app_bundle(exe_path: &Path) -> bool {
-    if !cfg!(target_os = "macos") {
-        return false;
-    }
     let Some(macos_dir) = exe_path.parent() else {
         return false;
     };
@@ -268,6 +266,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn rejects_non_bundle_layout() {
         let path = Path::new("/usr/local/bin/teletipo");
         assert!(!is_running_from_macos_app_bundle(path));
