@@ -10,12 +10,17 @@ A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with 
 ## Features
 
 - GPU-accelerated rendering via `wgpu`
-- Multi-tab workflow
+- Multi-tab workflow with tab reordering, middle-click close, and per-tab unread/bell badges
 - Stateful ANSI/VT100 parser (CSI, DEC sequences, SGR, alternate screen, scrollback)
 - Primary and alternate screen buffers
 - Inline terminal search panel (`Cmd+F` / `Ctrl+F`) with match highlights and next/previous navigation
 - Search scope includes both visible terminal rows and scrollback history
 - Code-editor-style command input
+- Command palette (`Cmd+Shift+P`) for common actions such as tab management, settings, config actions, and prompt navigation
+- Prompt-aware navigation using OSC 133 shell markers (`Jump to Previous Prompt` / `Jump to Next Prompt`)
+- Right-click context menus for tabs and the terminal pane
+- Drag-and-drop support for applying YAML themes or pasting file paths into the command editor
+- Scrollback activity indicator with quick jump back to bottom
 - Themeable (YAML theme files, ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night)
 - Automatic silent self-update from GitHub Releases
 
@@ -135,6 +140,16 @@ Runtime logs are written automatically to daily-rotated files under the platform
 | `Cmd + ]` | Next tab |
 | `Cmd + 1 – 9` | Jump to tab N |
 
+### Command palette
+
+| Shortcut | Action |
+|---|---|
+| `Cmd + Shift + P` | Open command palette |
+| `↑` / `↓` | Move through commands |
+| `Enter` | Execute highlighted command |
+| `Escape` | Close the palette |
+| typing / `Backspace` | Filter commands live |
+
 ### Command input (editor)
 
 | Shortcut | Action |
@@ -213,11 +228,18 @@ Press `Tab` at the end of any line to open the suggestion popup, which shows his
 | Click search panel buttons | Previous match, next match, or close search |
 | Drag the split divider | Resize terminal / editor pane |
 | Drag the scrollbar | Scroll terminal or editor |
-| Right-click in terminal | Context menu |
+| Middle-click a tab | Close that tab |
+| Right-click a tab | Tab context menu |
+| Right-click in terminal | Terminal context menu (`Copy`, `Paste`, `Scroll to Bottom`) |
+| Click the scroll activity badge | Jump back to the bottom of scrollback |
+| Drop a `*.yaml` file on the window | Apply that theme immediately |
+| Drop any other file on the window | Paste its path into the command editor |
 
 ## Settings
 
 Open the settings panel with `Cmd+,` (or `Ctrl+,`). All changes are saved automatically when you close the panel with `Escape`.
+
+The settings panel also includes quick actions to open the active `config.toml` in your editor or reveal it in Finder / your platform file manager.
 
 ### Navigation
 
@@ -263,7 +285,7 @@ active_theme = "tokyo-night"
 
 ### Custom themes
 
-Drop any `*.yaml` file into the `themes/` config directory and it will appear immediately in the theme selector. See the bundled theme files in the `themes/` folder for the format reference.
+Drop any `*.yaml` file into the `themes/` config directory and it will appear immediately in the theme selector. You can also drag a theme file directly onto the Teletipo window to apply it immediately. See the bundled theme files in the `themes/` folder for the format reference.
 
 ## File Locations
 
