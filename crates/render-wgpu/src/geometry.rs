@@ -879,6 +879,140 @@ pub(crate) fn build_toast_bg_verts(
     verts
 }
 
+/// Returns background geometry for the "scrolled up" indicator pill.
+/// Renders as a small translucent badge at the bottom-centre of the terminal
+/// pane when `scroll_offset > 0`.  Returns an empty `Vec` otherwise.
+pub(crate) fn build_scroll_indicator_bg_verts(
+    size: PhysicalSize<u32>,
+    snapshot: &RenderSnapshot,
+    cell_w_px: f32,
+    cell_h_px: f32,
+    tab_bar_h_px: f32,
+) -> Vec<f32> {
+    if snapshot.scroll_offset == 0
+        || size.width == 0
+        || size.height == 0
+        || cell_w_px <= 0.0
+        || cell_h_px <= 0.0
+    {
+        return Vec::new();
+    }
+
+    let px_x = 2.0 / size.width as f32;
+    let px_y = 2.0 / size.height as f32;
+
+    let term_bottom_px = tab_bar_h_px + snapshot.split_ratio * (size.height as f32 - tab_bar_h_px);
+    let pill_h_px = cell_h_px * 1.4;
+    let pill_w_px = cell_w_px * 14.0; // "↑ 999 lines" fits comfortably
+    let margin_px = cell_h_px * 0.5;
+
+    let cx_px = size.width as f32 / 2.0;
+    let bottom_px = term_bottom_px - margin_px;
+    let top_px = bottom_px - pill_h_px;
+    let left_px = cx_px - pill_w_px / 2.0;
+    let right_px = cx_px + pill_w_px / 2.0;
+
+    let x0 = left_px * px_x - 1.0;
+    let x1 = right_px * px_x - 1.0;
+    let y0 = 1.0 - bottom_px * px_y;
+    let y1 = 1.0 - top_px * px_y;
+
+    let bg_color = [0.08, 0.10, 0.18, 0.88];
+    let border_color = [0.40, 0.70, 1.00, 0.80];
+
+    let mut verts = Vec::new();
+    verts.extend_from_slice(&quad_verts(
+        x0 - px_x,
+        y0 - px_y,
+        x1 + px_x,
+        y1 + px_y,
+        border_color,
+    ));
+    verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, bg_color));
+    verts
+}
+
+const PALETTE_MAX_VISIBLE: usize = 10;
+
+/// Returns background geometry for the command palette (Cmd+Shift+P) overlay.
+/// Panel is centered horizontally and placed near the top of the terminal pane.
+pub(crate) fn build_command_palette_bg_verts(
+    size: PhysicalSize<u32>,
+    snapshot: &RenderSnapshot,
+    cell_w_px: f32,
+    cell_h_px: f32,
+    tab_bar_h_px: f32,
+) -> Vec<f32> {
+    let Some(ref cp) = snapshot.command_palette else {
+        return Vec::new();
+    };
+    if size.width == 0 || size.height == 0 || cell_w_px <= 0.0 || cell_h_px <= 0.0 {
+        return Vec::new();
+    }
+
+    let px_x = 2.0 / size.width as f32;
+    let px_y = 2.0 / size.height as f32;
+
+    let n_visible = cp
+        .items
+        .len()
+        .saturating_sub(cp.scroll_offset)
+        .min(PALETTE_MAX_VISIBLE);
+
+    let palette_w_px = cell_w_px * 50.0;
+    let header_h_px = cell_h_px * 2.2;
+    let item_h_px = cell_h_px * 1.4;
+    let palette_h_px = header_h_px + item_h_px * n_visible as f32;
+
+    let cx = size.width as f32 / 2.0;
+    let y0_px = tab_bar_h_px + size.height as f32 * 0.08;
+
+    let left_px = cx - palette_w_px / 2.0;
+    let right_px = cx + palette_w_px / 2.0;
+    let top_px = y0_px;
+    let bottom_px = y0_px + palette_h_px;
+
+    let x0 = left_px * px_x - 1.0;
+    let x1 = right_px * px_x - 1.0;
+    let y0 = 1.0 - bottom_px * px_y;
+    let y1 = 1.0 - top_px * px_y;
+
+    let bg_color = [0.09, 0.11, 0.18, 0.97];
+    let border_color = [0.35, 0.55, 0.90, 1.0];
+
+    let mut verts = Vec::new();
+    // Outer border
+    verts.extend_from_slice(&quad_verts(
+        x0 - 2.0 * px_x,
+        y0 - 2.0 * px_y,
+        x1 + 2.0 * px_x,
+        y1 + 2.0 * px_y,
+        border_color,
+    ));
+    // Main background
+    verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, bg_color));
+
+    // Header separator line
+    let sep_bottom_px = top_px + header_h_px;
+    let sep_top_px = sep_bottom_px - 1.0;
+    let sep_y0 = 1.0 - sep_bottom_px * px_y;
+    let sep_y1 = 1.0 - sep_top_px * px_y;
+    verts.extend_from_slice(&quad_verts(x0, sep_y0, x1, sep_y1, [0.30, 0.45, 0.70, 0.80]));
+
+    // Highlight the selected item row.
+    let scroll_offset = cp.scroll_offset;
+    if cp.selected >= scroll_offset && cp.selected < scroll_offset + n_visible {
+        let row = cp.selected - scroll_offset;
+        let row_top_px = top_px + header_h_px + row as f32 * item_h_px;
+        let row_bot_px = row_top_px + item_h_px;
+        let ry0 = 1.0 - row_bot_px * px_y;
+        let ry1 = 1.0 - row_top_px * px_y;
+        verts.extend_from_slice(&quad_verts(x0, ry0, x1, ry1, [0.20, 0.32, 0.58, 0.70]));
+    }
+
+    verts
+}
+
 /// Returns background geometry for the settings overlay only.
 /// Must be drawn **after** all terminal/editor text so the panel sits on top.
 /// Returns an empty `Vec` when there is no active overlay.

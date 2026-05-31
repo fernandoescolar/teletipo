@@ -17,6 +17,7 @@ pub(crate) const TERMINAL_COLS_MAX: usize = 4096;
 // ── Font discovery ────────────────────────────────────────────────────────────
 
 /// A font family discovered on the machine.
+#[derive(Clone)]
 pub(crate) struct FontEntry {
     /// Display family name (e.g. "Hack", "Consolas", "DejaVu Sans Mono").
     pub(crate) family: String,
@@ -336,6 +337,7 @@ pub(crate) fn build_initial_state(
         },
         update_rx: Some(update_rx),
         settings: crate::SettingsUiState::default(),
+        command_palette: None,
         should_exit: false,
         shell_services: Box::new(crate::shell::SystemShell::new()),
     };
@@ -361,6 +363,17 @@ pub(crate) fn build_initial_state(
                 .position(|f| &f.family == family)
         })
         .unwrap_or(0);
+
+    // Surface a config parse error as a startup toast so users notice it even
+    // when they never open the Settings panel.
+    if let Some(ref err) = state.config_error {
+        use std::time::Duration;
+        state.overlays.toasts.push_back(crate::state::Toast::new(
+            format!("Config error: {err}"),
+            crate::state::ToastKind::Error,
+            Duration::from_secs(8),
+        ));
+    }
 
     Ok(state)
 }

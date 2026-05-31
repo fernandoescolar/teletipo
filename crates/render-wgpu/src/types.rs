@@ -120,6 +120,8 @@ pub struct RenderSnapshot {
     pub terminal_screen_version: u64,
     /// Transient toast notifications to display at the bottom-right corner.
     pub toast_stack: Vec<Toast>,
+    /// When `Some`, the command palette (Cmd+Shift+P) overlay is open.
+    pub command_palette: Option<CommandPalette>,
 }
 
 /// Visual state for the inline terminal search panel.
@@ -198,6 +200,22 @@ pub struct SuggestionDropdown {
     pub scroll_offset: usize,
 }
 
+/// Visual state for the command palette overlay (Cmd+Shift+P).
+#[derive(Debug, Clone)]
+pub struct CommandPalette {
+    /// Current query text entered by the user.
+    pub query: String,
+    /// Character (not byte) index of the text cursor within `query`.
+    pub cursor_char: usize,
+    /// All filtered items to display. The renderer shows
+    /// `items[scroll_offset .. scroll_offset + MAX_VISIBLE]`.
+    pub items: Vec<String>,
+    /// Absolute index (0..items.len()) of the currently selected item.
+    pub selected: usize,
+    /// Index of the first visible item.
+    pub scroll_offset: usize,
+}
+
 /// State passed to the renderer to draw the tab context menu.
 #[derive(Debug, Clone)]
 pub struct TabContextMenu {
@@ -240,6 +258,8 @@ pub struct SettingsItem {
     pub is_selectable: bool,
     /// `true` → pressing Enter activates type-to-filter search mode.
     pub is_searchable: bool,
+    /// `true` → pressing Enter executes a side-effecting action (no value editing).
+    pub is_action: bool,
     /// Left column text.
     pub key: String,
     /// Right column text (empty for headers).

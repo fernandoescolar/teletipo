@@ -244,6 +244,9 @@ where
                         WindowEvent::Ime(Ime::Commit(text)) => {
                             on_event(AppWindowEvent::ImeCommit(text));
                         }
+                        WindowEvent::DroppedFile(path) => {
+                            on_event(AppWindowEvent::DroppedFile(path));
+                        }
                         WindowEvent::RedrawRequested => {
                             let snapshot = next_snapshot();
                             if snapshot.request_exit {

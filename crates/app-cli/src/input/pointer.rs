@@ -230,6 +230,54 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             }
         }
         if *btn_state == ElementState::Pressed {
+            // Command palette click handler.
+            if state.command_palette.is_some() {
+                let palette_w_px = state.layout.cell_w as f64 * 50.0;
+                let win_w = state.layout.window_width as f64;
+                let win_h = state.layout.window_height as f64;
+                let tab_bar_h = state.tab_bar_h() as f64;
+                let palette_x0 = (win_w - palette_w_px) / 2.0;
+                let palette_x1 = palette_x0 + palette_w_px;
+                let header_h = state.layout.cell_h as f64 * 2.2;
+                let item_h = state.layout.cell_h as f64 * 1.4;
+                let palette_y0 = tab_bar_h + win_h * 0.08;
+                let n_visible = state
+                    .command_palette
+                    .as_ref()
+                    .map(|cp| {
+                        cp.filtered
+                            .len()
+                            .saturating_sub(cp.scroll_offset)
+                            .min(crate::state::PALETTE_MAX_VISIBLE_PUB)
+                    })
+                    .unwrap_or(0);
+                let palette_y1 = palette_y0 + header_h + item_h * n_visible as f64;
+
+                let cx = state.cursor.cursor_x;
+                let cy = state.cursor.cursor_y;
+                if cx >= palette_x0 && cx <= palette_x1 && cy >= palette_y0 && cy <= palette_y1 {
+                    // Click inside the palette: select + execute if on an item.
+                    let items_y0 = palette_y0 + header_h;
+                    if cy >= items_y0 {
+                        let row = ((cy - items_y0) / item_h) as usize;
+                        let scroll_offset = state
+                            .command_palette
+                            .as_ref()
+                            .map(|cp| cp.scroll_offset)
+                            .unwrap_or(0);
+                        let item_abs = scroll_offset + row;
+                        if let Some(cp) = state.command_palette.as_mut() {
+                            cp.selected = item_abs.min(cp.filtered.len().saturating_sub(1));
+                        }
+                        crate::input::keyboard::palette_execute_from_pointer(state);
+                    }
+                } else {
+                    // Click outside: close palette.
+                    state.command_palette = None;
+                }
+                return true;
+            }
+
             if state.overlays.tab_context_menu.is_some() {
                 if let (Some(item), Some((tab_idx, _, _))) = (
                     state.overlays.tab_context_hover,
@@ -254,6 +302,10 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 && search::in_panel(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y)
             {
                 if search::hit_close(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
+                    let q = state.tab().search.query.clone();
+                    if !q.is_empty() {
+                        state.overlays.last_search_query = Some(q);
+                    }
                     search::close_search(state.tab_mut());
                 } else if search::hit_prev(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
                     search::prev_match(state.tab_mut());
@@ -418,11 +470,84 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     state.cursor.mouse_btn_held = Some(0);
                     return true;
                 }
-                state.tab_mut().selection_anchor = Some(cell);
-                state.tab_mut().selection_anchor_scroll = state.tab().scroll_offset;
-                state.tab_mut().selection_end = Some(cell);
-                state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
-                state.tab_mut().is_selecting = true;
+
+                // Detect double/triple clicks.
+                const DOUBLE_CLICK_MS: u128 = 400;
+                let now = Instant::now();
+                let click_count = {
+                    if let (Some(last_t), Some(last_cell)) =
+                        (state.cursor.last_click_time, state.cursor.last_click_cell)
+                    {
+                        let elapsed = now.duration_since(last_t).as_millis();
+                        if elapsed <= DOUBLE_CLICK_MS && last_cell == cell {
+                            ((state.cursor.click_count + 1).min(3))
+                        } else {
+                            1
+                        }
+                    } else {
+                        1
+                    }
+                };
+                state.cursor.last_click_time = Some(now);
+                state.cursor.last_click_cell = Some(cell);
+                state.cursor.click_count = click_count;
+
+                if click_count == 3 {
+                    // Triple-click: select the entire line.
+                    let (row, _col) = cell;
+                    let n_cols = state.tab().term_row_count.max(1);
+                    // Find actual terminal columns from the text.
+                    let last_text = state.tab().last_terminal_text.clone();
+                    let line_len = last_text
+                        .lines()
+                        .nth(row)
+                        .map(|l| l.chars().count())
+                        .unwrap_or(0);
+                    let end_col = line_len.saturating_sub(1).max(0);
+                    let scroll = state.tab().scroll_offset;
+                    state.tab_mut().selection_anchor = Some((row, 0));
+                    state.tab_mut().selection_anchor_scroll = scroll;
+                    state.tab_mut().selection_end = Some((row, end_col.max(n_cols)));
+                    state.tab_mut().selection_end_scroll = scroll;
+                    state.tab_mut().is_selecting = false;
+                } else if click_count == 2 {
+                    // Double-click: select word under cursor.
+                    let (row, col) = cell;
+                    let last_text = state.tab().last_terminal_text.clone();
+                    let scroll = state.tab().scroll_offset;
+                    if let Some(line) = last_text.lines().nth(row) {
+                        let chars: Vec<char> = line.chars().collect();
+                        let col = col.min(chars.len().saturating_sub(1));
+                        let is_word = |c: char| c.is_alphanumeric() || "_-./:~".contains(c);
+                        // Expand left.
+                        let mut start_col = col;
+                        while start_col > 0 && is_word(chars[start_col - 1]) {
+                            start_col -= 1;
+                        }
+                        // If the char at cursor isn't a word char, try single char.
+                        let mut end_col = if col < chars.len() && is_word(chars[col]) {
+                            col + 1
+                        } else {
+                            col.saturating_add(1)
+                        };
+                        while end_col < chars.len() && is_word(chars[end_col]) {
+                            end_col += 1;
+                        }
+                        state.tab_mut().selection_anchor = Some((row, start_col));
+                        state.tab_mut().selection_anchor_scroll = scroll;
+                        state.tab_mut().selection_end =
+                            Some((row, end_col.saturating_sub(1).max(start_col)));
+                        state.tab_mut().selection_end_scroll = scroll;
+                        state.tab_mut().is_selecting = false;
+                    }
+                } else {
+                    // Single click: start drag selection.
+                    state.tab_mut().selection_anchor = Some(cell);
+                    state.tab_mut().selection_anchor_scroll = state.tab().scroll_offset;
+                    state.tab_mut().selection_end = Some(cell);
+                    state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
+                    state.tab_mut().is_selecting = true;
+                }
             } else if !fullscreen && state.cursor.cursor_y > term_bottom {
                 let edit_top_px = term_bottom + 2.0;
                 let editor_scroll_offset = state.tab().editor_scroll_offset;
@@ -448,6 +573,26 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 state.tab_mut().app.set_editor_cursor(offset, extend);
                 state.tab_mut().is_selecting_editor = true;
                 clamp_editor_scroll(state);
+            }
+        }
+        return true;
+    }
+
+    // Middle-click on tab bar: close that tab.
+    if let AppWindowEvent::MouseInput {
+        state: ElementState::Pressed,
+        button: MouseButton::Middle,
+    } = event
+    {
+        let tab_bar_h = state.tab_bar_h() as f64;
+        if state.cursor.cursor_y < tab_bar_h && state.tabs.len() > 1 {
+            let n = state.tabs.len();
+            let add_btn_w = state.layout.cell_w as f64 * 2.0;
+            let tab_area_w = state.layout.window_width as f64 - add_btn_w;
+            if state.cursor.cursor_x < state.layout.window_width as f64 - add_btn_w && n > 0 {
+                let tab_w = tab_area_w / n as f64;
+                let tab_idx = (state.cursor.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
+                state.close_tab(tab_idx);
             }
         }
         return true;

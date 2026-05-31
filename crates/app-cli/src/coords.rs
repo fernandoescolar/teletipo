@@ -3,6 +3,23 @@ use render_wgpu::SCROLLBAR_W_PX;
 
 use crate::GpuRuntimeState;
 
+/// Pure scroll-clamp helper: given a `cursor_row`, the number of `visible_rows`,
+/// and the `current_offset`, returns the new scroll offset that keeps the cursor
+/// in view.  The offset is unchanged when the cursor is already visible.
+pub(crate) fn clamp_editor_scroll_offset(
+    cursor_row: usize,
+    visible_rows: usize,
+    current_offset: usize,
+) -> usize {
+    if cursor_row < current_offset {
+        cursor_row
+    } else if cursor_row >= current_offset + visible_rows {
+        cursor_row + 1 - visible_rows
+    } else {
+        current_offset
+    }
+}
+
 /// Adjusts `state.editor_scroll_offset` to keep the caret row visible.
 pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
     let tab_bar_h = state.tab_bar_h();
@@ -24,11 +41,8 @@ pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
     } else {
         1
     };
-    if caret_row < tab.editor_scroll_offset {
-        tab.editor_scroll_offset = caret_row;
-    } else if caret_row >= tab.editor_scroll_offset + visible_rows {
-        tab.editor_scroll_offset = caret_row + 1 - visible_rows;
-    }
+    tab.editor_scroll_offset =
+        clamp_editor_scroll_offset(caret_row, visible_rows, tab.editor_scroll_offset);
 }
 
 /// Convert an editor (row, col) grid position to a byte offset in `text`.
@@ -430,4 +444,205 @@ pub(crate) fn replace_cursor_line(text: &str, cursor: usize, new_line: &str) -> 
     let new_text = format!("{}{}{}", &text[..line_start], new_line, &text[line_end..]);
     let new_cursor = line_start + new_line.len();
     (new_text, new_cursor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── clamp_editor_scroll_offset ────────────────────────────────────────
+
+    #[test]
+    fn clamp_scroll_keeps_offset_when_cursor_in_view() {
+        assert_eq!(clamp_editor_scroll_offset(5, 10, 0), 0);
+    }
+
+    #[test]
+    fn clamp_scroll_jumps_up_when_cursor_above_view() {
+        assert_eq!(clamp_editor_scroll_offset(2, 10, 5), 2);
+    }
+
+    #[test]
+    fn clamp_scroll_scrolls_down_when_cursor_below_view() {
+        // visible rows = 10, cursor on row 15 → offset must be 6 (rows 6..=15).
+        assert_eq!(clamp_editor_scroll_offset(15, 10, 0), 6);
+    }
+
+    // ── editor_row_col_to_offset ─────────────────────────────────────────
+
+    #[test]
+    fn row_col_to_offset_first_line() {
+        assert_eq!(editor_row_col_to_offset("hello\nworld", 0, 3), 3);
+    }
+
+    #[test]
+    fn row_col_to_offset_second_line() {
+        // "hello\n" = 6 bytes, "wo" = 2 → offset 8.
+        assert_eq!(editor_row_col_to_offset("hello\nworld", 1, 2), 8);
+    }
+
+    #[test]
+    fn row_col_to_offset_clamps_overshoot_column() {
+        // col past end of line clamps to line end (5).
+        assert_eq!(editor_row_col_to_offset("hello\nworld", 0, 100), 5);
+    }
+
+    #[test]
+    fn row_col_to_offset_clamps_overshoot_row() {
+        // row past last line clamps to last line.
+        assert_eq!(editor_row_col_to_offset("a\nb\nc", 99, 1), 5);
+    }
+
+    #[test]
+    fn row_col_to_offset_empty_text() {
+        assert_eq!(editor_row_col_to_offset("", 0, 0), 0);
+    }
+
+    #[test]
+    fn row_col_to_offset_unicode() {
+        // "á" is 2 bytes; col=1 should land after it (byte 2).
+        assert_eq!(editor_row_col_to_offset("áb", 0, 1), 2);
+    }
+
+    // ── editor_cursor_row_col ────────────────────────────────────────────
+
+    #[test]
+    fn cursor_row_col_at_start() {
+        assert_eq!(editor_cursor_row_col("hello", 0), (0, 0));
+    }
+
+    #[test]
+    fn cursor_row_col_on_third_line() {
+        assert_eq!(editor_cursor_row_col("a\nb\nc", 4), (2, 0));
+    }
+
+    #[test]
+    fn cursor_row_col_offset_past_end_is_clamped() {
+        assert_eq!(editor_cursor_row_col("ab", 999), (0, 2));
+    }
+
+    #[test]
+    fn cursor_row_col_counts_characters_not_bytes() {
+        // "ñ" (U+00F1) = 2 bytes; column count is in chars.
+        assert_eq!(editor_cursor_row_col("ñx", 3), (0, 2));
+    }
+
+    // ── cursor_to_terminal_cell ──────────────────────────────────────────
+
+    #[test]
+    fn cursor_outside_pane_returns_none() {
+        // cy above the terminal pane → None
+        assert!(
+            cursor_to_terminal_cell(100.0, 5.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 4.0, 4.0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cursor_in_scrollbar_returns_none() {
+        // cx in the rightmost SCROLLBAR_W_PX pixels → None
+        assert!(
+            cursor_to_terminal_cell(795.0, 100.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 4.0, 4.0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cursor_in_pane_returns_row_col() {
+        let res = cursor_to_terminal_cell(50.0, 100.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 0.0, 0.0);
+        assert!(res.is_some());
+    }
+
+    // ── extract_selection ─────────────────────────────────────────────────
+
+    #[test]
+    fn extract_selection_single_line() {
+        let text = "hello world";
+        // Select "ello" — char positions (0, 1) to (0, 4), inclusive
+        let s = extract_selection(text, (0, 1), (0, 4));
+        assert_eq!(s, "ello");
+    }
+
+    #[test]
+    fn extract_selection_multi_line() {
+        let text = "abc\ndef\nghi";
+        // Select from (0, 1) to (2, 1) → "bc\ndef\ngh"
+        let s = extract_selection(text, (0, 1), (2, 1));
+        assert_eq!(s, "bc\ndef\ngh");
+    }
+
+    #[test]
+    fn extract_selection_handles_reversed_anchor() {
+        let text = "abc\ndef";
+        // Anchor after end → still normalises; both orderings must agree.
+        let s1 = extract_selection(text, (1, 1), (0, 0));
+        let s2 = extract_selection(text, (0, 0), (1, 1));
+        assert_eq!(s1, s2);
+    }
+
+    // ── current_line_prefix ──────────────────────────────────────────────
+
+    #[test]
+    fn current_line_prefix_strips_leading_whitespace() {
+        assert_eq!(current_line_prefix("  git status", 12), "git status");
+    }
+
+    #[test]
+    fn current_line_prefix_only_last_line() {
+        let text = "first\nsecond cmd";
+        assert_eq!(current_line_prefix(text, text.len()), "second cmd");
+    }
+
+    // ── line_leading_spaces ──────────────────────────────────────────────
+
+    #[test]
+    fn leading_spaces_returns_indent() {
+        assert_eq!(line_leading_spaces("    code", 8), "    ");
+    }
+
+    #[test]
+    fn leading_spaces_no_indent() {
+        assert_eq!(line_leading_spaces("code", 4), "");
+    }
+
+    // ── cursor_at_line_end ───────────────────────────────────────────────
+
+    #[test]
+    fn cursor_at_end_of_text_is_line_end() {
+        assert!(cursor_at_line_end("abc", 3));
+    }
+
+    #[test]
+    fn cursor_before_newline_is_line_end() {
+        assert!(cursor_at_line_end("abc\ndef", 3));
+    }
+
+    #[test]
+    fn cursor_mid_line_is_not_line_end() {
+        assert!(!cursor_at_line_end("abc", 1));
+    }
+
+    // ── detect_terminal_links ────────────────────────────────────────────
+
+    #[test]
+    fn detects_https_link() {
+        let links = detect_terminal_links("visit https://example.com today");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].3, "https://example.com");
+    }
+
+    #[test]
+    fn detects_multiple_link_schemes() {
+        let text = "http://a.org\nftp://b.org";
+        let links = detect_terminal_links(text);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].0, 0); // row 0
+        assert_eq!(links[1].0, 1); // row 1
+    }
+
+    #[test]
+    fn ignores_non_url_tokens() {
+        let links = detect_terminal_links("plain text here");
+        assert!(links.is_empty());
+    }
 }

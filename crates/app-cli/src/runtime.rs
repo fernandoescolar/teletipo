@@ -66,6 +66,8 @@ pub(crate) struct GpuRuntimeState {
     pub(crate) update_rx: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
     /// Settings overlay interaction state.
     pub(crate) settings: SettingsUiState,
+    /// Command palette overlay (Cmd+Shift+P). `None` when the palette is closed.
+    pub(crate) command_palette: Option<crate::state::CommandPaletteState>,
     /// Set to `true` when the last shell session ends so the window closes.
     pub(crate) should_exit: bool,
     /// Abstraction over host-OS capabilities (clipboard today). Boxed so tests

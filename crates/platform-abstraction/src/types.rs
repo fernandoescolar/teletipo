@@ -44,6 +44,8 @@ pub enum AppWindowEvent {
     ModifiersChanged(ModifiersState),
     KeyboardInput(KeyEvent),
     ImeCommit(String),
+    /// A file was dropped onto the window.
+    DroppedFile(std::path::PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -8,7 +8,7 @@ use crate::coords::{
 use crate::settings::build_settings_overlay;
 use crate::theme;
 use render_wgpu::{
-    ColorTheme, DamageRegion, RenderCell, RenderRow, RenderSnapshot, SearchPanel,
+    ColorTheme, CommandPalette, DamageRegion, RenderCell, RenderRow, RenderSnapshot, SearchPanel,
     SuggestionDropdown, TabContextMenu, TerminalLink, Toast, ToastKind,
 };
 
@@ -558,6 +558,23 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 None
             }
         },
+        command_palette: state.command_palette.as_ref().map(|cp| {
+            let items: Vec<String> = cp
+                .filtered
+                .iter()
+                .map(|&i| cp.all_items[i].label.clone())
+                .collect();
+            let cursor_char = cp.query[..cp.cursor_byte.min(cp.query.len())]
+                .chars()
+                .count();
+            CommandPalette {
+                query: cp.query.clone(),
+                cursor_char,
+                items,
+                selected: cp.selected,
+                scroll_offset: cp.scroll_offset,
+            }
+        }),
     }
 }
 

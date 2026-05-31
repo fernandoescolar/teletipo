@@ -186,6 +186,7 @@ mod tests {
             terminal_styles: vec![],
             cursor_blink_on: true,
             toast_stack: vec![],
+            command_palette: None,
         }
     }
 

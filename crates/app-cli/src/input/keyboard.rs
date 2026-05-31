@@ -35,6 +35,12 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         return;
     }
 
+    // Command palette (Cmd+Shift+P) navigation takes priority over everything else.
+    if state.command_palette.is_some() {
+        handle_palette_key(state, key_event);
+        return;
+    }
+
     if state.tab().search.active {
         handle_search_key(state, key_event);
         return;
@@ -328,10 +334,12 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         }
 
         Key::Character(ch) if is_copy_shortcut(state, ch.as_str()) => {
+            let mut copied_len: usize = 0;
             if let Some((start, end)) = state.tab().app.editor_selection() {
                 let editor_text = state.tab().app.editor_snapshot();
                 let selected = editor_text[start..end].to_string();
                 if !selected.is_empty() {
+                    copied_len = selected.chars().count();
                     state.shell_services.clipboard_set(selected);
                 }
             } else if let (Some(anchor), Some(sel_end)) =
@@ -349,8 +357,15 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 let last_text = state.tab().last_terminal_text.clone();
                 let text = extract_selection(&last_text, adjusted_anchor, adjusted_end);
                 if !text.is_empty() {
+                    copied_len = text.chars().count();
                     state.shell_services.clipboard_set(text);
                 }
+            }
+            if copied_len > 0 {
+                state.push_toast(
+                    format!("Copied {copied_len} chars"),
+                    crate::state::ToastKind::Success,
+                );
             }
         }
 
@@ -398,6 +413,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             "w" => {
                 let idx = state.active_tab;
                 state.close_tab(idx);
+            }
+            // Cmd+Shift+P — open command palette
+            "P" if state.modifiers.shift_down => {
+                open_command_palette(state);
+                return;
             }
             "[" => {
                 state.active_tab = state.active_tab.saturating_sub(1);
@@ -795,5 +815,188 @@ fn is_paste_shortcut(state: &GpuRuntimeState, key: &str) -> bool {
     #[cfg(not(target_os = "macos"))]
     {
         state.modifiers.ctrl_down && state.modifiers.shift_down && key.eq_ignore_ascii_case("v")
+    }
+}
+
+// ── Command palette ───────────────────────────────────────────────────────────
+
+/// Build and open the command palette with all available items.
+fn open_command_palette(state: &mut GpuRuntimeState) {
+    use crate::state::{CommandPaletteState, PaletteAction, PaletteItem};
+
+    let mut items: Vec<PaletteItem> = vec![
+        PaletteItem { label: "New Tab".to_owned(), action: PaletteAction::NewTab },
+        PaletteItem { label: "Close Tab".to_owned(), action: PaletteAction::CloseTab },
+        PaletteItem { label: "Open Settings".to_owned(), action: PaletteAction::OpenSettings },
+        PaletteItem {
+            label: "Open Config in Editor".to_owned(),
+            action: PaletteAction::OpenConfigInEditor,
+        },
+        PaletteItem {
+            label: "Reveal Config in Finder".to_owned(),
+            action: PaletteAction::RevealConfigInFinder,
+        },
+    ];
+
+    // "Restart Now" only when an update is pending.
+    if matches!(state.overlays.pending_update, Some(crate::state::UpdateBanner::Available(_))) {
+        items.insert(0, PaletteItem {
+            label: "Restart Now (update ready)".to_owned(),
+            action: PaletteAction::RestartNow,
+        });
+    }
+
+    // Add theme-switching items.
+    for (i, theme) in state.themes_fonts.available_themes.iter().enumerate() {
+        items.push(PaletteItem {
+            label: format!("Set Theme: {}", theme.name),
+            action: PaletteAction::SetTheme(i),
+        });
+    }
+    // Add font items.
+    for (i, font) in state.themes_fonts.available_fonts.iter().enumerate() {
+        items.push(PaletteItem {
+            label: format!("Set Font: {}", font.family),
+            action: PaletteAction::SetFont(i),
+        });
+    }
+
+    let n = items.len();
+    let filtered: Vec<usize> = (0..n).collect();
+    state.command_palette = Some(CommandPaletteState {
+        query: String::new(),
+        cursor_byte: 0,
+        all_items: items,
+        filtered,
+        selected: 0,
+        scroll_offset: 0,
+    });
+}
+
+/// Handle keyboard input while the command palette is open.
+fn handle_palette_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+    match &key_event.logical_key {
+        Key::Named(NamedKey::Escape) => {
+            state.command_palette = None;
+        }
+        Key::Named(NamedKey::Enter) => {
+            execute_palette_action(state);
+        }
+        Key::Named(NamedKey::ArrowUp) => {
+            if let Some(cp) = state.command_palette.as_mut() {
+                cp.move_up();
+            }
+        }
+        Key::Named(NamedKey::ArrowDown) => {
+            if let Some(cp) = state.command_palette.as_mut() {
+                cp.move_down();
+            }
+        }
+        Key::Named(NamedKey::Backspace) => {
+            if let Some(cp) = state.command_palette.as_mut() {
+                if let Some((byte_start, _)) = cp.query[..cp.cursor_byte]
+                    .char_indices()
+                    .next_back()
+                {
+                    cp.query.remove(byte_start);
+                    cp.cursor_byte = byte_start;
+                    cp.refilter();
+                }
+            }
+        }
+        Key::Character(ch) if !state.modifiers.super_down && !state.modifiers.ctrl_down => {
+            let text = ch.as_str();
+            if !text.is_empty() && !text.contains('\r') && !text.contains('\n') {
+                if let Some(cp) = state.command_palette.as_mut() {
+                    cp.query.insert_str(cp.cursor_byte, text);
+                    cp.cursor_byte += text.len();
+                    cp.refilter();
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Execute the currently selected palette action, then close the palette.
+/// Also callable by the pointer handler for click-to-execute.
+pub(crate) fn palette_execute_from_pointer(state: &mut GpuRuntimeState) {
+    execute_palette_action(state);
+}
+
+/// Execute the currently selected palette action, then close the palette.
+fn execute_palette_action(state: &mut GpuRuntimeState) {
+    let Some(cp) = state.command_palette.take() else {
+        return;
+    };
+    let Some(&item_idx) = cp.filtered.get(cp.selected) else {
+        return;
+    };
+    let action = cp.all_items[item_idx].action.clone();
+
+    use crate::state::PaletteAction;
+    match action {
+        PaletteAction::NewTab => {
+            state.add_new_tab();
+        }
+        PaletteAction::CloseTab => {
+            let idx = state.active_tab;
+            state.close_tab(idx);
+        }
+        PaletteAction::OpenSettings => {
+            state.settings.open = true;
+            state.settings.cursor = 0;
+            state.settings.edit_buf = None;
+        }
+        PaletteAction::RestartNow => {
+            crate::updater::restart_app();
+        }
+        PaletteAction::OpenConfigInEditor => {
+            if let Some(path) = crate::config::config_path() {
+                // macOS: open with the default text editor association.
+                let _ = std::process::Command::new("open")
+                    .arg("-t")
+                    .arg(&path)
+                    .spawn();
+            }
+        }
+        PaletteAction::RevealConfigInFinder => {
+            if let Some(path) = crate::config::config_path() {
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open")
+                    .args([std::ffi::OsStr::new("-R"), path.as_os_str()])
+                    .spawn();
+                #[cfg(not(target_os = "macos"))]
+                {
+                    // On Linux, open the parent directory in the file manager.
+                    if let Some(parent) = path.parent() {
+                        let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+                    }
+                }
+            }
+        }
+        PaletteAction::SetTheme(idx) => {
+            if let Some(theme) = state.themes_fonts.available_themes.get(idx).cloned() {
+                state.themes_fonts.active_theme_idx = Some(idx);
+                crate::settings::apply_theme_file(&mut state.user_config, &theme);
+                crate::config::save_config(&state.user_config);
+            }
+        }
+        PaletteAction::SetFont(idx) => {
+            if let Some(font) = state.themes_fonts.available_fonts.get(idx).cloned() {
+                state.themes_fonts.active_font_idx = idx;
+                state.user_config.font.family =
+                    if font.family == "(default)" {
+                        None
+                    } else {
+                        Some(font.family.clone())
+                    };
+                crate::config::save_config(&state.user_config);
+                state.push_toast(
+                    format!("Font set to {}", font.family),
+                    crate::state::ToastKind::Success,
+                );
+            }
+        }
     }
 }

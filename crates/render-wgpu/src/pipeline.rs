@@ -11,8 +11,8 @@ use crate::atlas::{
 };
 use crate::geometry::{
     TEXT_VERTEX_BUF_CAPACITY, VERTEX_BUF_CAPACITY, add_text_verts, add_text_verts_shaped,
-    build_panel_vertices, build_settings_overlay_bg_verts, build_suggestion_dropdown_bg_verts,
-    build_toast_bg_verts,
+    build_command_palette_bg_verts, build_panel_vertices, build_scroll_indicator_bg_verts,
+    build_settings_overlay_bg_verts, build_suggestion_dropdown_bg_verts, build_toast_bg_verts,
     floats_as_bytes,
 };
 use crate::shell_highlight::highlight_shell;
@@ -299,15 +299,35 @@ impl<'a> GpuState<'a> {
             build_settings_overlay_bg_verts(self.size, snapshot, self.cell_w_px, self.cell_h_px);
         let overlay_bg_start = dropdown_bg_start + dropdown_bg_count;
         let overlay_bg_count = (overlay_bg_verts.len() / 6) as u32;
+        let scroll_indicator_bg_verts = build_scroll_indicator_bg_verts(
+            self.size,
+            snapshot,
+            self.cell_w_px,
+            self.cell_h_px,
+            tab_bar_h,
+        );
+        let scroll_indicator_bg_start = overlay_bg_start + overlay_bg_count;
+        let scroll_indicator_bg_count = (scroll_indicator_bg_verts.len() / 6) as u32;
+        let command_palette_bg_verts = build_command_palette_bg_verts(
+            self.size,
+            snapshot,
+            self.cell_w_px,
+            self.cell_h_px,
+            tab_bar_h,
+        );
+        let command_palette_bg_start = scroll_indicator_bg_start + scroll_indicator_bg_count;
+        let command_palette_bg_count = (command_palette_bg_verts.len() / 6) as u32;
         let toast_bg_verts =
             build_toast_bg_verts(self.size, snapshot, self.cell_w_px, self.cell_h_px);
-        let toast_bg_start = overlay_bg_start + overlay_bg_count;
+        let toast_bg_start = command_palette_bg_start + command_palette_bg_count;
         let toast_bg_count = (toast_bg_verts.len() / 6) as u32;
         {
-            // Upload main bg + dropdown bg + settings overlay bg + toast bg, in draw order.
+            // Upload main bg + dropdown bg + settings overlay bg + scroll indicator + command palette + toast bg, in draw order.
             let mut all_bg = panel_verts;
             all_bg.extend_from_slice(&dropdown_bg_verts);
             all_bg.extend_from_slice(&overlay_bg_verts);
+            all_bg.extend_from_slice(&scroll_indicator_bg_verts);
+            all_bg.extend_from_slice(&command_palette_bg_verts);
             all_bg.extend_from_slice(&toast_bg_verts);
             if !all_bg.is_empty() {
                 let bytes = floats_as_bytes(&all_bg);
@@ -366,6 +386,26 @@ impl<'a> GpuState<'a> {
             }
             for ch in ['F', 'i', 'n', 'd', ':', '/', '↑', '↓', '×', 'R', 'C', 'c', '[', ']'] {
                 self.ensure_glyph(ch);
+            }
+        }
+        // Pre-cache scroll indicator glyphs (↑ and digit characters).
+        if snapshot.scroll_offset > 0 {
+            for ch in ['↑', 'l', 'i', 'n', 'e', 's'] {
+                self.ensure_glyph(ch);
+            }
+        }
+        // Pre-cache command palette characters.
+        if let Some(ref cp) = snapshot.command_palette {
+            self.ensure_glyph('>');
+            self.ensure_glyph('_');
+            for ch in cp.query.chars().chain(
+                cp.items
+                    .iter()
+                    .flat_map(|s| s.chars()),
+            ) {
+                if ch != ' ' {
+                    self.ensure_glyph(ch);
+                }
             }
         }
         for toast in &snapshot.toast_stack {
@@ -1055,6 +1095,7 @@ impl<'a> GpuState<'a> {
                     // Numeric selectable fields show ← value → at all times (focused or not).
                     let arrows_buf: Option<String> = if item.is_selectable
                         && !item.is_searchable
+                        && !item.is_action
                         && search_val_buf.is_none()
                         && !(is_focused && overlay.editing.is_some())
                     {
@@ -1215,10 +1256,112 @@ impl<'a> GpuState<'a> {
             }
         }
 
+        // Scroll-up indicator text — a small centred pill label when scrollback
+        // is active.  Rendered after settings overlay text but before toasts.
+        let scroll_indicator_text_vert_start = (text_verts.len() / 8) as u32;
+        if snapshot.scroll_offset > 0
+            && self.size.width > 0
+            && self.size.height > 0
+            && self.cell_w_px > 0.0
+            && self.cell_h_px > 0.0
+        {
+            let label = format!("↑  {} lines  ↑", snapshot.scroll_offset);
+            let pill_h_px = self.cell_h_px * 1.4;
+            let margin_px = self.cell_h_px * 0.5;
+            let term_bottom_px = tab_bar_h
+                + snapshot.split_ratio * (self.size.height as f32 - tab_bar_h);
+            let bottom_px = term_bottom_px - margin_px;
+            let top_px = bottom_px - pill_h_px;
+            let text_y = top_px + (pill_h_px - self.cell_h_px) / 2.0;
+            let n_chars = label.chars().count() as f32;
+            let text_w_px = n_chars * self.cell_w_px;
+            let text_x = (self.size.width as f32 - text_w_px) / 2.0;
+            add_text_verts(
+                &label,
+                text_y,
+                text_x,
+                [0.60, 0.85, 1.00, 1.0],
+                &[],
+                &[],
+                &self.glyph_cache,
+                None,
+                self.cell_w_px,
+                self.cell_h_px,
+                self.size,
+                &mut text_verts,
+                0,
+            );
+        }
+
+        // Command palette text — rendered after scroll indicator, before toasts.
+        let command_palette_text_vert_start = (text_verts.len() / 8) as u32;
+        if let Some(ref cp) = snapshot.command_palette {
+            if self.size.width > 0 && self.size.height > 0 && self.cell_w_px > 0.0 && self.cell_h_px > 0.0 {
+                let palette_w_px = self.cell_w_px * 50.0;
+                let header_h_px = self.cell_h_px * 2.2;
+                let item_h_px = self.cell_h_px * 1.4;
+                let cx = self.size.width as f32 / 2.0;
+                let y0_px = tab_bar_h + self.size.height as f32 * 0.08;
+                let left_px = cx - palette_w_px / 2.0;
+                let pad_px = self.cell_w_px * 1.5;
+
+                // Header: "> query_text" with a blinking cursor marker
+                let query_display = if cp.query.is_empty() {
+                    "  Search commands…".to_owned()
+                } else {
+                    format!("  > {}", cp.query)
+                };
+                let header_text_y = y0_px + (header_h_px - self.cell_h_px) / 2.0;
+                add_text_verts(
+                    &query_display,
+                    header_text_y,
+                    left_px + pad_px,
+                    [0.88, 0.92, 1.00, 1.0],
+                    &[],
+                    &[],
+                    &self.glyph_cache,
+                    None,
+                    self.cell_w_px,
+                    self.cell_h_px,
+                    self.size,
+                    &mut text_verts,
+                    0,
+                );
+
+                // Item rows
+                let n_visible = cp.items.len().saturating_sub(cp.scroll_offset).min(10);
+                let visible_end = cp.scroll_offset + n_visible;
+                for (i, item) in cp.items[cp.scroll_offset..visible_end].iter().enumerate() {
+                    let row_top_px = y0_px + header_h_px + i as f32 * item_h_px;
+                    let text_y = row_top_px + (item_h_px - self.cell_h_px) / 2.0;
+                    let abs_idx = cp.scroll_offset + i;
+                    let color = if abs_idx == cp.selected {
+                        [1.00, 1.00, 1.00, 1.0]
+                    } else {
+                        [0.65, 0.72, 0.85, 1.0]
+                    };
+                    add_text_verts(
+                        item,
+                        text_y,
+                        left_px + pad_px,
+                        color,
+                        &[],
+                        &[],
+                        &self.glyph_cache,
+                        None,
+                        self.cell_w_px,
+                        self.cell_h_px,
+                        self.size,
+                        &mut text_verts,
+                        0,
+                    );
+                }
+            }
+        }
+
         // Toast text — rendered after settings overlay so toasts appear on top.
         let toast_text_vert_start = (text_verts.len() / 8) as u32;
         if !snapshot.toast_stack.is_empty()
-            && self.size.width > 0
             && self.size.height > 0
             && self.cell_w_px > 0.0
             && self.cell_h_px > 0.0
@@ -1388,10 +1531,60 @@ impl<'a> GpuState<'a> {
                 }
 
                 // Settings overlay text: on top of the panel background.
-                if toast_text_vert_start > settings_text_vert_start {
+                if scroll_indicator_text_vert_start > settings_text_vert_start {
                     pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
                     pass.draw(
                         settings_text_vert_start.min(total_capped)
+                            ..scroll_indicator_text_vert_start.min(total_capped),
+                        0..1,
+                    );
+                }
+
+                // Scroll-up indicator background pill.
+                if scroll_indicator_bg_count > 0 {
+                    pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
+                    pass.set_pipeline(&self.pipeline);
+                    pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
+                    pass.draw(
+                        scroll_indicator_bg_start
+                            ..scroll_indicator_bg_start + scroll_indicator_bg_count,
+                        0..1,
+                    );
+                    pass.set_pipeline(&self.text_pipeline);
+                    pass.set_bind_group(0, &self.atlas_bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.text_vertex_buf.slice(..));
+                }
+
+                // Scroll-up indicator text.
+                if command_palette_text_vert_start > scroll_indicator_text_vert_start {
+                    pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
+                    pass.draw(
+                        scroll_indicator_text_vert_start.min(total_capped)
+                            ..command_palette_text_vert_start.min(total_capped),
+                        0..1,
+                    );
+                }
+
+                // Command palette background.
+                if command_palette_bg_count > 0 {
+                    pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
+                    pass.set_pipeline(&self.pipeline);
+                    pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
+                    pass.draw(
+                        command_palette_bg_start
+                            ..command_palette_bg_start + command_palette_bg_count,
+                        0..1,
+                    );
+                    pass.set_pipeline(&self.text_pipeline);
+                    pass.set_bind_group(0, &self.atlas_bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.text_vertex_buf.slice(..));
+                }
+
+                // Command palette text.
+                if toast_text_vert_start > command_palette_text_vert_start {
+                    pass.set_scissor_rect(0, 0, self.size.width, self.size.height);
+                    pass.draw(
+                        command_palette_text_vert_start.min(total_capped)
                             ..toast_text_vert_start.min(total_capped),
                         0..1,
                     );

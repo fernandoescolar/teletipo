@@ -181,6 +181,36 @@ pub fn spawn_update() -> mpsc::Receiver<Result<Option<String>, String>> {
     rx
 }
 
+/// Restart the current process by re-executing it in-place.
+///
+/// On Unix this uses `exec()` to replace the process image; on Windows it
+/// spawns a new instance and exits.  The function only returns on error (e.g.
+/// permission denied or executable not found).
+pub(crate) fn restart_app() {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let exe = match executable_path() {
+        Ok(p) => p,
+        Err(e) => {
+            error!(error = %e, "restart: could not resolve executable path");
+            return;
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(&exe).args(&args[1..]).exec();
+        error!(error = %err, "restart: exec failed");
+    }
+    #[cfg(not(unix))]
+    {
+        match std::process::Command::new(&exe).args(&args[1..]).spawn() {
+            Ok(_) => std::process::exit(0),
+            Err(e) => error!(error = %e, "restart: spawn failed"),
+        }
+    }
+}
+
 #[tracing::instrument]
 pub(crate) fn rollback_latest_update() -> anyhow::Result<bool> {
     let exe_path = executable_path()?;

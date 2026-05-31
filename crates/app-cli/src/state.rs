@@ -40,6 +40,12 @@ pub(crate) struct CursorState {
     /// Which mouse button (0=left, 1=mid, 2=right) is currently held, for
     /// motion-reporting passthrough to the PTY (modes 1002/1003).
     pub(crate) mouse_btn_held: Option<u8>,
+    /// Time of the last left-click press (for double/triple-click detection).
+    pub(crate) last_click_time: Option<std::time::Instant>,
+    /// Terminal cell (row, col) of the last left-click (for proximity check).
+    pub(crate) last_click_cell: Option<(usize, usize)>,
+    /// Consecutive click count: 1 = single, 2 = double, 3 = triple.
+    pub(crate) click_count: u8,
 }
 
 /// Window geometry plus the renderer's reported per-cell physical pixel size.
@@ -107,6 +113,89 @@ impl Toast {
 pub(crate) enum UpdateBanner {
     Available(String),
     Failed(String),
+}
+
+// ── Command palette ───────────────────────────────────────────────────────────
+
+/// An action that can be invoked from the command palette.
+#[derive(Clone, Debug)]
+pub(crate) enum PaletteAction {
+    NewTab,
+    CloseTab,
+    OpenSettings,
+    OpenConfigInEditor,
+    RevealConfigInFinder,
+    RestartNow,
+    SetTheme(usize),
+    SetFont(usize),
+}
+
+/// A single item in the command palette list.
+#[derive(Clone, Debug)]
+pub(crate) struct PaletteItem {
+    pub(crate) label: String,
+    pub(crate) action: PaletteAction,
+}
+
+/// Runtime state for the command palette overlay (Cmd+Shift+P).
+pub(crate) struct CommandPaletteState {
+    /// Current filter query entered by the user.
+    pub(crate) query: String,
+    /// Byte offset of the text cursor within `query`.
+    pub(crate) cursor_byte: usize,
+    /// All available items (built when the palette opens and kept stable).
+    pub(crate) all_items: Vec<PaletteItem>,
+    /// Indices into `all_items` that match `query` (all items when query is empty).
+    pub(crate) filtered: Vec<usize>,
+    /// Index into `filtered` of the currently selected item.
+    pub(crate) selected: usize,
+    /// Index of the first visible item in the scroll window.
+    pub(crate) scroll_offset: usize,
+}
+
+const PALETTE_MAX_VISIBLE: usize = 10;
+
+/// Public constant so other modules can share the same scroll-window size.
+pub(crate) const PALETTE_MAX_VISIBLE_PUB: usize = PALETTE_MAX_VISIBLE;
+
+impl CommandPaletteState {
+    /// Re-build `filtered` from `all_items` and the current `query`.
+    pub(crate) fn refilter(&mut self) {
+        let q = self.query.to_lowercase();
+        self.filtered = (0..self.all_items.len())
+            .filter(|&i| q.is_empty() || self.all_items[i].label.to_lowercase().contains(&q))
+            .collect();
+        self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
+        self.recompute_scroll();
+    }
+
+    fn recompute_scroll(&mut self) {
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
+        } else if self.selected >= self.scroll_offset + PALETTE_MAX_VISIBLE {
+            self.scroll_offset = self.selected + 1 - PALETTE_MAX_VISIBLE;
+        }
+    }
+
+    pub(crate) fn move_up(&mut self) {
+        if self.filtered.is_empty() {
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = self.filtered.len() - 1;
+        } else {
+            self.selected -= 1;
+        }
+        self.recompute_scroll();
+    }
+
+    pub(crate) fn move_down(&mut self) {
+        if self.filtered.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.filtered.len();
+        self.recompute_scroll();
+    }
 }
 
 impl Default for OverlayState {

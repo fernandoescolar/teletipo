@@ -42,6 +42,7 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
         is_header: true,
         is_selectable: false,
         is_searchable: false,
+        is_action: false,
         key: format!("[app] version: v{}", env!("CARGO_PKG_VERSION")),
         value: String::new(),
     });
@@ -50,6 +51,7 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
             is_header: true,
             is_selectable: false,
             is_searchable: false,
+            is_action: false,
             key: format!("[startup] config error: {err}"),
             value: String::new(),
         });
@@ -62,6 +64,7 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
                 is_header: true,
                 is_selectable: false,
                 is_searchable: false,
+                is_action: false,
                 key: format!("[{}]", field.section),
                 value: String::new(),
             });
@@ -86,14 +89,43 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
             is_header: false,
             is_selectable,
             is_searchable,
+            is_action: false,
             key: field.key.to_owned(),
             value,
         });
     }
 
+    // Action rows — shown below the config fields.
+    items.push(SettingsItem {
+        is_header: true,
+        is_selectable: false,
+        is_searchable: false,
+        is_action: false,
+        key: "[actions]".to_owned(),
+        value: String::new(),
+    });
+    items.push(SettingsItem {
+        is_header: false,
+        is_selectable: true,
+        is_searchable: false,
+        is_action: true,
+        key: "Open Config in Editor".to_owned(),
+        value: String::new(),
+    });
+    items.push(SettingsItem {
+        is_header: false,
+        is_selectable: true,
+        is_searchable: false,
+        is_action: true,
+        key: "Reveal Config in Finder".to_owned(),
+        value: String::new(),
+    });
+
     // Compute search matches when in search mode (font family or theme).
     let (search_matches, search_selected, search_scroll_offset) =
-        if let Some(ref buf) = state.settings.search_buf {
+        if let Some(ref buf) = state.settings.search_buf
+            && state.settings.cursor < SETTINGS_FIELDS.len()
+        {
             let q = buf.to_lowercase();
             let field = &SETTINGS_FIELDS[state.settings.cursor];
             let matches: Vec<String> = if field.section == "font" && field.key == "family" {
@@ -147,7 +179,7 @@ pub(crate) fn handle_settings_key(
     if key_event.state != ElementState::Pressed {
         return true; // consume non-press events too while settings is open
     }
-    let n_fields = SETTINGS_FIELDS.len();
+    let n_fields = SETTINGS_FIELDS.len() + 2; // +2 for the two action rows at the end
 
     // ── Search mode: type-to-filter for the font family picker ───────────────
     if state.settings.search_buf.is_some() {
@@ -225,6 +257,9 @@ pub(crate) fn handle_settings_key(
         }
         Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
             let is_right = matches!(&key_event.logical_key, Key::Named(NamedKey::ArrowRight));
+            if state.settings.cursor >= SETTINGS_FIELDS.len() {
+                return true; // action rows don't respond to arrow left/right
+            }
             let field = &SETTINGS_FIELDS[state.settings.cursor];
             if field.key == "theme" && !state.themes_fonts.available_themes.is_empty() {
                 let n = state.themes_fonts.available_themes.len();
@@ -282,6 +317,28 @@ pub(crate) fn handle_settings_key(
         }
         Key::Named(NamedKey::Enter) => {
             let idx = state.settings.cursor;
+            // Handle action rows (beyond SETTINGS_FIELDS).
+            let action_base = SETTINGS_FIELDS.len();
+            if idx == action_base {
+                // "Open Config in Editor"
+                if let Some(path) = crate::config::config_path() {
+                    let _ = std::process::Command::new("open").arg("-t").arg(&path).spawn();
+                }
+                return true;
+            } else if idx == action_base + 1 {
+                // "Reveal Config in Finder"
+                if let Some(path) = crate::config::config_path() {
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("open")
+                        .args([std::ffi::OsStr::new("-R"), path.as_os_str()])
+                        .spawn();
+                    #[cfg(not(target_os = "macos"))]
+                    if let Some(parent) = path.parent() {
+                        let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+                    }
+                }
+                return true;
+            }
             let field = &SETTINGS_FIELDS[idx];
             let is_searchable =
                 (field.section == "font" && field.key == "family") || field.key == "theme";
@@ -313,7 +370,9 @@ pub(crate) fn handle_settings_key(
         }
         Key::Character(ch) if state.modifiers.super_down && ch.as_str() == "s" => {
             // Explicit Cmd+S: flush any open edit buffer then save.
-            if let Some(buf) = state.settings.edit_buf.take() {
+            if let Some(buf) = state.settings.edit_buf.take()
+                && state.settings.cursor < SETTINGS_FIELDS.len()
+            {
                 let field = &SETTINGS_FIELDS[state.settings.cursor];
                 let is_selectable = field.key == "theme"
                     || (field.section == "font" && field.key == "family")
@@ -348,6 +407,9 @@ pub(crate) fn handle_settings_key(
 
 /// Count the number of items matching the current search buffer for the focused field.
 fn search_match_count(state: &GpuRuntimeState) -> usize {
+    if state.settings.cursor >= SETTINGS_FIELDS.len() {
+        return 0;
+    }
     let buf = state
         .settings
         .search_buf
@@ -390,6 +452,9 @@ fn clamp_search_scroll(state: &mut GpuRuntimeState, n_matches: usize) {
 
 /// Confirm the currently highlighted search result for the focused field (font family or theme).
 fn confirm_search_selection(state: &mut GpuRuntimeState) {
+    if state.settings.cursor >= SETTINGS_FIELDS.len() {
+        return;
+    }
     let buf = state
         .settings
         .search_buf

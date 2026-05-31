@@ -187,6 +187,7 @@ mod input_smoke_tests {
             themes_fonts: ThemeFontState::default(),
             update_rx: None,
             settings: SettingsUiState::default(),
+            command_palette: None,
             should_exit: false,
             shell_services,
         }
