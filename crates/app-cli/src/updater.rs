@@ -61,14 +61,46 @@ fn is_running_from_macos_app_bundle(exe_path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
 }
 
-fn self_update_allowed(exe_path: &Path) -> bool {
-    if cfg!(target_os = "macos")
-        && is_running_from_macos_app_bundle(exe_path)
-        && std::env::var_os("TELETIPO_ALLOW_APP_BUNDLE_SELF_UPDATE").is_none()
-    {
-        return false;
-    }
+fn self_update_allowed(_exe_path: &Path) -> bool {
     true
+}
+
+/// After replacing the binary inside a macOS .app bundle the original
+/// code-signature is invalidated.  Re-apply an ad-hoc signature so that
+/// Gatekeeper / TCC does not block the updated app on next launch.
+#[cfg(target_os = "macos")]
+fn try_resign_macos_bundle(exe_path: &Path) {
+    // Walk up: exe → MacOS/ → Contents/ → Teletipo.app
+    let Some(app_dir) = exe_path
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+    else {
+        return;
+    };
+    if !app_dir
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+    {
+        return;
+    }
+    match std::process::Command::new("codesign")
+        .args(["--force", "--deep", "--sign", "-"])
+        .arg(app_dir)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            info!(bundle = %app_dir.display(), "re-applied ad-hoc signature after update");
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            warn!(bundle = %app_dir.display(), %stderr, "could not re-sign bundle after update");
+        }
+        Err(err) => {
+            warn!(error = %err, "codesign not available; skipping re-signing");
+        }
+    }
 }
 
 fn rollback_backup_path(exe_path: &Path) -> PathBuf {
@@ -118,6 +150,10 @@ fn try_update() -> Result<Option<String>, String> {
     match status {
         self_update::Status::Updated(v) => {
             info!(version = %v, backup = %backup_path.display(), "update applied");
+            #[cfg(target_os = "macos")]
+            if is_running_from_macos_app_bundle(&exe_path) {
+                try_resign_macos_bundle(&exe_path);
+            }
             Ok(Some(v))
         }
         self_update::Status::UpToDate(_) => {
@@ -134,10 +170,6 @@ pub fn spawn_update() -> mpsc::Receiver<Result<Option<String>, String>> {
     if let Some(ref path) = exe_path
         && !self_update_allowed(path)
     {
-        info!(
-            exe = %path.display(),
-            "self-update disabled for macOS app bundle; use installer-based app updates"
-        );
         return rx;
     }
     std::thread::spawn(move || {

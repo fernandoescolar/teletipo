@@ -96,7 +96,9 @@ jobs:
           cp scripts/install/install.sh dist/teletipo-macos-universal/install.sh
           cp scripts/install/uninstall.sh dist/teletipo-macos-universal/uninstall.sh
           cp scripts/install/README-install.txt dist/teletipo-macos-universal/README-install.txt
-          tar -czf dist/teletipo-macos-universal.tar.gz -C dist teletipo-macos-universal
+          # Include bare `teletipo` at archive root so that binaries older than
+          # v0.0.6 (which used bin_path_in_archive = "teletipo") can self-update.
+          tar -czf dist/teletipo-macos-universal.tar.gz -C dist teletipo teletipo-macos-universal
           rm dist/teletipo
           mkdir -p dist/teletipo-macos-app
           cp -R dist/Teletipo.app dist/teletipo-macos-app/Teletipo.app
