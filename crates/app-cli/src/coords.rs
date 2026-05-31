@@ -549,7 +549,8 @@ mod tests {
 
     #[test]
     fn cursor_in_pane_returns_row_col() {
-        let res = cursor_to_terminal_cell(50.0, 100.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 0.0, 0.0);
+        let res =
+            cursor_to_terminal_cell(50.0, 100.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 0.0, 0.0);
         assert!(res.is_some());
     }
 

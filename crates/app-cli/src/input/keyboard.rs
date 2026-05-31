@@ -389,9 +389,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
 
         Key::Character(ch) if state.modifiers.super_down => match ch.as_str() {
             "," => {
-                state.settings.open = true;
-                state.settings.cursor = 0;
-                state.settings.edit_buf = None;
+                crate::commands::execute_ui_command(
+                    state,
+                    crate::commands::CommandId::OpenSettings,
+                    crate::commands::CommandContext::default(),
+                );
                 return;
             }
             "a" => {
@@ -402,17 +404,24 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             "f" => {
                 let tab = state.tab_mut();
                 tab.search.active = true;
-                if tab.search.query.is_empty() {
-                    if let Some(q) = state.overlays.last_search_query.clone() {
-                        state.tab_mut().search.query = q;
-                    }
+                if tab.search.query.is_empty()
+                    && let Some(q) = state.overlays.last_search_query.clone()
+                {
+                    state.tab_mut().search.query = q;
                 }
                 search::refresh_search(state.tab_mut());
             }
-            "t" => state.add_new_tab(),
+            "t" => crate::commands::execute_ui_command(
+                state,
+                crate::commands::CommandId::NewTab,
+                crate::commands::CommandContext::default(),
+            ),
             "w" => {
-                let idx = state.active_tab;
-                state.close_tab(idx);
+                crate::commands::execute_ui_command(
+                    state,
+                    crate::commands::CommandId::CloseTab,
+                    crate::commands::CommandContext::default(),
+                );
             }
             // Cmd+Shift+P — open command palette
             "P" if state.modifiers.shift_down => {
@@ -436,18 +445,20 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         },
 
         Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "," => {
-            state.settings.open = true;
-            state.settings.cursor = 0;
-            state.settings.edit_buf = None;
+            crate::commands::execute_ui_command(
+                state,
+                crate::commands::CommandId::OpenSettings,
+                crate::commands::CommandContext::default(),
+            );
         }
 
         Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "f" => {
             let tab = state.tab_mut();
             tab.search.active = true;
-            if tab.search.query.is_empty() {
-                if let Some(q) = state.overlays.last_search_query.clone() {
-                    state.tab_mut().search.query = q;
-                }
+            if tab.search.query.is_empty()
+                && let Some(q) = state.overlays.last_search_query.clone()
+            {
+                state.tab_mut().search.query = q;
             }
             search::refresh_search(state.tab_mut());
         }
@@ -656,6 +667,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     clamp_editor_scroll(state);
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle_search_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
     let shift = state.modifiers.shift_down;
     let alt = state.modifiers.alt_down;
@@ -824,27 +836,13 @@ fn is_paste_shortcut(state: &GpuRuntimeState, key: &str) -> bool {
 fn open_command_palette(state: &mut GpuRuntimeState) {
     use crate::state::{CommandPaletteState, PaletteAction, PaletteItem};
 
-    let mut items: Vec<PaletteItem> = vec![
-        PaletteItem { label: "New Tab".to_owned(), action: PaletteAction::NewTab },
-        PaletteItem { label: "Close Tab".to_owned(), action: PaletteAction::CloseTab },
-        PaletteItem { label: "Open Settings".to_owned(), action: PaletteAction::OpenSettings },
-        PaletteItem {
-            label: "Open Config in Editor".to_owned(),
-            action: PaletteAction::OpenConfigInEditor,
-        },
-        PaletteItem {
-            label: "Reveal Config in Finder".to_owned(),
-            action: PaletteAction::RevealConfigInFinder,
-        },
-    ];
-
-    // "Restart Now" only when an update is pending.
-    if matches!(state.overlays.pending_update, Some(crate::state::UpdateBanner::Available(_))) {
-        items.insert(0, PaletteItem {
-            label: "Restart Now (update ready)".to_owned(),
-            action: PaletteAction::RestartNow,
-        });
-    }
+    let mut items: Vec<PaletteItem> = crate::commands::palette_commands(state)
+        .into_iter()
+        .map(|(label, cmd)| PaletteItem {
+            label,
+            action: PaletteAction::Command(cmd),
+        })
+        .collect();
 
     // Add theme-switching items.
     for (i, theme) in state.themes_fonts.available_themes.iter().enumerate() {
@@ -863,7 +861,7 @@ fn open_command_palette(state: &mut GpuRuntimeState) {
 
     let n = items.len();
     let filtered: Vec<usize> = (0..n).collect();
-    state.command_palette = Some(CommandPaletteState {
+    state.open_command_palette_modal(CommandPaletteState {
         query: String::new(),
         cursor_byte: 0,
         all_items: items,
@@ -877,7 +875,7 @@ fn open_command_palette(state: &mut GpuRuntimeState) {
 fn handle_palette_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
     match &key_event.logical_key {
         Key::Named(NamedKey::Escape) => {
-            state.command_palette = None;
+            state.close_active_modal();
         }
         Key::Named(NamedKey::Enter) => {
             execute_palette_action(state);
@@ -893,25 +891,24 @@ fn handle_palette_key(state: &mut GpuRuntimeState, key_event: &winit::event::Key
             }
         }
         Key::Named(NamedKey::Backspace) => {
-            if let Some(cp) = state.command_palette.as_mut() {
-                if let Some((byte_start, _)) = cp.query[..cp.cursor_byte]
-                    .char_indices()
-                    .next_back()
-                {
-                    cp.query.remove(byte_start);
-                    cp.cursor_byte = byte_start;
-                    cp.refilter();
-                }
+            if let Some(cp) = state.command_palette.as_mut()
+                && let Some((byte_start, _)) = cp.query[..cp.cursor_byte].char_indices().next_back()
+            {
+                cp.query.remove(byte_start);
+                cp.cursor_byte = byte_start;
+                cp.refilter();
             }
         }
         Key::Character(ch) if !state.modifiers.super_down && !state.modifiers.ctrl_down => {
             let text = ch.as_str();
-            if !text.is_empty() && !text.contains('\r') && !text.contains('\n') {
-                if let Some(cp) = state.command_palette.as_mut() {
-                    cp.query.insert_str(cp.cursor_byte, text);
-                    cp.cursor_byte += text.len();
-                    cp.refilter();
-                }
+            if !text.is_empty()
+                && !text.contains('\r')
+                && !text.contains('\n')
+                && let Some(cp) = state.command_palette.as_mut()
+            {
+                cp.query.insert_str(cp.cursor_byte, text);
+                cp.cursor_byte += text.len();
+                cp.refilter();
             }
         }
         _ => {}
@@ -936,45 +933,11 @@ fn execute_palette_action(state: &mut GpuRuntimeState) {
 
     use crate::state::PaletteAction;
     match action {
-        PaletteAction::NewTab => {
-            state.add_new_tab();
-        }
-        PaletteAction::CloseTab => {
-            let idx = state.active_tab;
-            state.close_tab(idx);
-        }
-        PaletteAction::OpenSettings => {
-            state.settings.open = true;
-            state.settings.cursor = 0;
-            state.settings.edit_buf = None;
-        }
-        PaletteAction::RestartNow => {
-            crate::updater::restart_app();
-        }
-        PaletteAction::OpenConfigInEditor => {
-            if let Some(path) = crate::config::config_path() {
-                // macOS: open with the default text editor association.
-                let _ = std::process::Command::new("open")
-                    .arg("-t")
-                    .arg(&path)
-                    .spawn();
-            }
-        }
-        PaletteAction::RevealConfigInFinder => {
-            if let Some(path) = crate::config::config_path() {
-                #[cfg(target_os = "macos")]
-                let _ = std::process::Command::new("open")
-                    .args([std::ffi::OsStr::new("-R"), path.as_os_str()])
-                    .spawn();
-                #[cfg(not(target_os = "macos"))]
-                {
-                    // On Linux, open the parent directory in the file manager.
-                    if let Some(parent) = path.parent() {
-                        let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
-                    }
-                }
-            }
-        }
+        PaletteAction::Command(cmd) => crate::commands::execute_ui_command(
+            state,
+            cmd,
+            crate::commands::CommandContext::default(),
+        ),
         PaletteAction::SetTheme(idx) => {
             if let Some(theme) = state.themes_fonts.available_themes.get(idx).cloned() {
                 state.themes_fonts.active_theme_idx = Some(idx);
@@ -985,12 +948,11 @@ fn execute_palette_action(state: &mut GpuRuntimeState) {
         PaletteAction::SetFont(idx) => {
             if let Some(font) = state.themes_fonts.available_fonts.get(idx).cloned() {
                 state.themes_fonts.active_font_idx = idx;
-                state.user_config.font.family =
-                    if font.family == "(default)" {
-                        None
-                    } else {
-                        Some(font.family.clone())
-                    };
+                state.user_config.font.family = if font.family == "(default)" {
+                    None
+                } else {
+                    Some(font.family.clone())
+                };
                 crate::config::save_config(&state.user_config);
                 state.push_toast(
                     format!("Font set to {}", font.family),

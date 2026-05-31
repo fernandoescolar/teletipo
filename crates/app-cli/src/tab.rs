@@ -75,6 +75,9 @@ pub(crate) struct TabState {
     /// `true` while the tab is in the background and has received new PTY
     /// output that the user has not yet seen.  Cleared when the tab becomes active.
     pub(crate) unread_output: bool,
+    /// `true` when the tab has received BEL while in background and the user
+    /// has not yet visited it. Cleared when the tab becomes active.
+    pub(crate) bell_pending: bool,
 }
 
 /// Persistent state for a single tab.

@@ -69,8 +69,8 @@ pub struct RenderSnapshot {
     pub tab_labels: Vec<String>,
     /// Index of the currently active (visible) tab.
     pub active_tab: usize,
-    /// When `Some`, draw a floating context menu over the tab bar.
-    pub tab_context_menu: Option<TabContextMenu>,
+    /// When `Some`, draw a floating context menu over the UI.
+    pub context_menu: Option<ContextMenu>,
     /// Index of the tab currently being dragged (for visual feedback).
     pub tab_drag_from: Option<usize>,
     /// Insertion position for the drag indicator (0 = before first tab).
@@ -216,15 +216,15 @@ pub struct CommandPalette {
     pub scroll_offset: usize,
 }
 
-/// State passed to the renderer to draw the tab context menu.
+/// State passed to the renderer to draw a floating context menu.
 #[derive(Debug, Clone)]
-pub struct TabContextMenu {
-    /// Which tab was right-clicked.
-    pub tab_idx: usize,
+pub struct ContextMenu {
     /// Top-left corner of the menu (physical pixels from top-left of window).
     pub x_px: f32,
     pub y_px: f32,
-    /// Currently hovered menu item (0=New Tab, 1=Close Tab, 2=Move Left, 3=Move Right).
+    /// Menu items in draw order.
+    pub items: Vec<String>,
+    /// Currently hovered menu item index.
     pub hovered_item: Option<usize>,
 }
 

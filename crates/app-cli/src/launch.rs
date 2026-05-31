@@ -296,6 +296,7 @@ pub(crate) fn build_initial_state(
             search: crate::search::SearchState::default(),
             command_running: false,
             unread_output: false,
+            bell_pending: false,
         });
     }
 
@@ -410,12 +411,22 @@ pub(crate) fn build_app(rows: usize, cols: usize) -> anyhow::Result<App> {
 /// Execute the selected item from the tab context menu.
 /// `tab_idx` is the tab the menu was opened for; `item` is 0-3.
 pub(crate) fn execute_context_menu_item(state: &mut GpuRuntimeState, tab_idx: usize, item: usize) {
-    match item {
-        0 => state.add_new_tab(),
-        1 => state.close_tab(tab_idx),
-        2 => state.move_tab_to(tab_idx, tab_idx.saturating_sub(1)),
-        3 => state.move_tab_to(tab_idx, tab_idx + 2),
-        _ => {}
+    use crate::commands::{CommandContext, CommandId, execute_ui_command};
+    let cmd = match item {
+        0 => Some(CommandId::NewTab),
+        1 => Some(CommandId::CloseTab),
+        2 => Some(CommandId::MoveTabLeft),
+        3 => Some(CommandId::MoveTabRight),
+        _ => None,
+    };
+    if let Some(cmd) = cmd {
+        execute_ui_command(
+            state,
+            cmd,
+            CommandContext {
+                tab_idx: Some(tab_idx),
+            },
+        );
     }
 }
 

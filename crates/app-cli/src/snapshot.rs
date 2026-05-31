@@ -8,8 +8,8 @@ use crate::coords::{
 use crate::settings::build_settings_overlay;
 use crate::theme;
 use render_wgpu::{
-    ColorTheme, CommandPalette, DamageRegion, RenderCell, RenderRow, RenderSnapshot, SearchPanel,
-    SuggestionDropdown, TabContextMenu, TerminalLink, Toast, ToastKind,
+    ColorTheme, CommandPalette, ContextMenu, DamageRegion, RenderCell, RenderRow, RenderSnapshot,
+    SearchPanel, SuggestionDropdown, TerminalLink, Toast, ToastKind,
 };
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
@@ -110,10 +110,14 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
 
     // The active tab is always "read" — clear any pending unread indicator.
     state.tabs[state.active_tab].unread_output = false;
+    state.tabs[state.active_tab].bell_pending = false;
 
     // Show a one-shot toast for config parse errors on startup.
     if let Some(err) = state.config_error.take() {
-        state.push_toast(format!("Config error: {err}"), crate::state::ToastKind::Error);
+        state.push_toast(
+            format!("Config error: {err}"),
+            crate::state::ToastKind::Error,
+        );
     }
 
     let active = state.active_tab;
@@ -399,8 +403,19 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             .enumerate()
             .map(|(index, tab)| {
                 let label = tab_button_label(index, tab.app.window_title(), &tab.cwd, max_chars);
-                if index != state.active_tab && tab.unread_output {
-                    format!("• {label}")
+                if index != state.active_tab {
+                    let mut marker = String::new();
+                    if tab.bell_pending {
+                        marker.push('!');
+                    }
+                    if tab.unread_output {
+                        marker.push('•');
+                    }
+                    if marker.is_empty() {
+                        label
+                    } else {
+                        format!("{marker} {label}")
+                    }
                 } else {
                     label
                 }
@@ -426,19 +441,12 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         }
     });
 
-    let tab_context_menu = if state.tabs.len() > 1 {
-        state
-            .overlays
-            .tab_context_menu
-            .map(|(tab_idx, x_px, y_px)| TabContextMenu {
-                tab_idx,
-                x_px: x_px as f32,
-                y_px: y_px as f32,
-                hovered_item: state.overlays.tab_context_hover,
-            })
-    } else {
-        None
-    };
+    let context_menu = state.overlays.context_menu.as_ref().map(|m| ContextMenu {
+        x_px: m.x_px as f32,
+        y_px: m.y_px as f32,
+        items: m.items.clone(),
+        hovered_item: m.hovered_item,
+    });
 
     // GC expired toasts.
     let now = std::time::Instant::now();
@@ -480,7 +488,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         search_current_highlight,
         tab_labels,
         active_tab,
-        tab_context_menu,
+        context_menu,
         tab_drag_from: state.drag.tab_drag,
         tab_drag_insert_before,
         theme: {

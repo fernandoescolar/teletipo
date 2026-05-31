@@ -8,6 +8,7 @@ pub(crate) const PANEL_BUTTON_CELLS: f32 = 2.0;
 /// Character offset (in cells from panel left) where the query text begins (after the label).
 pub(crate) const QUERY_TEXT_OFFSET_CELLS: f32 = 6.6;
 /// Maximum number of query characters visible at once in the input area.
+#[allow(dead_code)]
 pub(crate) const QUERY_VISIBLE_CHARS: usize = 13;
 
 #[derive(Clone, Debug, Default)]
@@ -80,13 +81,18 @@ pub(crate) fn refresh_search(tab: &mut TabState) {
     let full_text = tab.app.terminal_snapshot_with_scrollback();
     let total_rows = full_text.lines().count().max(1);
     tab.search.total_rows = total_rows;
-    let (matches, error) =
-        compute_matches(&full_text, &tab.search.query, tab.search.regex_mode, tab.search.case_sensitive);
+    let (matches, error) = compute_matches(
+        &full_text,
+        &tab.search.query,
+        tab.search.regex_mode,
+        tab.search.case_sensitive,
+    );
     tab.search.error = error;
     tab.search.matches = matches;
     // Keep cursor and anchor inside the (possibly modified) query.
     let q_len = tab.search.query.len();
-    tab.search.cursor_byte = clamp_to_char_boundary(&tab.search.query, tab.search.cursor_byte.min(q_len));
+    tab.search.cursor_byte =
+        clamp_to_char_boundary(&tab.search.query, tab.search.cursor_byte.min(q_len));
     if let Some(a) = tab.search.sel_anchor_byte.as_mut() {
         *a = clamp_to_char_boundary(&tab.search.query, (*a).min(q_len));
     }
@@ -255,7 +261,11 @@ fn compute_matches(
             for m in re.find_iter(line) {
                 let col_start = line[..m.start()].chars().count();
                 let col_end = line[..m.end()].chars().count();
-                out.push(SearchMatch { abs_row: row, col_start, col_end });
+                out.push(SearchMatch {
+                    abs_row: row,
+                    col_start,
+                    col_end,
+                });
             }
         }
         (out, None)
@@ -309,13 +319,21 @@ fn prev_char_boundary(s: &str, byte_pos: usize) -> usize {
     if clamped == 0 {
         return 0;
     }
-    s[..clamped].char_indices().rev().next().map(|(i, _)| i).unwrap_or(0)
+    s[..clamped]
+        .char_indices()
+        .next_back()
+        .map(|(i, _)| i)
+        .unwrap_or(0)
 }
 
 /// Byte offset one past the char that *starts* at or after `byte_pos`.
 fn next_char_boundary(s: &str, byte_pos: usize) -> usize {
     let clamped = byte_pos.min(s.len());
-    s[clamped..].chars().next().map(|c| clamped + c.len_utf8()).unwrap_or(clamped)
+    s[clamped..]
+        .chars()
+        .next()
+        .map(|c| clamped + c.len_utf8())
+        .unwrap_or(clamped)
 }
 
 /// Byte offset of the start of the previous word (for Option/Alt+Backspace / Option+Left).
@@ -323,7 +341,9 @@ fn prev_word_boundary(s: &str, byte_pos: usize) -> usize {
     let before = &s[..byte_pos.min(s.len())];
     // skip non-word chars, then skip word chars
     let no_space = before.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_');
-    no_space.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_').len()
+    no_space
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
+        .len()
 }
 
 /// Byte offset past the end of the next word (for Option/Alt+Right).
@@ -332,14 +352,16 @@ fn next_word_boundary(s: &str, byte_pos: usize) -> usize {
     let after = &s[clamped..];
     // skip word chars, then skip non-word chars
     let after_word = after.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_');
-    let after_space =
-        after_word.trim_start_matches(|c: char| !c.is_alphanumeric() && c != '_');
+    let after_space = after_word.trim_start_matches(|c: char| !c.is_alphanumeric() && c != '_');
     clamped + (after.len() - after_space.len())
 }
 
 /// Convert a char index to a byte offset.
 fn char_idx_to_byte(s: &str, char_idx: usize) -> usize {
-    s.char_indices().nth(char_idx).map(|(i, _)| i).unwrap_or(s.len())
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len())
 }
 
 // ─── Public text-editing operations ──────────────────────────────────────────

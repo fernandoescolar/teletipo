@@ -1,13 +1,21 @@
 use crate::GpuRuntimeState;
 use crate::coords::{
     clamp_editor_scroll, cursor_to_terminal_cell, detect_terminal_links, editor_row_col_to_offset,
-    expand_tilde, strip_line_col,
+    expand_tilde, extract_selection, strip_line_col,
 };
 use crate::launch::execute_context_menu_item;
 use crate::search;
 use render_wgpu::{AppWindowEvent, SCROLLBAR_W_PX};
 use std::time::Instant;
 use winit::event::{ElementState, MouseButton};
+
+const TAB_MENU_ITEMS: &[&str] = &["New Tab", "Close Tab", "Move Left", "Move Right"];
+const TERMINAL_MENU_ITEMS: &[&str] = &["Copy", "Paste", "Scroll to Bottom"];
+
+fn context_menu_width_px(cell_w: f32, items: &[String]) -> f64 {
+    let max_chars = items.iter().map(|s| s.chars().count()).max().unwrap_or(8);
+    cell_w as f64 * (max_chars.max(8) as f64 + 2.0)
+}
 
 #[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // top-level pointer dispatcher; flat match
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) -> bool {
@@ -48,13 +56,26 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         let tab_bar_h = state.tab_bar_h() as f64;
         let split_ratio = state.tab().split_ratio;
 
-        if let Some((_, mx, my)) = state.overlays.tab_context_menu {
-            let menu_w = state.layout.cell_w as f64 * 13.0;
+        if let Some(menu) = state.overlays.context_menu.as_mut() {
+            let menu_w = context_menu_width_px(state.layout.cell_w, &menu.items);
             let menu_item_h = state.layout.cell_h as f64 * 1.15;
-            let in_menu = *x >= mx && *x <= mx + menu_w && *y >= my;
-            state.overlays.tab_context_hover = if in_menu {
+            let menu_h = menu_item_h * menu.items.len() as f64;
+            let mx = menu
+                .x_px
+                .min(state.layout.window_width as f64 - menu_w)
+                .max(0.0);
+            let my = menu
+                .y_px
+                .min(state.layout.window_height as f64 - menu_h)
+                .max(0.0);
+            let in_menu = *x >= mx && *x <= mx + menu_w && *y >= my && *y <= my + menu_h;
+            menu.hovered_item = if in_menu {
                 let item = ((*y - my) / menu_item_h) as usize;
-                if item < 4 { Some(item) } else { None }
+                if item < menu.items.len() {
+                    Some(item)
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -273,20 +294,23 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     }
                 } else {
                     // Click outside: close palette.
-                    state.command_palette = None;
+                    state.close_active_modal();
                 }
                 return true;
             }
 
-            if state.overlays.tab_context_menu.is_some() {
-                if let (Some(item), Some((tab_idx, _, _))) = (
-                    state.overlays.tab_context_hover,
-                    state.overlays.tab_context_menu,
-                ) {
-                    execute_context_menu_item(state, tab_idx, item);
+            if let Some(menu) = state.overlays.context_menu.clone() {
+                if let Some(item) = menu.hovered_item {
+                    match menu.kind {
+                        crate::state::ContextMenuKind::Tab { tab_idx } => {
+                            execute_context_menu_item(state, tab_idx, item);
+                        }
+                        crate::state::ContextMenuKind::Terminal => {
+                            execute_terminal_context_menu_item(state, item);
+                        }
+                    }
                 }
-                state.overlays.tab_context_menu = None;
-                state.overlays.tab_context_hover = None;
+                state.overlays.context_menu = None;
                 return true;
             }
 
@@ -313,8 +337,8 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     search::next_match(state.tab_mut());
                 } else {
                     // Click inside the query input area — position the cursor.
-                    let query_text_x =
-                        hitbox.panel_x + state.layout.cell_w as f64 * search::QUERY_TEXT_OFFSET_CELLS as f64;
+                    let query_text_x = hitbox.panel_x
+                        + state.layout.cell_w as f64 * search::QUERY_TEXT_OFFSET_CELLS as f64;
                     let click_x = state.cursor.cursor_x - query_text_x;
                     let cell_w = state.layout.cell_w as f64;
                     let char_idx = if click_x <= 0.0 {
@@ -364,6 +388,24 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
 
             let sb_left = state.layout.window_width as f64 - SCROLLBAR_W_PX as f64;
             let term_bottom = sep_y_px;
+
+            // Click on the "scrolled up" badge to jump back to bottom.
+            if state.tab().scroll_offset > 0 {
+                let pill_w = state.layout.cell_w as f64 * 14.0;
+                let pill_h = state.layout.cell_h as f64 * 1.4;
+                let margin = state.layout.cell_h as f64 * 0.5;
+                let cx = state.layout.window_width as f64 / 2.0;
+                let left = cx - pill_w / 2.0;
+                let right = cx + pill_w / 2.0;
+                let bottom = term_bottom - margin;
+                let top = bottom - pill_h;
+                let x = state.cursor.cursor_x;
+                let y = state.cursor.cursor_y;
+                if x >= left && x <= right && y >= top && y <= bottom {
+                    state.tab_mut().scroll_offset = 0;
+                    return true;
+                }
+            }
 
             if state.cursor.cursor_x >= sb_left
                 && state.cursor.cursor_y >= tab_bar_h
@@ -480,7 +522,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     {
                         let elapsed = now.duration_since(last_t).as_millis();
                         if elapsed <= DOUBLE_CLICK_MS && last_cell == cell {
-                            ((state.cursor.click_count + 1).min(3))
+                            (state.cursor.click_count + 1).min(3)
                         } else {
                             1
                         }
@@ -503,7 +545,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                         .nth(row)
                         .map(|l| l.chars().count())
                         .unwrap_or(0);
-                    let end_col = line_len.saturating_sub(1).max(0);
+                    let end_col = line_len.saturating_sub(1);
                     let scroll = state.tab().scroll_offset;
                     state.tab_mut().selection_anchor = Some((row, 0));
                     state.tab_mut().selection_anchor_scroll = scroll;
@@ -604,8 +646,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     } = event
     {
         if *btn_state == ElementState::Pressed {
-            state.overlays.tab_context_menu = None;
-            state.overlays.tab_context_hover = None;
+            state.overlays.context_menu = None;
 
             let tab_bar_h = state.tab_bar_h() as f64;
             if state.cursor.cursor_y < tab_bar_h {
@@ -615,8 +656,29 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 if n > 0 && state.cursor.cursor_x < state.layout.window_width as f64 - add_btn_w {
                     let tab_w = tab_area_w / n as f64;
                     let tab_idx = (state.cursor.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
-                    state.overlays.tab_context_menu =
-                        Some((tab_idx, state.cursor.cursor_x, tab_bar_h));
+                    state.overlays.context_menu = Some(crate::state::ContextMenuState {
+                        kind: crate::state::ContextMenuKind::Tab { tab_idx },
+                        x_px: state.cursor.cursor_x,
+                        y_px: tab_bar_h,
+                        hovered_item: None,
+                        items: TAB_MENU_ITEMS.iter().map(|s| (*s).to_owned()).collect(),
+                    });
+                }
+            } else {
+                // Terminal pane right-click menu.
+                let available_h = state.layout.window_height as f64 - tab_bar_h;
+                let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
+                if state.cursor.cursor_y >= tab_bar_h && state.cursor.cursor_y <= term_bottom {
+                    state.overlays.context_menu = Some(crate::state::ContextMenuState {
+                        kind: crate::state::ContextMenuKind::Terminal,
+                        x_px: state.cursor.cursor_x,
+                        y_px: state.cursor.cursor_y,
+                        hovered_item: None,
+                        items: TERMINAL_MENU_ITEMS
+                            .iter()
+                            .map(|s| (*s).to_owned())
+                            .collect(),
+                    });
                 }
             }
         }
@@ -624,9 +686,8 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     if let AppWindowEvent::MouseWheel { delta_lines } = event {
-        if state.overlays.tab_context_menu.is_some() {
-            state.overlays.tab_context_menu = None;
-            state.overlays.tab_context_hover = None;
+        if state.overlays.context_menu.is_some() {
+            state.overlays.context_menu = None;
         }
         let lines = delta_lines.round().abs().max(1.0) as usize;
         let tab_bar_h = state.tab_bar_h() as f64;
@@ -709,6 +770,61 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     false
+}
+
+fn execute_terminal_context_menu_item(state: &mut GpuRuntimeState, item: usize) {
+    match item {
+        // Copy (smart-trim): prefer selection, trim trailing whitespace/newlines.
+        0 => {
+            let mut copied = String::new();
+            if let (Some(anchor), Some(sel_end)) =
+                (state.tab().selection_anchor, state.tab().selection_end)
+            {
+                let current_scroll = state.tab().scroll_offset as i64;
+                let anchor_scroll = state.tab().selection_anchor_scroll as i64;
+                let end_scroll = state.tab().selection_end_scroll as i64;
+                let ar = (anchor.0 as i64 + current_scroll - anchor_scroll).max(0) as usize;
+                let er = (sel_end.0 as i64 + current_scroll - end_scroll).max(0) as usize;
+                let text = extract_selection(
+                    &state.tab().last_terminal_text,
+                    (ar, anchor.1),
+                    (er, sel_end.1),
+                );
+                copied = text.trim_end_matches(['\n', '\r', ' ', '\t']).to_owned();
+            }
+            if !copied.is_empty() {
+                let n = copied.chars().count();
+                state.shell_services.clipboard_set(copied);
+                state.push_toast(
+                    format!("Copied {n} chars"),
+                    crate::state::ToastKind::Success,
+                );
+            }
+        }
+        // Paste.
+        1 => {
+            if let Some(text) = state.shell_services.clipboard_get() {
+                let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                if !normalized.is_empty() {
+                    if state.tab().app.is_alternate_screen() || state.tab().command_running {
+                        if state.tab().app.bracketed_paste() {
+                            let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
+                            state.send_terminal_input(bracketed.as_bytes());
+                        } else {
+                            state.send_terminal_input(normalized.as_bytes());
+                        }
+                    } else {
+                        state.tab_mut().app.insert_editor_input(&normalized);
+                    }
+                }
+            }
+        }
+        // Scroll to bottom.
+        2 => {
+            state.tab_mut().scroll_offset = 0;
+        }
+        _ => {}
+    }
 }
 
 /// Encode a cursor-motion event for the PTY (modes 1002/1003).

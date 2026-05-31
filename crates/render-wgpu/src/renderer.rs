@@ -164,7 +164,7 @@ mod tests {
             search_current_highlight: None,
             tab_labels: vec![],
             active_tab: 0,
-            tab_context_menu: None,
+            context_menu: None,
             tab_drag_from: None,
             tab_drag_insert_before: None,
             theme: ColorTheme::default(),

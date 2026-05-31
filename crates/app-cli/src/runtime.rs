@@ -6,7 +6,7 @@ use crate::settings::SettingsUiState;
 use crate::shell;
 use crate::snapshot;
 use crate::state::{
-    CursorState, DragState, LayoutState, ModifierState, OverlayState, ThemeFontState,
+    CursorState, DragState, LayoutState, ModalOverlay, ModifierState, OverlayState, ThemeFontState,
 };
 use crate::tab::{HistoryEntry, TabState};
 use platform_abstraction::WindowControl;
@@ -84,6 +84,49 @@ impl GpuRuntimeState {
         &mut self.tabs[self.active_tab]
     }
 
+    /// Open the settings modal and close any other active modal.
+    pub(crate) fn open_settings_modal(&mut self) {
+        self.command_palette = None;
+        self.settings.open = true;
+        self.settings.cursor = 0;
+        self.settings.edit_buf = None;
+        self.overlays.active_modal = Some(ModalOverlay::Settings);
+    }
+
+    /// Open the command palette modal and close any other active modal.
+    pub(crate) fn open_command_palette_modal(&mut self, cp: crate::state::CommandPaletteState) {
+        self.settings.open = false;
+        self.settings.search_buf = None;
+        self.settings.edit_buf = None;
+        self.command_palette = Some(cp);
+        self.overlays.active_modal = Some(ModalOverlay::CommandPalette);
+    }
+
+    /// Close the settings modal if open.
+    pub(crate) fn close_settings_modal(&mut self) {
+        self.settings.open = false;
+        if self.overlays.active_modal == Some(ModalOverlay::Settings) {
+            self.overlays.active_modal = None;
+        }
+    }
+
+    /// Close the command palette modal if open.
+    pub(crate) fn close_command_palette_modal(&mut self) {
+        self.command_palette = None;
+        if self.overlays.active_modal == Some(ModalOverlay::CommandPalette) {
+            self.overlays.active_modal = None;
+        }
+    }
+
+    /// Close whichever modal is currently active.
+    pub(crate) fn close_active_modal(&mut self) {
+        match self.overlays.active_modal {
+            Some(ModalOverlay::Settings) => self.close_settings_modal(),
+            Some(ModalOverlay::CommandPalette) => self.close_command_palette_modal(),
+            None => {}
+        }
+    }
+
     /// Height of the tab bar in pixels. Hidden when only one tab is open.
     pub(crate) fn tab_bar_h(&self) -> f32 {
         if self.tabs.len() > 1 {
@@ -142,6 +185,9 @@ impl GpuRuntimeState {
             if tab.app.take_bell() && self.user_config.terminal.bell {
                 self.overlays.bell_flash_until =
                     Some(Instant::now() + std::time::Duration::from_millis(150));
+                if i != active {
+                    tab.bell_pending = true;
+                }
             }
             let now_fullscreen = tab.app.is_alternate_screen();
             if now_fullscreen != tab.was_terminal_fullscreen {
@@ -431,6 +477,7 @@ impl GpuRuntimeState {
             search: crate::search::SearchState::default(),
             command_running: false,
             unread_output: false,
+            bell_pending: false,
         });
         self.active_tab = self.tabs.len() - 1;
     }
@@ -483,11 +530,7 @@ impl GpuRuntimeState {
     }
 
     /// Push a transient toast notification visible for `secs` seconds.
-    pub(crate) fn push_toast(
-        &mut self,
-        text: impl Into<String>,
-        kind: crate::state::ToastKind,
-    ) {
+    pub(crate) fn push_toast(&mut self, text: impl Into<String>, kind: crate::state::ToastKind) {
         use std::time::Duration;
         self.overlays.toasts.push_back(crate::state::Toast::new(
             text,

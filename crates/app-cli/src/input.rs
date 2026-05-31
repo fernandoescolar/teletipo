@@ -29,8 +29,7 @@ fn handle_dropped_file(state: &mut GpuRuntimeState, path: &std::path::Path) {
         let result = std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
             .and_then(|data| {
-                serde_yaml::from_str::<crate::theme::ThemeFile>(&data)
-                    .map_err(|e| e.to_string())
+                serde_yaml::from_str::<crate::theme::ThemeFile>(&data).map_err(|e| e.to_string())
             });
         match result {
             Ok(tf) => {

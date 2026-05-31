@@ -70,10 +70,8 @@ pub(crate) struct OverlayState {
     pub(crate) last_resize: Option<(Instant, u16, u16)>,
     /// Transient PTY/session status message shown in the resize overlay slot.
     pub(crate) pty_status: Option<(Instant, String)>,
-    /// Context menu opened by right-clicking a tab. (tab_idx, menu_x_px, menu_y_px)
-    pub(crate) tab_context_menu: Option<(usize, f64, f64)>,
-    /// Currently highlighted item inside the open context menu (0-3).
-    pub(crate) tab_context_hover: Option<usize>,
+    /// Open generic context menu state.
+    pub(crate) context_menu: Option<ContextMenuState>,
     /// Status banner for the last background update check.
     pub(crate) pending_update: Option<UpdateBanner>,
     /// When `Some`, flash the terminal background as a visual BEL indicator
@@ -87,8 +85,35 @@ pub(crate) struct OverlayState {
     pub(crate) toasts: VecDeque<Toast>,
     /// The last search query entered by the user so it can be restored on re-open.
     pub(crate) last_search_query: Option<String>,
+    /// Currently active modal overlay, if any.
+    pub(crate) active_modal: Option<ModalOverlay>,
 }
 
+/// Mutually-exclusive modal overlays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModalOverlay {
+    Settings,
+    CommandPalette,
+}
+
+/// Context menu origin and dispatch target.
+#[derive(Clone, Debug)]
+pub(crate) enum ContextMenuKind {
+    Tab { tab_idx: usize },
+    Terminal,
+}
+
+/// Open context menu state shared by tab bar and terminal pane.
+#[derive(Clone, Debug)]
+pub(crate) struct ContextMenuState {
+    pub(crate) kind: ContextMenuKind,
+    pub(crate) x_px: f64,
+    pub(crate) y_px: f64,
+    pub(crate) hovered_item: Option<usize>,
+    pub(crate) items: Vec<String>,
+}
+
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ToastKind {
     Info,
@@ -105,7 +130,11 @@ pub(crate) struct Toast {
 
 impl Toast {
     pub(crate) fn new(text: impl Into<String>, kind: ToastKind, ttl: Duration) -> Self {
-        Self { text: text.into(), kind, expires_at: Instant::now() + ttl }
+        Self {
+            text: text.into(),
+            kind,
+            expires_at: Instant::now() + ttl,
+        }
     }
 }
 
@@ -120,12 +149,7 @@ pub(crate) enum UpdateBanner {
 /// An action that can be invoked from the command palette.
 #[derive(Clone, Debug)]
 pub(crate) enum PaletteAction {
-    NewTab,
-    CloseTab,
-    OpenSettings,
-    OpenConfigInEditor,
-    RevealConfigInFinder,
-    RestartNow,
+    Command(crate::commands::CommandId),
     SetTheme(usize),
     SetFont(usize),
 }
@@ -203,14 +227,14 @@ impl Default for OverlayState {
         Self {
             last_resize: None,
             pty_status: None,
-            tab_context_menu: None,
-            tab_context_hover: None,
+            context_menu: None,
             pending_update: None,
             bell_flash_until: None,
             cursor_blink_last: Instant::now(),
             cursor_blink_phase: true,
             toasts: VecDeque::new(),
             last_search_query: None,
+            active_modal: None,
         }
     }
 }

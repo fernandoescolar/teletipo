@@ -365,7 +365,7 @@ impl<'a> GpuState<'a> {
         }
         // Context menu item text characters (all ASCII, already cached by the ' '..='~'
         // loop in `new`, but ensure_glyph is idempotent so this is safe).
-        if let Some(ref menu) = snapshot.tab_context_menu {
+        if let Some(ref menu) = snapshot.context_menu {
             let _ = menu; // characters are ASCII — already in cache
         }
         // Pre-cache suggestion dropdown characters.
@@ -384,7 +384,9 @@ impl<'a> GpuState<'a> {
                     self.ensure_glyph(ch);
                 }
             }
-            for ch in ['F', 'i', 'n', 'd', ':', '/', '↑', '↓', '×', 'R', 'C', 'c', '[', ']'] {
+            for ch in [
+                'F', 'i', 'n', 'd', ':', '/', '↑', '↓', '×', 'R', 'C', 'c', '[', ']',
+            ] {
                 self.ensure_glyph(ch);
             }
         }
@@ -398,11 +400,11 @@ impl<'a> GpuState<'a> {
         if let Some(ref cp) = snapshot.command_palette {
             self.ensure_glyph('>');
             self.ensure_glyph('_');
-            for ch in cp.query.chars().chain(
-                cp.items
-                    .iter()
-                    .flat_map(|s| s.chars()),
-            ) {
+            for ch in cp
+                .query
+                .chars()
+                .chain(cp.items.iter().flat_map(|s| s.chars()))
+            {
                 if ch != ' ' {
                     self.ensure_glyph(ch);
                 }
@@ -701,36 +703,45 @@ impl<'a> GpuState<'a> {
 
         // Context menu item text — drawn with no scissor so it floats above everything.
         let context_text_vert_start = (text_verts.len() / 8) as u32;
-        if let Some(ref menu) = snapshot.tab_context_menu {
-            const ITEMS: &[&str] = &["New Tab", "Close Tab", "Move Left", "Move Right"];
-            let menu_item_h = self.cell_h_px * 1.15;
-            let menu_w = self.cell_w_px * 13.0;
-            let menu_h = menu_item_h * ITEMS.len() as f32;
-            let mx = menu.x_px.min(self.size.width as f32 - menu_w).max(0.0);
-            let my = menu.y_px.min(self.size.height as f32 - menu_h).max(0.0);
-            for (i, &item) in ITEMS.iter().enumerate() {
-                let text_color = if menu.hovered_item == Some(i) {
-                    [1.0_f32, 1.0, 1.0, 1.0]
-                } else {
-                    [0.78_f32, 0.82, 0.87, 1.0]
-                };
-                // Vertically centre the text within each item row.
-                let y_item = my + i as f32 * menu_item_h + (menu_item_h - self.cell_h_px) * 0.5;
-                add_text_verts(
-                    item,
-                    y_item,
-                    mx + self.cell_w_px * 0.5,
-                    text_color,
-                    &[],
-                    &[],
-                    &self.glyph_cache,
-                    None,
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
-                    &mut text_verts,
-                    0,
-                );
+        if let Some(ref menu) = snapshot.context_menu {
+            if menu.items.is_empty() {
+                // nothing to draw
+            } else {
+                let menu_item_h = self.cell_h_px * 1.15;
+                let max_chars = menu
+                    .items
+                    .iter()
+                    .map(|s| s.chars().count())
+                    .max()
+                    .unwrap_or(8);
+                let menu_w = self.cell_w_px * (max_chars.max(8) as f32 + 2.0);
+                let menu_h = menu_item_h * menu.items.len() as f32;
+                let mx = menu.x_px.min(self.size.width as f32 - menu_w).max(0.0);
+                let my = menu.y_px.min(self.size.height as f32 - menu_h).max(0.0);
+                for (i, item) in menu.items.iter().enumerate() {
+                    let text_color = if menu.hovered_item == Some(i) {
+                        [1.0_f32, 1.0, 1.0, 1.0]
+                    } else {
+                        [0.78_f32, 0.82, 0.87, 1.0]
+                    };
+                    // Vertically centre the text within each item row.
+                    let y_item = my + i as f32 * menu_item_h + (menu_item_h - self.cell_h_px) * 0.5;
+                    add_text_verts(
+                        item,
+                        y_item,
+                        mx + self.cell_w_px * 0.5,
+                        text_color,
+                        &[],
+                        &[],
+                        &self.glyph_cache,
+                        None,
+                        self.cell_w_px,
+                        self.cell_h_px,
+                        self.size,
+                        &mut text_verts,
+                        0,
+                    );
+                }
             }
         }
 
@@ -768,15 +779,25 @@ impl<'a> GpuState<'a> {
 
             let query_chars: Vec<char> = panel.query.chars().collect();
             let cursor_char = panel.cursor_char.min(query_chars.len());
-            let view_start = cursor_char.saturating_sub(VISIBLE - 1).min(
-                query_chars.len().saturating_sub(VISIBLE),
-            );
+            let view_start = cursor_char
+                .saturating_sub(VISIBLE - 1)
+                .min(query_chars.len().saturating_sub(VISIBLE));
             let view_end = (view_start + VISIBLE).min(query_chars.len());
             let display_query: String = query_chars[view_start..view_end].iter().collect();
 
             // Show an ellipsis at the left when the query is scrolled.
             let (query_display_text, query_x_offset) = if view_start > 0 {
-                (format!("…{}", &display_query[display_query.char_indices().nth(1).map(|(i,_)|i).unwrap_or(0)..]), 0.0f32)
+                (
+                    format!(
+                        "…{}",
+                        &display_query[display_query
+                            .char_indices()
+                            .nth(1)
+                            .map(|(i, _)| i)
+                            .unwrap_or(0)..]
+                    ),
+                    0.0f32,
+                )
             } else {
                 (display_query, 0.0f32)
             };
@@ -801,8 +822,16 @@ impl<'a> GpuState<'a> {
             // [R] at cell 20.0, [Cc] at cell 23.0
             let dim_color = [0.45_f32, 0.45, 0.55, 1.0];
             let bright_color = [0.90_f32, 0.92, 1.0, 1.0];
-            let regex_color = if panel.regex_mode { bright_color } else { dim_color };
-            let case_color = if panel.case_sensitive { bright_color } else { dim_color };
+            let regex_color = if panel.regex_mode {
+                bright_color
+            } else {
+                dim_color
+            };
+            let case_color = if panel.case_sensitive {
+                bright_color
+            } else {
+                dim_color
+            };
             add_text_verts(
                 "[R]",
                 text_y,
@@ -1268,8 +1297,8 @@ impl<'a> GpuState<'a> {
             let label = format!("↑  {} lines  ↑", snapshot.scroll_offset);
             let pill_h_px = self.cell_h_px * 1.4;
             let margin_px = self.cell_h_px * 0.5;
-            let term_bottom_px = tab_bar_h
-                + snapshot.split_ratio * (self.size.height as f32 - tab_bar_h);
+            let term_bottom_px =
+                tab_bar_h + snapshot.split_ratio * (self.size.height as f32 - tab_bar_h);
             let bottom_px = term_bottom_px - margin_px;
             let top_px = bottom_px - pill_h_px;
             let text_y = top_px + (pill_h_px - self.cell_h_px) / 2.0;
@@ -1295,28 +1324,60 @@ impl<'a> GpuState<'a> {
 
         // Command palette text — rendered after scroll indicator, before toasts.
         let command_palette_text_vert_start = (text_verts.len() / 8) as u32;
-        if let Some(ref cp) = snapshot.command_palette {
-            if self.size.width > 0 && self.size.height > 0 && self.cell_w_px > 0.0 && self.cell_h_px > 0.0 {
-                let palette_w_px = self.cell_w_px * 50.0;
-                let header_h_px = self.cell_h_px * 2.2;
-                let item_h_px = self.cell_h_px * 1.4;
-                let cx = self.size.width as f32 / 2.0;
-                let y0_px = tab_bar_h + self.size.height as f32 * 0.08;
-                let left_px = cx - palette_w_px / 2.0;
-                let pad_px = self.cell_w_px * 1.5;
+        if let Some(ref cp) = snapshot.command_palette
+            && self.size.width > 0
+            && self.size.height > 0
+            && self.cell_w_px > 0.0
+            && self.cell_h_px > 0.0
+        {
+            let palette_w_px = self.cell_w_px * 50.0;
+            let header_h_px = self.cell_h_px * 2.2;
+            let item_h_px = self.cell_h_px * 1.4;
+            let cx = self.size.width as f32 / 2.0;
+            let y0_px = tab_bar_h + self.size.height as f32 * 0.08;
+            let left_px = cx - palette_w_px / 2.0;
+            let pad_px = self.cell_w_px * 1.5;
 
-                // Header: "> query_text" with a blinking cursor marker
-                let query_display = if cp.query.is_empty() {
-                    "  Search commands…".to_owned()
+            // Header: "> query_text" with a blinking cursor marker
+            let query_display = if cp.query.is_empty() {
+                "  Search commands…".to_owned()
+            } else {
+                format!("  > {}", cp.query)
+            };
+            let header_text_y = y0_px + (header_h_px - self.cell_h_px) / 2.0;
+            add_text_verts(
+                &query_display,
+                header_text_y,
+                left_px + pad_px,
+                [0.88, 0.92, 1.00, 1.0],
+                &[],
+                &[],
+                &self.glyph_cache,
+                None,
+                self.cell_w_px,
+                self.cell_h_px,
+                self.size,
+                &mut text_verts,
+                0,
+            );
+
+            // Item rows
+            let n_visible = cp.items.len().saturating_sub(cp.scroll_offset).min(10);
+            let visible_end = cp.scroll_offset + n_visible;
+            for (i, item) in cp.items[cp.scroll_offset..visible_end].iter().enumerate() {
+                let row_top_px = y0_px + header_h_px + i as f32 * item_h_px;
+                let text_y = row_top_px + (item_h_px - self.cell_h_px) / 2.0;
+                let abs_idx = cp.scroll_offset + i;
+                let color = if abs_idx == cp.selected {
+                    [1.00, 1.00, 1.00, 1.0]
                 } else {
-                    format!("  > {}", cp.query)
+                    [0.65, 0.72, 0.85, 1.0]
                 };
-                let header_text_y = y0_px + (header_h_px - self.cell_h_px) / 2.0;
                 add_text_verts(
-                    &query_display,
-                    header_text_y,
+                    item,
+                    text_y,
                     left_px + pad_px,
-                    [0.88, 0.92, 1.00, 1.0],
+                    color,
                     &[],
                     &[],
                     &self.glyph_cache,
@@ -1327,35 +1388,6 @@ impl<'a> GpuState<'a> {
                     &mut text_verts,
                     0,
                 );
-
-                // Item rows
-                let n_visible = cp.items.len().saturating_sub(cp.scroll_offset).min(10);
-                let visible_end = cp.scroll_offset + n_visible;
-                for (i, item) in cp.items[cp.scroll_offset..visible_end].iter().enumerate() {
-                    let row_top_px = y0_px + header_h_px + i as f32 * item_h_px;
-                    let text_y = row_top_px + (item_h_px - self.cell_h_px) / 2.0;
-                    let abs_idx = cp.scroll_offset + i;
-                    let color = if abs_idx == cp.selected {
-                        [1.00, 1.00, 1.00, 1.0]
-                    } else {
-                        [0.65, 0.72, 0.85, 1.0]
-                    };
-                    add_text_verts(
-                        item,
-                        text_y,
-                        left_px + pad_px,
-                        color,
-                        &[],
-                        &[],
-                        &self.glyph_cache,
-                        None,
-                        self.cell_w_px,
-                        self.cell_h_px,
-                        self.size,
-                        &mut text_verts,
-                        0,
-                    );
-                }
             }
         }
 
@@ -1377,9 +1409,8 @@ impl<'a> GpuState<'a> {
                 let max_chars = toast.text.chars().count().max(4) as f32;
                 let toast_w_px =
                     (max_chars * self.cell_w_px + toast_pad_h_px * 2.0).min(win_w_px * 0.45);
-                let bottom_edge_px = win_h_px
-                    - toast_margin_px
-                    - rev_idx as f32 * (toast_h_px + toast_margin_px);
+                let bottom_edge_px =
+                    win_h_px - toast_margin_px - rev_idx as f32 * (toast_h_px + toast_margin_px);
                 let text_y = bottom_edge_px - toast_h_px + (toast_h_px - self.cell_h_px) * 0.5;
                 let right_edge_px = win_w_px - toast_margin_px;
                 let text_x = right_edge_px - toast_w_px + toast_pad_h_px;

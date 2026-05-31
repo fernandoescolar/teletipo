@@ -15,6 +15,101 @@ use clap::{Args, Subcommand};
 
 use crate::config::{ConfigError, UserConfig, config_path, load_config_result};
 use crate::theme::{load_themes, themes_dir};
+use crate::{GpuRuntimeState, UpdateBanner};
+
+/// UI command identifiers shared by keybindings, command palette, and menus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandId {
+    NewTab,
+    CloseTab,
+    MoveTabLeft,
+    MoveTabRight,
+    OpenSettings,
+    OpenConfigInEditor,
+    RevealConfigInFinder,
+    RestartNow,
+}
+
+/// Optional execution context for commands that can target a specific tab.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CommandContext {
+    pub(crate) tab_idx: Option<usize>,
+}
+
+/// Execute a UI command against the live runtime state.
+pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ctx: CommandContext) {
+    let idx = ctx.tab_idx.unwrap_or(state.active_tab);
+    match cmd {
+        CommandId::NewTab => state.add_new_tab(),
+        CommandId::CloseTab => state.close_tab(idx),
+        CommandId::MoveTabLeft => state.move_tab_to(idx, idx.saturating_sub(1)),
+        CommandId::MoveTabRight => state.move_tab_to(idx, idx + 2),
+        CommandId::OpenSettings => state.open_settings_modal(),
+        CommandId::OpenConfigInEditor => {
+            if let Some(path) = crate::config::config_path() {
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open")
+                    .arg("-t")
+                    .arg(&path)
+                    .spawn();
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                }
+            }
+        }
+        CommandId::RevealConfigInFinder => {
+            if let Some(path) = crate::config::config_path() {
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open")
+                    .args([std::ffi::OsStr::new("-R"), path.as_os_str()])
+                    .spawn();
+                #[cfg(not(target_os = "macos"))]
+                if let Some(parent) = path.parent() {
+                    let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+                }
+            }
+        }
+        CommandId::RestartNow => {
+            if matches!(
+                state.overlays.pending_update,
+                Some(UpdateBanner::Available(_))
+            ) {
+                crate::updater::restart_app();
+            }
+        }
+    }
+}
+
+/// Build the stable, shared command palette entries sourced from `CommandId`.
+pub(crate) fn palette_commands(state: &GpuRuntimeState) -> Vec<(String, CommandId)> {
+    let mut out = vec![
+        ("New Tab".to_owned(), CommandId::NewTab),
+        ("Close Tab".to_owned(), CommandId::CloseTab),
+        ("Open Settings".to_owned(), CommandId::OpenSettings),
+        (
+            "Open Config in Editor".to_owned(),
+            CommandId::OpenConfigInEditor,
+        ),
+        (
+            "Reveal Config in Finder".to_owned(),
+            CommandId::RevealConfigInFinder,
+        ),
+    ];
+    if matches!(
+        state.overlays.pending_update,
+        Some(UpdateBanner::Available(_))
+    ) {
+        out.insert(
+            0,
+            (
+                "Restart Now (update ready)".to_owned(),
+                CommandId::RestartNow,
+            ),
+        );
+    }
+    out
+}
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Commands {

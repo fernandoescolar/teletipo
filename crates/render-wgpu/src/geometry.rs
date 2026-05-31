@@ -285,7 +285,7 @@ pub(crate) fn build_panel_vertices(
     }
 
     // Context menu overlay — always rendered last so it paints over everything.
-    if let Some(ref menu) = snapshot.tab_context_menu
+    if let Some(ref menu) = snapshot.context_menu
         && size.width > 0
         && size.height > 0
         && cell_w_px > 0.0
@@ -294,35 +294,44 @@ pub(crate) fn build_panel_vertices(
         const MENU_BG: [f32; 4] = [0.12, 0.15, 0.20, 0.97];
         const MENU_BORDER: [f32; 4] = [0.25, 0.32, 0.42, 1.0];
         const MENU_HOVER: [f32; 4] = [0.20, 0.28, 0.44, 1.0];
-        const ITEM_COUNT: usize = 4;
-        let menu_item_h = cell_h_px * 1.15;
-        let menu_w = cell_w_px * 13.0;
-        let menu_h = menu_item_h * ITEM_COUNT as f32;
-        let px_x = 2.0 / size.width as f32;
-        let px_y = 2.0 / size.height as f32;
-        // Clamp menu so it stays inside the window.
-        let mx = menu.x_px.min(size.width as f32 - menu_w).max(0.0);
-        let my = menu.y_px.min(size.height as f32 - menu_h).max(0.0);
-        let x0_ndc = mx * px_x - 1.0;
-        let x1_ndc = (mx + menu_w) * px_x - 1.0;
-        let y_top_ndc = 1.0 - my * px_y;
-        let y_bot_ndc = 1.0 - (my + menu_h) * px_y;
-        // 1-pixel border quad behind the menu.
-        verts.extend_from_slice(&quad_verts(
-            x0_ndc - px_x,
-            y_bot_ndc - px_y,
-            x1_ndc + px_x,
-            y_top_ndc + px_y,
-            MENU_BORDER,
-        ));
-        // Menu background.
-        verts.extend_from_slice(&quad_verts(x0_ndc, y_bot_ndc, x1_ndc, y_top_ndc, MENU_BG));
-        // Per-item hover highlight.
-        for item_idx in 0..ITEM_COUNT {
-            if menu.hovered_item == Some(item_idx) {
-                let iy_top = 1.0 - (my + item_idx as f32 * menu_item_h) * px_y;
-                let iy_bot = 1.0 - (my + (item_idx + 1) as f32 * menu_item_h) * px_y;
-                verts.extend_from_slice(&quad_verts(x0_ndc, iy_bot, x1_ndc, iy_top, MENU_HOVER));
+        let item_count = menu.items.len();
+        if item_count > 0 {
+            let max_chars = menu
+                .items
+                .iter()
+                .map(|s| s.chars().count())
+                .max()
+                .unwrap_or(8);
+            let menu_item_h = cell_h_px * 1.15;
+            let menu_w = cell_w_px * (max_chars.max(8) as f32 + 2.0);
+            let menu_h = menu_item_h * item_count as f32;
+            let px_x = 2.0 / size.width as f32;
+            let px_y = 2.0 / size.height as f32;
+            // Clamp menu so it stays inside the window.
+            let mx = menu.x_px.min(size.width as f32 - menu_w).max(0.0);
+            let my = menu.y_px.min(size.height as f32 - menu_h).max(0.0);
+            let x0_ndc = mx * px_x - 1.0;
+            let x1_ndc = (mx + menu_w) * px_x - 1.0;
+            let y_top_ndc = 1.0 - my * px_y;
+            let y_bot_ndc = 1.0 - (my + menu_h) * px_y;
+            // 1-pixel border quad behind the menu.
+            verts.extend_from_slice(&quad_verts(
+                x0_ndc - px_x,
+                y_bot_ndc - px_y,
+                x1_ndc + px_x,
+                y_top_ndc + px_y,
+                MENU_BORDER,
+            ));
+            // Menu background.
+            verts.extend_from_slice(&quad_verts(x0_ndc, y_bot_ndc, x1_ndc, y_top_ndc, MENU_BG));
+            // Per-item hover highlight.
+            for item_idx in 0..item_count {
+                if menu.hovered_item == Some(item_idx) {
+                    let iy_top = 1.0 - (my + item_idx as f32 * menu_item_h) * px_y;
+                    let iy_bot = 1.0 - (my + (item_idx + 1) as f32 * menu_item_h) * px_y;
+                    verts
+                        .extend_from_slice(&quad_verts(x0_ndc, iy_bot, x1_ndc, iy_top, MENU_HOVER));
+                }
             }
         }
     }
@@ -490,92 +499,95 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
-    if let Some(ref panel) = snapshot.search_panel {
-        if size.width > 0 && size.height > 0 && cell_w_px > 0.0 && cell_h_px > 0.0 {
-            let panel_w_px = cell_w_px * 40.0;
-            let panel_h_px = cell_h_px * 1.6;
-            let panel_x_px = (size.width as f32 - pad_h - panel_w_px).max(0.0);
-            let panel_y_px = tab_bar_h + pad_v;
-            let button_w_px = cell_w_px * 2.0;
+    if let Some(ref panel) = snapshot.search_panel
+        && size.width > 0
+        && size.height > 0
+        && cell_w_px > 0.0
+        && cell_h_px > 0.0
+    {
+        let panel_w_px = cell_w_px * 40.0;
+        let panel_h_px = cell_h_px * 1.6;
+        let panel_x_px = (size.width as f32 - pad_h - panel_w_px).max(0.0);
+        let panel_y_px = tab_bar_h + pad_v;
+        let button_w_px = cell_w_px * 2.0;
 
-            let px_x = 2.0 / size.width as f32;
-            let px_y = 2.0 / size.height as f32;
-            let x0 = panel_x_px * px_x - 1.0;
-            let x1 = (panel_x_px + panel_w_px) * px_x - 1.0;
-            let y1 = 1.0 - panel_y_px * px_y;
-            let y0 = 1.0 - (panel_y_px + panel_h_px) * px_y;
+        let px_x = 2.0 / size.width as f32;
+        let px_y = 2.0 / size.height as f32;
+        let x0 = panel_x_px * px_x - 1.0;
+        let x1 = (panel_x_px + panel_w_px) * px_x - 1.0;
+        let y1 = 1.0 - panel_y_px * px_y;
+        let y0 = 1.0 - (panel_y_px + panel_h_px) * px_y;
 
-            let panel_bg = [0.08, 0.12, 0.20, 0.95];
-            let panel_border = [0.30, 0.46, 0.75, 1.0];
-            verts.extend_from_slice(&quad_verts(
-                x0 - px_x,
-                y0 - px_y,
-                x1 + px_x,
-                y1 + px_y,
-                panel_border,
-            ));
-            verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, panel_bg));
+        let panel_bg = [0.08, 0.12, 0.20, 0.95];
+        let panel_border = [0.30, 0.46, 0.75, 1.0];
+        verts.extend_from_slice(&quad_verts(
+            x0 - px_x,
+            y0 - px_y,
+            x1 + px_x,
+            y1 + px_y,
+            panel_border,
+        ));
+        verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, panel_bg));
 
-            // Three button backgrounds (prev, next, close) at the rightmost 6 cells.
-            let btn_prev_x = panel_x_px + panel_w_px - button_w_px * 3.0;
-            let btn_next_x = panel_x_px + panel_w_px - button_w_px * 2.0;
-            let btn_close_x = panel_x_px + panel_w_px - button_w_px;
-            let button_bg = [0.14, 0.20, 0.34, 1.0];
-            for bx in [btn_prev_x, btn_next_x, btn_close_x] {
-                let bx0 = bx * px_x - 1.0;
-                let bx1 = (bx + button_w_px) * px_x - 1.0;
-                verts.extend_from_slice(&quad_verts(bx0, y0, bx1, y1, button_bg));
-            }
+        // Three button backgrounds (prev, next, close) at the rightmost 6 cells.
+        let btn_prev_x = panel_x_px + panel_w_px - button_w_px * 3.0;
+        let btn_next_x = panel_x_px + panel_w_px - button_w_px * 2.0;
+        let btn_close_x = panel_x_px + panel_w_px - button_w_px;
+        let button_bg = [0.14, 0.20, 0.34, 1.0];
+        for bx in [btn_prev_x, btn_next_x, btn_close_x] {
+            let bx0 = bx * px_x - 1.0;
+            let bx1 = (bx + button_w_px) * px_x - 1.0;
+            verts.extend_from_slice(&quad_verts(bx0, y0, bx1, y1, button_bg));
+        }
 
-            // ── Query-input area: selection highlight and cursor caret ─────────
-            // Query text starts at QUERY_TEXT_OFFSET_CELLS (6.6) from the panel left.
-            // We show at most QUERY_VISIBLE_CHARS (13) characters at once.
-            const QUERY_TEXT_X: f32 = 6.6;
-            const VISIBLE: usize = 13;
+        // ── Query-input area: selection highlight and cursor caret ─────────
+        // Query text starts at QUERY_TEXT_OFFSET_CELLS (6.6) from the panel left.
+        // We show at most QUERY_VISIBLE_CHARS (13) characters at once.
+        const QUERY_TEXT_X: f32 = 6.6;
+        const VISIBLE: usize = 13;
 
-            let query_chars: Vec<char> = panel.query.chars().collect();
-            let cursor_char = panel.cursor_char.min(query_chars.len());
-            let view_start = cursor_char.saturating_sub(VISIBLE - 1).min(
-                query_chars.len().saturating_sub(VISIBLE),
-            );
-            let cursor_in_view = cursor_char - view_start;
+        let query_chars: Vec<char> = panel.query.chars().collect();
+        let cursor_char = panel.cursor_char.min(query_chars.len());
+        let view_start = cursor_char
+            .saturating_sub(VISIBLE - 1)
+            .min(query_chars.len().saturating_sub(VISIBLE));
+        let cursor_in_view = cursor_char - view_start;
 
-            let text_x0_px = panel_x_px + cell_w_px * QUERY_TEXT_X;
+        let text_x0_px = panel_x_px + cell_w_px * QUERY_TEXT_X;
 
-            // Selection highlight quad.
-            if let Some((sel_s, sel_e)) = panel.sel_char_range {
-                let sel_s = sel_s.max(view_start);
-                let sel_e = sel_e.min(view_start + VISIBLE).min(query_chars.len());
-                if sel_s < sel_e {
-                    let s_in_view = sel_s - view_start;
-                    let e_in_view = sel_e - view_start;
-                    let sx0 = text_x0_px + s_in_view as f32 * cell_w_px;
-                    let sx1 = text_x0_px + e_in_view as f32 * cell_w_px;
-                    let sy0_ndc = y0 + (panel_h_px * 0.1) * px_y;
-                    let sy1_ndc = y1 - (panel_h_px * 0.1) * px_y;
-                    verts.extend_from_slice(&quad_verts(
-                        sx0 * px_x - 1.0,
-                        sy0_ndc,
-                        sx1 * px_x - 1.0,
-                        sy1_ndc,
-                        [0.25, 0.45, 0.80, 0.55],
-                    ));
-                }
-            }
-
-            // Cursor caret — a 2-pixel-wide vertical bar.
-            {
-                let caret_x_px = text_x0_px + cursor_in_view as f32 * cell_w_px;
-                let caret_x0 = caret_x_px * px_x - 1.0;
-                let caret_x1 = (caret_x_px + 2.0) * px_x - 1.0;
+        // Selection highlight quad.
+        if let Some((sel_s, sel_e)) = panel.sel_char_range {
+            let sel_s = sel_s.max(view_start);
+            let sel_e = sel_e.min(view_start + VISIBLE).min(query_chars.len());
+            if sel_s < sel_e {
+                let s_in_view = sel_s - view_start;
+                let e_in_view = sel_e - view_start;
+                let sx0 = text_x0_px + s_in_view as f32 * cell_w_px;
+                let sx1 = text_x0_px + e_in_view as f32 * cell_w_px;
+                let sy0_ndc = y0 + (panel_h_px * 0.1) * px_y;
+                let sy1_ndc = y1 - (panel_h_px * 0.1) * px_y;
                 verts.extend_from_slice(&quad_verts(
-                    caret_x0,
-                    y0 + (panel_h_px * 0.1) * px_y,
-                    caret_x1,
-                    y1 - (panel_h_px * 0.1) * px_y,
-                    [0.90, 0.95, 1.0, 0.9],
+                    sx0 * px_x - 1.0,
+                    sy0_ndc,
+                    sx1 * px_x - 1.0,
+                    sy1_ndc,
+                    [0.25, 0.45, 0.80, 0.55],
                 ));
             }
+        }
+
+        // Cursor caret — a 2-pixel-wide vertical bar.
+        {
+            let caret_x_px = text_x0_px + cursor_in_view as f32 * cell_w_px;
+            let caret_x0 = caret_x_px * px_x - 1.0;
+            let caret_x1 = (caret_x_px + 2.0) * px_x - 1.0;
+            verts.extend_from_slice(&quad_verts(
+                caret_x0,
+                y0 + (panel_h_px * 0.1) * px_y,
+                caret_x1,
+                y1 - (panel_h_px * 0.1) * px_y,
+                [0.90, 0.95, 1.0, 0.9],
+            ));
         }
     }
 
@@ -997,7 +1009,13 @@ pub(crate) fn build_command_palette_bg_verts(
     let sep_top_px = sep_bottom_px - 1.0;
     let sep_y0 = 1.0 - sep_bottom_px * px_y;
     let sep_y1 = 1.0 - sep_top_px * px_y;
-    verts.extend_from_slice(&quad_verts(x0, sep_y0, x1, sep_y1, [0.30, 0.45, 0.70, 0.80]));
+    verts.extend_from_slice(&quad_verts(
+        x0,
+        sep_y0,
+        x1,
+        sep_y1,
+        [0.30, 0.45, 0.70, 0.80],
+    ));
 
     // Highlight the selected item row.
     let scroll_offset = cp.scroll_offset;

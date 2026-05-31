@@ -33,6 +33,7 @@ fn numeric_step(section: &str, key: &str) -> Option<f32> {
 
 /// Build a `SettingsOverlay` snapshot from the current `GpuRuntimeState`.
 /// Returns `None` when the settings panel is closed.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<SettingsOverlay> {
     if !state.settings.open {
         return None;
@@ -122,39 +123,39 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
     });
 
     // Compute search matches when in search mode (font family or theme).
-    let (search_matches, search_selected, search_scroll_offset) =
-        if let Some(ref buf) = state.settings.search_buf
-            && state.settings.cursor < SETTINGS_FIELDS.len()
-        {
-            let q = buf.to_lowercase();
-            let field = &SETTINGS_FIELDS[state.settings.cursor];
-            let matches: Vec<String> = if field.section == "font" && field.key == "family" {
-                state
-                    .themes_fonts
-                    .available_fonts
-                    .iter()
-                    .filter(|f| f.family.to_lowercase().contains(&q))
-                    .map(|f| f.family.clone())
-                    .collect()
-            } else if field.key == "theme" {
-                state
-                    .themes_fonts
-                    .available_themes
-                    .iter()
-                    .filter(|t| t.name.to_lowercase().contains(&q))
-                    .map(|t| t.name.clone())
-                    .collect()
-            } else {
-                vec![]
-            };
-            (
-                matches,
-                state.settings.search_selected,
-                state.settings.search_scroll_offset,
-            )
+    let (search_matches, search_selected, search_scroll_offset) = if let Some(ref buf) =
+        state.settings.search_buf
+        && state.settings.cursor < SETTINGS_FIELDS.len()
+    {
+        let q = buf.to_lowercase();
+        let field = &SETTINGS_FIELDS[state.settings.cursor];
+        let matches: Vec<String> = if field.section == "font" && field.key == "family" {
+            state
+                .themes_fonts
+                .available_fonts
+                .iter()
+                .filter(|f| f.family.to_lowercase().contains(&q))
+                .map(|f| f.family.clone())
+                .collect()
+        } else if field.key == "theme" {
+            state
+                .themes_fonts
+                .available_themes
+                .iter()
+                .filter(|t| t.name.to_lowercase().contains(&q))
+                .map(|t| t.name.clone())
+                .collect()
         } else {
-            (vec![], 0, 0)
+            vec![]
         };
+        (
+            matches,
+            state.settings.search_selected,
+            state.settings.search_scroll_offset,
+        )
+    } else {
+        (vec![], 0, 0)
+    };
 
     Some(SettingsOverlay {
         items,
@@ -242,7 +243,7 @@ pub(crate) fn handle_settings_key(
                     state.settings.dirty = false;
                     state.settings.just_saved = true;
                 }
-                state.settings.open = false;
+                state.close_active_modal();
             }
         }
         Key::Named(NamedKey::ArrowUp) => {
@@ -320,23 +321,18 @@ pub(crate) fn handle_settings_key(
             // Handle action rows (beyond SETTINGS_FIELDS).
             let action_base = SETTINGS_FIELDS.len();
             if idx == action_base {
-                // "Open Config in Editor"
-                if let Some(path) = crate::config::config_path() {
-                    let _ = std::process::Command::new("open").arg("-t").arg(&path).spawn();
-                }
+                crate::commands::execute_ui_command(
+                    state,
+                    crate::commands::CommandId::OpenConfigInEditor,
+                    crate::commands::CommandContext::default(),
+                );
                 return true;
             } else if idx == action_base + 1 {
-                // "Reveal Config in Finder"
-                if let Some(path) = crate::config::config_path() {
-                    #[cfg(target_os = "macos")]
-                    let _ = std::process::Command::new("open")
-                        .args([std::ffi::OsStr::new("-R"), path.as_os_str()])
-                        .spawn();
-                    #[cfg(not(target_os = "macos"))]
-                    if let Some(parent) = path.parent() {
-                        let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
-                    }
-                }
+                crate::commands::execute_ui_command(
+                    state,
+                    crate::commands::CommandId::RevealConfigInFinder,
+                    crate::commands::CommandContext::default(),
+                );
                 return true;
             }
             let field = &SETTINGS_FIELDS[idx];
@@ -389,7 +385,7 @@ pub(crate) fn handle_settings_key(
             save_config(&state.user_config);
             state.settings.dirty = false;
             state.settings.just_saved = true;
-            state.settings.open = false;
+            state.close_active_modal();
         }
         Key::Character(_) | Key::Named(NamedKey::Space) => {
             if let Some(ref mut buf) = state.settings.edit_buf
