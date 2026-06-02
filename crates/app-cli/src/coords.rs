@@ -175,7 +175,7 @@ pub(crate) fn extract_selection(
         } else {
             chars.len()
         };
-        let segment: String = chars[from..to].iter().collect();
+        let segment: String = chars[from..to].iter().filter(|&&c| c != '\0').collect();
         result.push_str(segment.trim_end());
         if row < end_row {
             result.push('\n');

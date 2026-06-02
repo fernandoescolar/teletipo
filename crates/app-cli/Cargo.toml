@@ -9,7 +9,8 @@ app-orchestrator = { path = "../app-orchestrator" }
 platform-abstraction = { path = "../platform-abstraction" }
 terminal-pty = { path = "../terminal-pty" }
 render-wgpu = { path = "../render-wgpu" }
-clap = { version = "4", features = ["derive"] }
+render-glow = { path = "../render-glow" }
+clap = { version = "4", features = ["derive", "env"] }
 anyhow = { workspace = true }
 winit = { workspace = true }
 serde = { workspace = true }

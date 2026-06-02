@@ -34,7 +34,7 @@ fn log_dir() -> Option<PathBuf> {
 /// warnings and errors are visible without flooding stderr.
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new("warn,app_cli=info,app_orchestrator=info,render_wgpu=info")
+        EnvFilter::new("warn,app_cli=info,app_orchestrator=info,render_wgpu=info,render_glow=info")
     });
     if let Some(dir) = log_dir() {
         let file_appender = tracing_appender::rolling::daily(dir, "teletipo.log");

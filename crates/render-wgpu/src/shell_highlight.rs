@@ -10,7 +10,7 @@
 /// Handles: keywords (purple), commands (cyan), flags (yellow),
 /// quoted strings (amber), variable references (green), comments (dim gray).
 #[allow(clippy::too_many_lines)] // long table-style match for shell token coloring
-pub(crate) fn highlight_shell(text: &str) -> Vec<Option<[f32; 3]>> {
+pub fn highlight_shell(text: &str) -> Vec<Option<[f32; 3]>> {
     const KEYWORD: [f32; 3] = [0.78, 0.55, 0.96]; // soft purple
     const COMMAND: [f32; 3] = [0.40, 0.88, 1.00]; // cyan
     const FLAG: [f32; 3] = [0.97, 0.90, 0.40]; // yellow

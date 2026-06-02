@@ -9,7 +9,7 @@ mod geometry;
 mod glyph_raster;
 mod pipeline;
 mod renderer;
-mod shell_highlight;
+pub mod shell_highlight;
 mod surface;
 mod types;
 mod window;

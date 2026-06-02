@@ -175,8 +175,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 }
                 return;
             }
-            Key::Character(_) => {
-                if let Some(text) = key_event.text.as_ref()
+            Key::Character(ch) => {
+                let text = key_event.text.as_deref().unwrap_or(ch.as_str());
+                if !text.is_empty()
                     && text != "\n"
                     && text != "\r"
                     && text != "\r\n"
@@ -634,13 +635,14 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         Key::Named(NamedKey::Space) => {
             state.tab_mut().app.insert_editor_input(" ");
         }
-        Key::Character(_) => {
-            if let Some(text) = key_event.text.as_ref()
+        Key::Character(ch) => {
+            let text = key_event.text.as_deref().unwrap_or(ch.as_str());
+            if !text.is_empty()
                 && text != "\n"
                 && text != "\r"
                 && text != "\r\n"
             {
-                state.tab_mut().app.insert_editor_input(text.as_str());
+                state.tab_mut().app.insert_editor_input(text);
                 if cycling {
                     let active = state.active_tab;
                     let editor_text = state.tab().app.editor_snapshot();
