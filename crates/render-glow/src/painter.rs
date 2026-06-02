@@ -1075,13 +1075,7 @@ impl GlPainter {
             let idx = start + i;
             let row_y = y0 + i as f32 * row_h;
             if idx == dd.selected {
-                self.push_rect(
-                    x0,
-                    row_y,
-                    x1,
-                    row_y + row_h,
-                    [0.20, 0.32, 0.58, 0.70],
-                );
+                self.push_rect(x0, row_y, x1, row_y + row_h, [0.20, 0.32, 0.58, 0.70]);
             }
             let fg = if idx == dd.selected {
                 [0.92, 0.94, 0.98, 1.0]
@@ -1116,7 +1110,13 @@ impl GlPainter {
             let max_scroll = (total - visible) as f32;
             let scroll_frac = dd.scroll_offset as f32 / max_scroll;
             let thumb_top = y0 + scroll_frac * (panel_h - thumb_h);
-            self.push_rect(sb_x0, thumb_top, sb_x1, thumb_top + thumb_h, [0.30, 0.45, 0.70, 0.95]);
+            self.push_rect(
+                sb_x0,
+                thumb_top,
+                sb_x1,
+                thumb_top + thumb_h,
+                [0.30, 0.45, 0.70, 0.95],
+            );
         }
     }
 
@@ -1286,7 +1286,11 @@ impl GlPainter {
                         ry,
                         x1,
                         ry + row_h,
-                        if overlay.editing.is_some() { ov_edit } else { ov_select },
+                        if overlay.editing.is_some() {
+                            ov_edit
+                        } else {
+                            ov_select
+                        },
                     );
                 }
                 editable_idx += 1;
@@ -1322,9 +1326,17 @@ impl GlPainter {
                 .clamp(1, SETTINGS_MAX_VISIBLE_SEARCH);
             let dy = y0 + title_h + (focused_flat + 1) as f32 * row_h;
             let dh = row_h * visible as f32;
-            self.push_rect(x0 - 1.0, dy - 1.0, x1 + 1.0, dy + dh + 1.0, [0.35, 0.50, 0.82, 1.0]);
+            self.push_rect(
+                x0 - 1.0,
+                dy - 1.0,
+                x1 + 1.0,
+                dy + dh + 1.0,
+                [0.35, 0.50, 0.82, 1.0],
+            );
             self.push_rect(x0, dy, x1, dy + dh, [0.15, 0.19, 0.30, 1.0]);
-            let vis_sel = overlay.search_selected.saturating_sub(overlay.search_scroll_offset);
+            let vis_sel = overlay
+                .search_selected
+                .saturating_sub(overlay.search_scroll_offset);
             if !overlay.search_matches.is_empty() && vis_sel < visible {
                 let sy0 = dy + vis_sel as f32 * row_h;
                 self.push_rect(x0, sy0, x1, sy0 + row_h, [0.22, 0.34, 0.62, 1.0]);
@@ -1375,7 +1387,14 @@ impl GlPainter {
                 }
                 let mut kx = key_col;
                 for ch in item.key.chars() {
-                    self.push_glyph(ch, kx, row_y, layout.cell_w_px, layout.cell_h_px, th.separator_focused);
+                    self.push_glyph(
+                        ch,
+                        kx,
+                        row_y,
+                        layout.cell_w_px,
+                        layout.cell_h_px,
+                        th.separator_focused,
+                    );
                     kx += layout.cell_w_px;
                 }
             } else {
@@ -1479,7 +1498,14 @@ impl GlPainter {
             let foot_color = [r * 0.55, g * 0.55, b * 0.55, 0.90_f32];
             let mut fx = x0;
             for ch in footer_text.chars() {
-                self.push_glyph(ch, fx, footer_y, layout.cell_w_px, layout.cell_h_px, foot_color);
+                self.push_glyph(
+                    ch,
+                    fx,
+                    footer_y,
+                    layout.cell_w_px,
+                    layout.cell_h_px,
+                    foot_color,
+                );
                 fx += layout.cell_w_px;
             }
         }
@@ -1492,7 +1518,9 @@ impl GlPainter {
                 .saturating_sub(overlay.search_scroll_offset)
                 .min(SEARCH_MAX_VISIBLE);
             let visible_end = overlay.search_scroll_offset + n_visible;
-            let vis_sel = overlay.search_selected.saturating_sub(overlay.search_scroll_offset);
+            let vis_sel = overlay
+                .search_selected
+                .saturating_sub(overlay.search_scroll_offset);
             let drop_top_px = y0 + title_h + (focused_flat_idx + 1) as f32 * row_h;
             if overlay.search_matches.is_empty() {
                 let item_y = drop_top_px + (row_h - layout.cell_h_px) / 2.0;

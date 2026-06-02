@@ -12,7 +12,7 @@
 //!   headless CI), calls silently no-op.
 //! - [`NullShell`] — pure in-memory; intended for unit tests.
 
-use platform_abstraction::{Clipboard, SystemClipboard, WindowControl};
+use platform_abstraction::{Accessibility, Clipboard, SystemClipboard, WindowControl};
 
 /// Capabilities the app needs from the host OS, abstracted so input handlers
 /// can be exercised without a real window/clipboard.
@@ -40,6 +40,15 @@ pub(crate) trait AppShell {
     /// startup by the GPU backend before the event loop pumps any events.
     /// Default: drops the handle (used by [`NullShell`] in tests).
     fn install_window(&mut self, _window: Box<dyn WindowControl>) {}
+
+    /// Announce a short text string to the active screen reader.
+    /// Default: no-op. Real implementation in [`SystemShell`].
+    #[allow(dead_code)]
+    fn announce(&mut self, _text: &str) {}
+
+    /// Push a fresh semantic accessibility tree to the platform's AT layer.
+    /// Default: no-op.
+    fn update_accessibility_tree(&mut self, _tree: &platform_abstraction::AccessibilityTree) {}
 }
 
 /// Real shell. The clipboard is delegated to
@@ -50,6 +59,7 @@ pub(crate) trait AppShell {
 pub(crate) struct SystemShell {
     clipboard: SystemClipboard,
     window: Option<Box<dyn WindowControl>>,
+    accessibility: platform_abstraction::NativePlatformServices,
 }
 
 impl SystemShell {
@@ -57,6 +67,7 @@ impl SystemShell {
         Self {
             clipboard: SystemClipboard::default(),
             window: None,
+            accessibility: platform_abstraction::native_services(),
         }
     }
 }
@@ -90,6 +101,14 @@ impl AppShell for SystemShell {
 
     fn install_window(&mut self, window: Box<dyn WindowControl>) {
         self.window = Some(window);
+    }
+
+    fn announce(&mut self, text: &str) {
+        self.accessibility.accessibility.announce(text);
+    }
+
+    fn update_accessibility_tree(&mut self, tree: &platform_abstraction::AccessibilityTree) {
+        self.accessibility.accessibility.update_tree(tree);
     }
 }
 

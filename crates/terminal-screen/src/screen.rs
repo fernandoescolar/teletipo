@@ -6,6 +6,7 @@ use crate::StyledChars;
 use crate::cell::{Cell, CellStyle};
 use crate::color::{AnsiColor, ansi_cell_tuple_with_palette};
 use crate::grid::{Grid, reflow_grid};
+use crate::hyperlink::HyperlinkInterner;
 
 /// Terminal screen model: cell grid, scrollback, cursor, and damage tracking.
 ///
@@ -24,6 +25,13 @@ pub struct Screen {
     dirty_rows: Vec<bool>,
     full_redraw: bool,
     version: u64,
+    /// Intern table for OSC 8 hyperlink URIs. Shared across primary and
+    /// scrollback; cleared when the alternate screen is entered/exited so
+    /// stale IDs cannot bleed through.
+    pub(crate) hyperlinks: HyperlinkInterner,
+    /// The hyperlink ID to stamp on the next printed character.
+    /// 0 means "no active hyperlink".
+    pub(crate) current_hyperlink_id: u16,
     /// Cached result of `dump_text()` for the current `version`.
     text_cache: RefCell<Option<(u64, String)>>,
     // Note: held as Arc<String> so callers can clone the handle in O(1) instead
@@ -149,6 +157,8 @@ impl Screen {
             dirty_rows: vec![true; rows],
             full_redraw: true,
             version: 1,
+            hyperlinks: HyperlinkInterner::default(),
+            current_hyperlink_id: 0,
             text_cache: RefCell::new(None),
             ansi_cache: RefCell::new(None),
         }
@@ -205,6 +215,7 @@ impl Screen {
 
     pub fn put_char(&mut self, ch: char) {
         let style = self.current_style;
+        let hyperlink_id = self.current_hyperlink_id;
         if self.use_alternate {
             if self.alternate.pending_wrap {
                 self.alternate.pending_wrap = false;
@@ -216,7 +227,7 @@ impl Screen {
                 self.alternate.cursor_row = self.alternate.rows.saturating_sub(1);
             }
             let row = self.alternate.cursor_row;
-            self.alternate.put_char(ch, style);
+            self.alternate.put_char(ch, style, hyperlink_id);
             self.mark_dirty_row(row);
         } else {
             if self.primary.pending_wrap {
@@ -234,10 +245,88 @@ impl Screen {
                 self.push_scrollback(popped, wrapped);
             }
             let row = self.primary.cursor_row;
-            self.primary.put_char(ch, style);
+            self.primary.put_char(ch, style, hyperlink_id);
             self.mark_dirty_row(row);
         }
         self.bump_version();
+    }
+
+    /// Activate an OSC 8 hyperlink. Every subsequent character written to the
+    /// screen will carry this link ID until `set_active_hyperlink(None)` is
+    /// called (which the terminal emits as the closing `\e]8;;\e\\` sequence).
+    ///
+    /// Passing `None` or an empty string disables the active hyperlink
+    /// (equivalent to `\e]8;;\a`).
+    pub fn set_active_hyperlink(&mut self, uri: Option<&str>) {
+        match uri.filter(|u| !u.is_empty()) {
+            Some(u) => {
+                self.current_hyperlink_id = self.hyperlinks.intern(u);
+            }
+            None => {
+                self.current_hyperlink_id = 0;
+            }
+        }
+    }
+
+    /// Resolve a hyperlink ID to its URI string.
+    /// Returns `None` for ID 0 (no link) or unknown IDs.
+    pub fn hyperlink_uri(&self, id: u16) -> Option<&str> {
+        self.hyperlinks.resolve(id)
+    }
+
+    /// Collect all hyperlink spans visible at the given scroll offset.
+    ///
+    /// Returns a `Vec` of `(row, col_start, col_end_exclusive, id)` tuples
+    /// covering every run of cells with the same non-zero hyperlink ID in the
+    /// visible viewport. Useful for the snapshot builder to build a clickable
+    /// link table without walking every cell individually.
+    pub fn dump_hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
+        let grid = if self.use_alternate {
+            &self.alternate
+        } else {
+            &self.primary
+        };
+        let rows = grid.rows;
+        let cols = grid.cols;
+        let scrollback_len = self.scrollback.len();
+
+        // Determine where the visible window starts in the combined
+        // (scrollback ++ primary) line sequence.
+        let first_visible_abs = scrollback_len.saturating_sub(scroll_offset);
+
+        let mut spans: Vec<(usize, usize, usize, u16)> = Vec::new();
+
+        for vis_row in 0..rows {
+            let abs_row = first_visible_abs + vis_row;
+            let cells: &[Cell] = if abs_row < scrollback_len {
+                let (ref line, _wrapped) = self.scrollback[abs_row];
+                line.as_slice()
+            } else {
+                let grid_row = abs_row - scrollback_len;
+                if grid_row >= grid.rows {
+                    break;
+                }
+                let start = grid_row * cols;
+                &grid.cells[start..start + cols]
+            };
+
+            // Walk along the row merging adjacent same-id cells into spans.
+            let mut col = 0usize;
+            while col < cells.len() {
+                let id = cells[col].hyperlink_id;
+                if id != 0 {
+                    let run_start = col;
+                    while col < cells.len() && cells[col].hyperlink_id == id {
+                        col += 1;
+                    }
+                    spans.push((vis_row, run_start, col, id));
+                } else {
+                    col += 1;
+                }
+            }
+        }
+
+        spans
     }
 
     pub fn linefeed(&mut self) {

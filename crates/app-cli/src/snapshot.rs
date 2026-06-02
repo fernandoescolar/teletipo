@@ -270,7 +270,26 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         };
     // Underline only the link the cursor is currently hovering over.
     let terminal_links: Vec<TerminalLink> = {
-        let all_links = detect_terminal_links(&terminal_text);
+        // Pattern-detected links (URLs, file paths) from the rendered text.
+        let mut all_links = detect_terminal_links(&terminal_text);
+
+        // OSC 8 explicit hyperlinks from the terminal cell data.  These are
+        // authoritative: if a cell range has an OSC 8 link ID we prefer it
+        // over any pattern-detected link that overlaps the same cells.
+        let osc8 = state.tabs[active]
+            .app
+            .terminal
+            .hyperlink_spans(scroll_offset);
+        if !osc8.is_empty() {
+            for (row, cs, ce, id) in &osc8 {
+                if let Some(uri) = state.tabs[active].app.terminal.hyperlink_uri(*id) {
+                    // Remove any pattern links that overlap this OSC 8 span.
+                    all_links.retain(|(r, lcs, lce, _)| *r != *row || *lce <= *cs || *lcs >= *ce);
+                    all_links.push((*row, *cs, *ce, uri.to_owned()));
+                }
+            }
+        }
+
         if all_links.is_empty() {
             Vec::new()
         } else {

@@ -129,6 +129,10 @@ impl Accessibility for MemoryAccessibility {
     fn set_focus(&mut self, node_id: &str) {
         self.focused_node = Some(node_id.to_string());
     }
+
+    fn update_tree(&mut self, _tree: &crate::types::AccessibilityTree) {
+        // In-memory stub: no-op. Used in tests and on unsupported platforms.
+    }
 }
 
 impl DpiAwareness for FixedDpi {
@@ -143,6 +147,95 @@ impl FontFallback for BasicFontFallback {
             Some("monospace".to_string())
         } else {
             Some("fallback-unicode".to_string())
+        }
+    }
+}
+
+// ── Linux accessibility adapter ───────────────────────────────────────────────
+
+/// Linux accessibility adapter.
+///
+/// Announces text to the system speech engine by spawning `spd-say`
+/// (speech-dispatcher, used by Orca) or `espeak` as a fire-and-forget child
+/// process.  If neither tool is installed the call silently no-ops — this
+/// matches the behaviour of most terminal emulators on speech-reader-less
+/// desktops.
+///
+/// `update_tree` uses the same command-zone diffing logic as the macOS
+/// adapter: only newly completed zones are announced so VoiceOver/Orca does
+/// not re-read the entire history on every keystroke.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+pub struct LinuxAccessibility {
+    previous_zone_count: usize,
+}
+
+#[cfg(target_os = "linux")]
+impl Accessibility for LinuxAccessibility {
+    fn announce(&self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        // Try spd-say (speech-dispatcher) first; fall back to espeak.
+        // Both are spawned fire-and-forget — we don't wait for them to finish.
+        let launched = std::process::Command::new("spd-say")
+            .arg("--")
+            .arg(text)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .is_ok();
+
+        if !launched {
+            let _ = std::process::Command::new("espeak")
+                .arg(text)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    }
+
+    fn set_focus(&mut self, _node_id: &str) {}
+
+    fn update_tree(&mut self, tree: &crate::types::AccessibilityTree) {
+        use crate::types::AccessNode;
+
+        let zone_count = tree
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, AccessNode::CommandZone { .. }))
+            .count();
+
+        if zone_count > self.previous_zone_count {
+            let new_zones = tree
+                .nodes
+                .iter()
+                .filter_map(|n| match n {
+                    AccessNode::CommandZone {
+                        command_text,
+                        output_text,
+                        exit_code,
+                        ..
+                    } => Some((command_text.as_str(), output_text.as_str(), *exit_code)),
+                    _ => None,
+                })
+                .skip(self.previous_zone_count);
+
+            for (cmd, output, code) in new_zones {
+                let summary = match code {
+                    Some(0) => format!("Command completed: {cmd}"),
+                    Some(c) => format!("Command failed (exit {c}): {cmd}"),
+                    None => format!("Running: {cmd}"),
+                };
+                self.announce(&summary);
+                if !output.trim().is_empty() {
+                    let preview: String = output.chars().take(200).collect();
+                    self.announce(preview.trim());
+                }
+            }
+            self.previous_zone_count = zone_count;
         }
     }
 }

@@ -57,6 +57,14 @@ pub trait TerminalDisplay {
     fn snapshot(&self) -> ScreenSnapshot;
     fn take_damage(&mut self) -> DamageRegion;
     fn is_alternate_screen(&self) -> bool;
+    /// Activate or deactivate the current OSC 8 hyperlink.
+    /// `None` or empty URI → deactivate. `Some(uri)` → activate.
+    fn set_active_hyperlink(&mut self, uri: Option<&str>);
+    /// Resolve a hyperlink ID to its URI, or `None` if ID is 0 / unknown.
+    fn hyperlink_uri(&self, id: u16) -> Option<&str>;
+    /// Collect all hyperlink spans in the visible viewport at the given scroll
+    /// offset. Returns `(vis_row, col_start, col_end_exclusive, id)` tuples.
+    fn dump_hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)>;
 }
 
 impl TerminalDisplay for Screen {
@@ -203,10 +211,41 @@ impl TerminalDisplay for Screen {
     fn is_alternate_screen(&self) -> bool {
         Screen::is_alternate_screen(self)
     }
+
+    fn set_active_hyperlink(&mut self, uri: Option<&str>) {
+        Screen::set_active_hyperlink(self, uri)
+    }
+
+    fn hyperlink_uri(&self, id: u16) -> Option<&str> {
+        Screen::hyperlink_uri(self, id)
+    }
+
+    fn dump_hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
+        Screen::dump_hyperlink_spans(self, scroll_offset)
+    }
 }
 
 /// Generic terminal session: pairs a [`TerminalParser`] with a [`TerminalDisplay`].
 ///
+/// Semantic zone tracking a single shell command lifecycle from prompt
+/// display through execution and exit.
+///
+/// Row numbers are absolute (scrollback_len + grid_row at the time of the
+/// event) so they stay valid as lines are pushed into scrollback.
+#[derive(Debug, Clone)]
+pub struct CommandZone {
+    /// Absolute row where the prompt started (`OSC 133;A`).
+    pub prompt_start_row: usize,
+    /// Absolute row where the user finished typing and pressed Enter
+    /// (`OSC 133;B`).  `None` if the B marker has not been received yet.
+    pub command_start_row: Option<usize>,
+    /// Absolute row where command output began (`OSC 133;C`).
+    /// `None` if the C marker has not been received yet.
+    pub output_start_row: Option<usize>,
+    /// Exit code reported by the shell (`OSC 133;D;N`).
+    pub exit_code: Option<i32>,
+}
+
 /// Owns the bytes-to-actions decoder and the screen model and threads parsed
 /// actions through to it. Instantiating with custom `P` / `D` parameters lets
 /// tests substitute fake parsers or screens.
@@ -222,7 +261,14 @@ pub struct GenericTerminalSession<P = Parser, D = Screen> {
     window_title: Option<String>,
     bell_pending: bool,
     application_cursor_keys: bool,
-    prompt_marks: Vec<usize>,
+    /// Finished command zones (prompt_start → exit) kept in arrival order.
+    command_zones: Vec<CommandZone>,
+    /// The in-progress zone opened by the most recent `OSC 133;A` and not yet
+    /// closed by `OSC 133;D`.
+    current_zone: Option<CommandZone>,
+    /// Working directory reported by the shell via OSC 7 (`file://host/path`).
+    /// Falls back to OS-level CWD inspection when `None`.
+    cwd: Option<std::path::PathBuf>,
 }
 
 /// Default `GenericTerminalSession` specialised with the production parser
@@ -246,7 +292,9 @@ impl GenericTerminalSession<Parser, Screen> {
             window_title: None,
             bell_pending: false,
             application_cursor_keys: false,
-            prompt_marks: Vec::new(),
+            command_zones: Vec::new(),
+            current_zone: None,
+            cwd: None,
         })
     }
 }
@@ -268,17 +316,66 @@ where
             window_title: None,
             bell_pending: false,
             application_cursor_keys: false,
-            prompt_marks: Vec::new(),
+            command_zones: Vec::new(),
+            current_zone: None,
+            cwd: None,
         }
     }
 
-    fn record_prompt_mark(&mut self) {
-        let abs_row = self
-            .screen
+    fn abs_cursor_row(&self) -> usize {
+        self.screen
             .scrollback_len()
-            .saturating_add(self.screen.cursor_row());
-        if self.prompt_marks.last().copied() != Some(abs_row) {
-            self.prompt_marks.push(abs_row);
+            .saturating_add(self.screen.cursor_row())
+    }
+
+    /// Handle `OSC 133;A` — prompt start.
+    /// Opens a new [`CommandZone`], preserving any existing incomplete zone so
+    /// all prompt positions remain available for navigation.
+    fn on_osc133_a(&mut self) {
+        let abs_row = self.abs_cursor_row();
+        // If there is already an in-progress zone (e.g. user pressed Enter
+        // without running a command, or this is the very first prompt), push
+        // it into the finished list so its prompt row is preserved.
+        if let Some(zone) = self.current_zone.take() {
+            self.command_zones.push(zone);
+            if self.command_zones.len() > 500 {
+                self.command_zones.remove(0);
+            }
+        }
+        self.current_zone = Some(CommandZone {
+            prompt_start_row: abs_row,
+            command_start_row: None,
+            output_start_row: None,
+            exit_code: None,
+        });
+    }
+
+    /// Handle `OSC 133;B` — end of prompt / user pressed Enter.
+    fn on_osc133_b(&mut self) {
+        let abs_row = self.abs_cursor_row();
+        if let Some(zone) = &mut self.current_zone {
+            zone.command_start_row = Some(abs_row);
+        }
+    }
+
+    /// Handle `OSC 133;C` — command output is about to start.
+    fn on_osc133_c(&mut self) {
+        let abs_row = self.abs_cursor_row();
+        if let Some(zone) = &mut self.current_zone {
+            zone.output_start_row = Some(abs_row);
+        }
+    }
+
+    /// Handle `OSC 133;D;N` — command finished with exit code `code`.
+    fn on_osc133_d(&mut self, code: i32) {
+        self.last_exit_code = Some(code);
+        if let Some(mut zone) = self.current_zone.take() {
+            zone.exit_code = Some(code);
+            self.command_zones.push(zone);
+            // Cap history to avoid unbounded growth in long-running sessions.
+            if self.command_zones.len() > 500 {
+                self.command_zones.remove(0);
+            }
         }
     }
 
@@ -327,18 +424,36 @@ where
                 },
                 Action::Osc(s) => {
                     if s == "133;A" {
-                        self.record_prompt_mark();
-                    }
-                    // OSC 133;D;N — shell integration exit-code report.
-                    if let Some(rest) = s.strip_prefix("133;D;")
+                        self.on_osc133_a();
+                    } else if s == "133;B" {
+                        self.on_osc133_b();
+                    } else if s == "133;C" {
+                        self.on_osc133_c();
+                    } else if let Some(rest) = s.strip_prefix("133;D;")
                         && let Ok(code) = rest.parse::<i32>()
                     {
-                        self.last_exit_code = Some(code);
+                        self.on_osc133_d(code);
                     } else if let Some(title) =
                         s.strip_prefix("0;").or_else(|| s.strip_prefix("2;"))
                     {
                         self.window_title = Some(title.to_owned());
+                    } else if let Some(uri) = s.strip_prefix("7;") {
+                        // OSC 7 — shell reports its working directory as
+                        // `file://[host]/path`. Strip the authority component
+                        // (everything up to the third slash after "file://").
+                        if let Some(path_str) = uri
+                            .strip_prefix("file://")
+                            .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
+                            .or_else(|| uri.strip_prefix("file:///"))
+                        {
+                            // URL-decode percent-encoded characters (e.g. %20 → ' ')
+                            let decoded = percent_decode(path_str);
+                            self.cwd = Some(std::path::PathBuf::from(decoded));
+                        }
                     }
+                }
+                Action::SetHyperlink(uri_opt) => {
+                    self.screen.set_active_hyperlink(uri_opt.as_deref());
                 }
                 Action::Bell => self.bell_pending = true,
                 Action::DeviceStatusReport => {
@@ -466,9 +581,70 @@ where
     }
 
     /// Absolute rows of prompts reported by OSC 133 hooks.
-    pub fn prompt_marks(&self) -> &[usize] {
-        &self.prompt_marks
+    /// Derived from `command_zones` for backwards compatibility.
+    pub fn prompt_marks(&self) -> Vec<usize> {
+        let mut marks: Vec<usize> = self
+            .command_zones
+            .iter()
+            .map(|z| z.prompt_start_row)
+            .collect();
+        if let Some(current) = &self.current_zone {
+            marks.push(current.prompt_start_row);
+        }
+        marks
     }
+
+    /// All completed command zones, oldest first.
+    pub fn command_zones(&self) -> &[CommandZone] {
+        &self.command_zones
+    }
+
+    /// The in-progress zone (prompt seen but exit code not yet received), if any.
+    pub fn current_zone(&self) -> Option<&CommandZone> {
+        self.current_zone.as_ref()
+    }
+
+    /// Working directory last reported by the shell via OSC 7.
+    /// Returns `None` if the shell has not yet sent an OSC 7 sequence.
+    pub fn osc7_cwd(&self) -> Option<&std::path::Path> {
+        self.cwd.as_deref()
+    }
+
+    /// Collect all OSC 8 hyperlink spans visible at the given scroll offset.
+    /// Delegates to the underlying screen model; see
+    /// [`terminal_screen::Screen::dump_hyperlink_spans`] for the return format.
+    pub fn hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
+        self.screen.dump_hyperlink_spans(scroll_offset)
+    }
+
+    /// Resolve a hyperlink ID to its URI string. `0` always returns `None`.
+    pub fn hyperlink_uri(&self, id: u16) -> Option<&str> {
+        self.screen.hyperlink_uri(id)
+    }
+}
+
+/// Decode percent-encoded characters in a URI path component (e.g. `%20` → `' '`).
+/// Only handles ASCII-range encodings; non-ASCII byte sequences are passed through.
+fn percent_decode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (
+                (bytes[i + 1] as char).to_digit(16),
+                (bytes[i + 2] as char).to_digit(16),
+            )
+        {
+            out.push((hi * 16 + lo) as u8 as char);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -618,6 +794,16 @@ mod tests {
 
         fn is_alternate_screen(&self) -> bool {
             self.alternate
+        }
+
+        fn set_active_hyperlink(&mut self, _uri: Option<&str>) {}
+
+        fn hyperlink_uri(&self, _id: u16) -> Option<&str> {
+            None
+        }
+
+        fn dump_hyperlink_spans(&self, _scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
+            Vec::new()
         }
     }
 

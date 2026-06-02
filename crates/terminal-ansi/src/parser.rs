@@ -132,7 +132,8 @@ impl Parser {
             ParserState::Osc => {
                 if byte == 0x07 || (self.osc_esc_seen && byte == b'\\') {
                     let payload = String::from_utf8_lossy(&self.osc_buf).into_owned();
-                    actions.push(Action::Osc(payload));
+                    let action = parse_osc_payload(&payload);
+                    actions.push(action);
                     self.osc_buf.clear();
                     self.osc_esc_seen = false;
                     self.state = ParserState::Ground;
@@ -209,6 +210,25 @@ impl Parser {
             _ => {}
         }
     }
+}
+
+/// Classify a raw OSC payload string into the most specific `Action` variant
+/// available. Falls through to the generic `Osc(payload)` for unknown codes.
+fn parse_osc_payload(payload: &str) -> Action {
+    // OSC 8 — hyperlink: `8;[params];[uri]`
+    // The params field is optional application-specific metadata; we skip it.
+    if let Some(rest) = payload.strip_prefix("8;") {
+        // rest is "[params];[uri]"
+        if let Some(semi) = rest.find(';') {
+            let uri = &rest[semi + 1..];
+            if uri.is_empty() {
+                return Action::SetHyperlink(None);
+            } else {
+                return Action::SetHyperlink(Some(uri.to_owned()));
+            }
+        }
+    }
+    Action::Osc(payload.to_owned())
 }
 
 fn parse_params(bytes: &[u8]) -> Vec<u16> {

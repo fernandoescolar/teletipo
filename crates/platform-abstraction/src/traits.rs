@@ -11,8 +11,21 @@ pub trait Ime {
 }
 
 pub trait Accessibility {
+    /// Announce a short text string to the active screen reader.
+    ///
+    /// On macOS this posts `NSAccessibilityAnnouncementNotification`; on Linux
+    /// it fires an AT-SPI text announcement.  Callers should pass the newest
+    /// terminal output line(s) so the user hears them without navigating.
     fn announce(&self, text: &str);
+    /// Move screen-reader focus to the identified node.
     fn set_focus(&mut self, node_id: &str);
+    /// Push a fresh semantic accessibility tree to the platform layer.
+    ///
+    /// Called after each render frame with the current terminal structure so
+    /// screen readers can navigate prompts, command output, and hyperlinks.
+    /// Implementations are free to diff against the previous tree and only
+    /// notify the AT of changed nodes.
+    fn update_tree(&mut self, tree: &crate::types::AccessibilityTree);
 }
 
 pub trait DpiAwareness {

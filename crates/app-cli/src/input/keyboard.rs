@@ -177,11 +177,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             }
             Key::Character(ch) => {
                 let text = key_event.text.as_deref().unwrap_or(ch.as_str());
-                if !text.is_empty()
-                    && text != "\n"
-                    && text != "\r"
-                    && text != "\r\n"
-                {
+                if !text.is_empty() && text != "\n" && text != "\r" && text != "\r\n" {
                     state.send_terminal_input(text.as_bytes());
                 }
                 return;
@@ -328,10 +324,12 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             let max_scroll = state.tab().app.scrollback_len();
             let prev = state.tab().scroll_offset;
             state.tab_mut().scroll_offset = prev.saturating_add(5).min(max_scroll);
+            state.push_accessibility_tree();
         }
         Key::Named(NamedKey::PageDown) => {
             let prev = state.tab().scroll_offset;
             state.tab_mut().scroll_offset = prev.saturating_sub(5);
+            state.push_accessibility_tree();
         }
 
         Key::Character(ch) if is_copy_shortcut(state, ch.as_str()) => {
@@ -431,15 +429,18 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             }
             "[" => {
                 state.active_tab = state.active_tab.saturating_sub(1);
+                state.push_accessibility_tree();
             }
             "]" => {
                 let last = state.tabs.len() - 1;
                 state.active_tab = (state.active_tab + 1).min(last);
+                state.push_accessibility_tree();
             }
             "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
                 if let Some(d) = ch.as_str().chars().next().and_then(|c| c.to_digit(10)) {
                     let idx = (d as usize - 1).min(state.tabs.len() - 1);
                     state.active_tab = idx;
+                    state.push_accessibility_tree();
                 }
             }
             _ => {}
@@ -617,6 +618,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 // Cmd+Home: scroll to the very beginning of scrollback.
                 let tab = state.tab_mut();
                 tab.scroll_offset = tab.app.scrollback_len();
+                state.push_accessibility_tree();
             } else {
                 let extend = state.modifiers.shift_down;
                 state.tab_mut().app.set_editor_cursor(0, extend);
@@ -626,6 +628,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             if state.modifiers.super_down {
                 // Cmd+End: scroll back to the live view.
                 state.tab_mut().scroll_offset = 0;
+                state.push_accessibility_tree();
             } else {
                 let extend = state.modifiers.shift_down;
                 let end = state.tab().app.editor_snapshot().len();
@@ -637,11 +640,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         }
         Key::Character(ch) => {
             let text = key_event.text.as_deref().unwrap_or(ch.as_str());
-            if !text.is_empty()
-                && text != "\n"
-                && text != "\r"
-                && text != "\r\n"
-            {
+            if !text.is_empty() && text != "\n" && text != "\r" && text != "\r\n" {
                 state.tab_mut().app.insert_editor_input(text);
                 if cycling {
                     let active = state.active_tab;

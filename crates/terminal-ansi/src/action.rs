@@ -36,6 +36,12 @@ pub enum Action {
     /// Raw OSC (Operating System Command) sequence payload, e.g. "133;D;0"
     /// for shell integration exit-code reporting.
     Osc(String),
+    /// OSC 8 hyperlink: `Some(uri)` activates the link, `None` ends it.
+    ///
+    /// Emitted from `\e]8;[params];[uri]\a` or `\e]8;[params];[uri]\e\\`.
+    /// The optional `params` field is deliberately ignored (it is rarely used
+    /// and carries application-specific metadata we don't need).
+    SetHyperlink(Option<String>),
     /// BEL character (0x07).
     Bell,
     /// Request cursor position report (`\x1b[6n`).

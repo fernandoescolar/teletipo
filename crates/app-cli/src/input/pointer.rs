@@ -370,6 +370,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     state.close_tab(tab_idx);
                 } else {
                     state.active_tab = tab_idx;
+                    state.push_accessibility_tree();
                     state.drag.tab_drag = Some(tab_idx);
                     state.drag.tab_drag_start_x = state.cursor.cursor_x;
                 }
@@ -757,6 +758,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             } else {
                 state.tab_mut().scroll_offset = prev.saturating_sub(lines);
             }
+            state.push_accessibility_tree();
         }
         return true;
     }
@@ -881,8 +883,28 @@ fn open_link(shell: &mut dyn crate::shell::AppShell, raw_target: &str, cwd: &str
         return;
     }
 
+    // OSC 8 can emit `file://[host]/absolute/path` URIs. Strip the scheme and
+    // optional authority (hostname) component so the path handler below can
+    // resolve it uniformly.
+    //
+    // RFC 8089 forms handled:
+    //   file:///absolute/path        → /absolute/path
+    //   file://hostname/absolute/path → /absolute/path
+    let effective_target: &str = if let Some(rest) = raw_target.strip_prefix("file://") {
+        // `rest` is either `/absolute/path` (empty host) or `hostname/path`.
+        if rest.starts_with('/') {
+            // file:///path — authority is empty, rest begins with the path.
+            rest
+        } else {
+            // file://hostname/path — skip hostname up to first slash.
+            rest.find('/').map(|i| &rest[i..]).unwrap_or(rest)
+        }
+    } else {
+        raw_target
+    };
+
     // File path: strip :line:col, expand ~, resolve relative paths.
-    let bare = strip_line_col(raw_target);
+    let bare = strip_line_col(effective_target);
     let expanded = expand_tilde(bare);
     let path = if std::path::Path::new(&expanded).is_absolute() {
         std::path::PathBuf::from(&expanded)

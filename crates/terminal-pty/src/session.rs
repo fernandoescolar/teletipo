@@ -79,7 +79,8 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
         return None;
     }
 
-    let hook = r#"printf '\033]133;D;%d\007' "$?""#;
+    let precmd_hook = r#"_ret=$?; printf '\033]133;D;%d\007' "$_ret"; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' "$(hostname -f 2>/dev/null || hostname)" "$PWD""#;
+    let preexec_hook = r#"printf '\033]133;B\007'; printf '\033]133;C\007'"#;
 
     match shell_name {
         "zsh" => {
@@ -101,8 +102,11 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
             // .zshrc – sourced for interactive shells.
             let zshrc = format!(
                 "# Teletipo shell integration\n\
-                 _teletipo_precmd() {{ {hook}; }}\n\
-                 precmd_functions+=(_teletipo_precmd)\n\
+                 autoload -Uz add-zsh-hook\n\
+                 _teletipo_precmd() {{ {precmd_hook}; }}\n\
+                 _teletipo_preexec() {{ {preexec_hook}; }}\n\
+                 add-zsh-hook precmd _teletipo_precmd\n\
+                 add-zsh-hook preexec _teletipo_preexec\n\
                  # Restore normal dotfile lookup for subshells.\n\
                  unset ZDOTDIR\n\
                  [ -f '{real_zdotdir}/.zshrc' ] && source '{real_zdotdir}/.zshrc'\n"
@@ -129,7 +133,9 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
             let bashrc = format!(
                 "# Teletipo shell integration\n\
                  [ -f '{home}/.bashrc' ] && source '{home}/.bashrc'\n\
-                 _teletipo_precmd() {{ {hook}; }}\n\
+                 _teletipo_precmd() {{ {precmd_hook}; }}\n\
+                 _teletipo_dbg() {{ [ \"$BASH_COMMAND\" != '_teletipo_precmd' ] && printf '\\033]133;B\\007' && printf '\\033]133;C\\007'; }}\n\
+                 trap '_teletipo_dbg' DEBUG\n\
                  PROMPT_COMMAND=\"${{PROMPT_COMMAND:+${{PROMPT_COMMAND}}; }}_teletipo_precmd\"\n"
             );
             let rcfile = integration_dir.join(".bashrc");

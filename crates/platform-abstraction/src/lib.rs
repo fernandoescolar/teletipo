@@ -12,7 +12,7 @@ mod types;
 pub use impls::{
     BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryClipboard, MemoryIme, SystemClipboard,
 };
-pub use macos::{apply_app_icon, apply_titlebar_color};
+pub use macos::{MacOSAccessibility, apply_app_icon, apply_titlebar_color};
 pub use platform::{
     NativePlatformServices, PlatformServices, current_platform, default_shell,
     detect_display_backend, detect_display_backend_from, native_services,
@@ -21,7 +21,7 @@ pub use process::{SystemProcessInfo, current_process_info};
 pub use traits::{
     Accessibility, Clipboard, DpiAwareness, FontFallback, Ime, ProcessInfo, WindowControl,
 };
-pub use types::{AppWindowEvent, DisplayBackend, PlatformKind};
+pub use types::{AccessNode, AccessibilityTree, AppWindowEvent, DisplayBackend, PlatformKind};
 
 #[cfg(target_os = "linux")]
 pub use platform::{LinuxAccessibility, LinuxClipboard, LinuxDpi, LinuxFontFallback, LinuxIme};

@@ -28,7 +28,7 @@ impl Grid {
         }
     }
 
-    pub(crate) fn put_char(&mut self, ch: char, style: crate::cell::CellStyle) {
+    pub(crate) fn put_char(&mut self, ch: char, style: crate::cell::CellStyle, hyperlink_id: u16) {
         if self.cursor_row >= self.rows || self.cursor_col >= self.cols {
             return;
         }
@@ -37,7 +37,11 @@ impl Grid {
         let char_width = ch.width().unwrap_or(1).max(1);
 
         let idx = self.cursor_row * self.cols + self.cursor_col;
-        self.cells[idx] = Cell { ch, style };
+        self.cells[idx] = Cell {
+            ch,
+            style,
+            hyperlink_id,
+        };
         self.pending_wrap = false;
 
         // For wide characters (display width 2) fill the trailing cell with a
@@ -46,6 +50,7 @@ impl Grid {
             self.cells[idx + 1] = Cell {
                 ch: '\0',
                 style: crate::cell::CellStyle::default(),
+                hyperlink_id: 0,
             };
         }
 

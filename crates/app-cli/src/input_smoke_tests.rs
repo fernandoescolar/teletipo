@@ -52,6 +52,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         command_running: false,
         unread_output: false,
         bell_pending: false,
+        a11y_screen_version: 0,
     };
     GpuRuntimeState {
         tabs: vec![tab],

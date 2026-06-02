@@ -5,10 +5,12 @@
 mod cell;
 mod color;
 mod grid;
+pub mod hyperlink;
 mod screen;
 
 pub use cell::{Cell, CellStyle};
 pub use color::{ansi_color_to_rgb_with_palette, ansi_indexed_to_rgb};
+pub use hyperlink::HyperlinkInterner;
 pub use screen::{DamageRegion, Screen, ScreenSnapshot};
 
 /// Per-character styled data: (character, foreground RGB, background RGB, style bits).

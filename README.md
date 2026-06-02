@@ -18,11 +18,38 @@ A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with 
 - Code-editor-style command input
 - Command palette (`Cmd+Shift+P`) for common actions such as tab management, settings, config actions, and prompt navigation
 - Prompt-aware navigation using OSC 133 shell markers (`Jump to Previous Prompt` / `Jump to Next Prompt`)
+- **Shell integration** — automatic OSC 133 A/B/C/D and OSC 7 hooks injected into zsh and bash at startup; tracks prompt boundaries, command start/output start, exit codes, and current working directory without any manual shell config
+- **OSC 8 hyperlinks** — clickable links emitted by tools like `ls --hyperlink`, `bat`, `delta`, and others are rendered with an underline and opened with your OS default handler on click; `file://` URIs are resolved locally
+- **Screen reader / VoiceOver support** (macOS) — new command completions and their exit status are announced via `NSAccessibilityPostNotificationWithUserInfo` so VoiceOver speaks them aloud without any navigation; a full semantic accessibility tree (terminal viewport, command zones, hyperlinks) is pushed to the platform AT layer after each frame
 - Right-click context menus for tabs and the terminal pane
 - Drag-and-drop support for applying YAML themes or pasting file paths into the command editor
 - Scrollback activity indicator with quick jump back to bottom
 - Themeable (YAML theme files, ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night)
 - Automatic silent self-update from GitHub Releases
+
+## Shell Integration
+
+Teletipo injects OSC 133 and OSC 7 hooks into **zsh** and **bash** automatically when it spawns the shell — no manual configuration needed.
+
+| Sequence | Meaning |
+|---|---|
+| `OSC 133 ; A` | Prompt start — marks the beginning of a new prompt |
+| `OSC 133 ; B` | Command start — fired just before the command is executed |
+| `OSC 133 ; C` | Output start — fired immediately after command start |
+| `OSC 133 ; D ; <code>` | Command end — reports the exit code of the last command |
+| `OSC 7 ; file://host/path` | Working directory — updates the tab's CWD label |
+
+These markers power prompt navigation (`Jump to Previous/Next Prompt`), the per-command exit-code badges, the tab CWD display, and the semantic accessibility tree entries for completed commands.
+
+> If your shell is not zsh or bash, you can add the hooks manually. See the scripts injected in `crates/terminal-pty/src/session.rs` for the exact sequences.
+
+## OSC 8 Hyperlinks
+
+Any program that emits [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) hyperlinks (e.g. `ls --hyperlink=auto`, `bat`, `delta`, `eza`) will have those links rendered with an underline in Teletipo.
+
+- **Click** a hyperlink to open it with your OS default handler (`open` on macOS, `xdg-open` on Linux)
+- `file://` URIs are resolved to a local path — the host part is stripped automatically
+- OSC 8 links take precedence over any regex-based URL patterns for the same text span
 
 ## Before install
 

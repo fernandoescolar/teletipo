@@ -31,6 +31,10 @@ impl Default for CellStyle {
 pub struct Cell {
     pub(crate) ch: char,
     pub(crate) style: CellStyle,
+    /// OSC 8 hyperlink ID: 0 = no link, 1-65535 = index into the screen's
+    /// [`crate::hyperlink::HyperlinkInterner`]. Kept as a plain `u16` so
+    /// `Cell` remains `Copy` and memory-layout-friendly.
+    pub(crate) hyperlink_id: u16,
 }
 
 impl Default for Cell {
@@ -38,6 +42,7 @@ impl Default for Cell {
         Self {
             ch: ' ',
             style: CellStyle::default(),
+            hyperlink_id: 0,
         }
     }
 }

@@ -297,6 +297,7 @@ pub(crate) fn build_initial_state(
             command_running: false,
             unread_output: false,
             bell_pending: false,
+            a11y_screen_version: 0,
         });
     }
 

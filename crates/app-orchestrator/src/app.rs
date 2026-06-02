@@ -281,8 +281,29 @@ impl AppTerminal {
         self.session.application_cursor_keys()
     }
 
-    pub fn prompt_marks(&self) -> &[usize] {
+    pub fn prompt_marks(&self) -> Vec<usize> {
         self.session.prompt_marks()
+    }
+
+    /// All completed command zones (OSC 133 A–D lifecycle), oldest first.
+    pub fn command_zones(&self) -> &[terminal_core::CommandZone] {
+        self.session.command_zones()
+    }
+
+    /// Returns all OSC 8 hyperlink spans visible at the given scroll offset.
+    /// See [`terminal_core::GenericTerminalSession::hyperlink_spans`].
+    pub fn hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
+        self.session.hyperlink_spans(scroll_offset)
+    }
+
+    /// Resolves a hyperlink ID to its URI string. Returns `None` for ID 0.
+    pub fn hyperlink_uri(&self, id: u16) -> Option<&str> {
+        self.session.hyperlink_uri(id)
+    }
+
+    /// Working directory last reported by the shell via OSC 7.
+    pub fn osc7_cwd(&self) -> Option<&std::path::Path> {
+        self.session.osc7_cwd()
     }
 }
 
@@ -461,7 +482,7 @@ impl App {
         self.terminal.screen_version()
     }
 
-    pub fn prompt_marks(&self) -> &[usize] {
+    pub fn prompt_marks(&self) -> Vec<usize> {
         self.terminal.prompt_marks()
     }
 

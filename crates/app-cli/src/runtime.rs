@@ -9,7 +9,7 @@ use crate::state::{
     CursorState, DragState, LayoutState, ModalOverlay, ModifierState, OverlayState, ThemeFontState,
 };
 use crate::tab::{HistoryEntry, TabState};
-use platform_abstraction::WindowControl;
+use platform_abstraction::{AccessNode, AccessibilityTree, WindowControl};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
@@ -138,6 +138,7 @@ impl GpuRuntimeState {
 
     /// Pump PTY output for ALL tabs; returns `true` if the active tab received data.
     #[allow(clippy::too_many_lines)] // sequential housekeeping over every tab
+    #[allow(clippy::cognitive_complexity)] // sequential housekeeping over every tab
     pub(crate) fn pump_all_ptys(&mut self) -> bool {
         let mut active_had_data = false;
         let active = self.active_tab;
@@ -252,6 +253,16 @@ impl GpuRuntimeState {
         if let Some(message) = pty_status {
             self.overlays.pty_status = Some((Instant::now(), message));
         }
+
+        // Push a fresh accessibility tree whenever the active tab's screen
+        // content has changed.
+        if active_had_data {
+            let version = self.tabs[active].app.terminal_screen_version();
+            if version != self.tabs[active].a11y_screen_version {
+                self.push_accessibility_tree();
+            }
+        }
+
         active_had_data
     }
 
@@ -540,6 +551,7 @@ impl GpuRuntimeState {
             command_running: false,
             unread_output: false,
             bell_pending: false,
+            a11y_screen_version: 0,
         });
         self.active_tab = self.tabs.len() - 1;
     }
@@ -591,6 +603,22 @@ impl GpuRuntimeState {
         }
     }
 
+    /// Build and push a fresh semantic accessibility tree to the platform AT layer.
+    ///
+    /// Call this whenever the visible terminal content may have changed: new
+    /// PTY output, scroll position change, or active-tab switch.  The method
+    /// is cheap to call repeatedly; the platform layer (VoiceOver) only
+    /// announces nodes that differ from the previous push.
+    pub(crate) fn push_accessibility_tree(&mut self) {
+        let active = self.active_tab;
+        let tree = build_accessibility_tree(&self.tabs, active);
+        self.shell_services.update_accessibility_tree(&tree);
+        // Record the version so pump_all_ptys skips redundant pushes.
+        if let Some(tab) = self.tabs.get_mut(active) {
+            tab.a11y_screen_version = tab.app.terminal_screen_version();
+        }
+    }
+
     /// Push a transient toast notification visible for `secs` seconds.
     pub(crate) fn push_toast(&mut self, text: impl Into<String>, kind: crate::state::ToastKind) {
         use std::time::Duration;
@@ -600,4 +628,102 @@ impl GpuRuntimeState {
             Duration::from_secs(4),
         ));
     }
+}
+
+// ── Accessibility tree builder ────────────────────────────────────────────────
+
+/// Build the semantic [`AccessibilityTree`] for the currently active tab,
+/// including tab-bar nodes for all tabs.
+///
+/// Called from [`GpuRuntimeState::push_accessibility_tree`] whenever the
+/// terminal content, scroll position, or active tab changes.
+fn build_accessibility_tree(tabs: &[TabState], active_tab: usize) -> AccessibilityTree {
+    let tab = &tabs[active_tab];
+    let scroll_offset = tab.scroll_offset;
+    let mut nodes: Vec<AccessNode> = Vec::new();
+
+    // ── Tab bar ───────────────────────────────────────────────────────────────
+    for (i, t) in tabs.iter().enumerate() {
+        let label = if t.cwd.is_empty() {
+            format!("Tab {}", i + 1)
+        } else {
+            // Show only the last path component as the tab label.
+            std::path::Path::new(&t.cwd)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&t.cwd)
+                .to_owned()
+        };
+        nodes.push(AccessNode::Tab {
+            index: i,
+            label,
+            active: i == active_tab,
+        });
+    }
+
+    // ── Terminal viewport ─────────────────────────────────────────────────────
+    {
+        let text = tab.app.terminal.snapshot_text();
+        // Derive cols from the first non-empty line of the snapshot; fall back
+        // to a safe default so the AT always gets a plausible grid size.
+        let cols = text.lines().next().map(|l| l.chars().count()).unwrap_or(80);
+        nodes.push(AccessNode::Terminal {
+            rows: tab.term_row_count,
+            cols: cols.max(1),
+            text,
+        });
+    }
+
+    // ── Completed command zones ───────────────────────────────────────────────
+    //
+    // Zones and history grow together: zone[i] was triggered by history[i].
+    // We zip them so each node carries the correct command text.  Zones whose
+    // history entry is missing (should not happen in practice) are skipped.
+    {
+        let zones = tab.app.terminal.command_zones();
+        for (i, zone) in zones.iter().enumerate() {
+            let command_text = match tab.history.get(i) {
+                Some(cmd) if !cmd.is_empty() => cmd.clone(),
+                _ => continue, // skip prompt-only zones with no command
+            };
+            nodes.push(AccessNode::CommandZone {
+                prompt_row: zone.prompt_start_row,
+                command_text,
+                exit_code: zone.exit_code,
+                // Full output extraction would require walking the scrollback;
+                // leave empty for now — the AT can navigate to the prompt row
+                // itself for the full text.
+                output_text: String::new(),
+            });
+        }
+    }
+
+    // ── OSC 8 hyperlinks visible at current scroll position ───────────────────
+    {
+        let text = tab.app.terminal.snapshot_text(); // one allocation, reused below
+        let spans = tab.app.terminal.hyperlink_spans(scroll_offset);
+        for (row, col_start, col_end, id) in spans {
+            if let Some(uri) = tab.app.terminal.hyperlink_uri(id) {
+                let label = text
+                    .lines()
+                    .nth(row)
+                    .map(|l| {
+                        l.chars()
+                            .skip(col_start)
+                            .take(col_end.saturating_sub(col_start))
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default();
+                nodes.push(AccessNode::Hyperlink {
+                    row,
+                    col_start,
+                    col_end,
+                    label,
+                    uri: uri.to_owned(),
+                });
+            }
+        }
+    }
+
+    AccessibilityTree { nodes }
 }

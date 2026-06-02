@@ -78,6 +78,9 @@ pub(crate) struct TabState {
     /// `true` when the tab has received BEL while in background and the user
     /// has not yet visited it. Cleared when the tab becomes active.
     pub(crate) bell_pending: bool,
+    /// Screen version seen at the last accessibility-tree push.
+    /// Used to skip `update_accessibility_tree` when nothing changed.
+    pub(crate) a11y_screen_version: u64,
 }
 
 /// Persistent state for a single tab.

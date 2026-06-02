@@ -1,6 +1,11 @@
 use std::env;
 
-use crate::impls::{BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryIme, SystemClipboard};
+#[cfg(target_os = "linux")]
+use crate::impls::LinuxAccessibility;
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+use crate::impls::MemoryAccessibility;
+use crate::impls::{BasicFontFallback, FixedDpi, MemoryIme, SystemClipboard};
+use crate::macos::MacOSAccessibility;
 use crate::traits::{Accessibility, Clipboard, DpiAwareness, FontFallback, Ime};
 use crate::types::{DisplayBackend, PlatformKind};
 
@@ -24,7 +29,7 @@ pub type LinuxClipboard = SystemClipboard;
 #[cfg(target_os = "linux")]
 pub type LinuxIme = MemoryIme;
 #[cfg(target_os = "linux")]
-pub type LinuxAccessibility = MemoryAccessibility;
+pub type LinuxAccessibility = crate::impls::LinuxAccessibility;
 #[cfg(target_os = "linux")]
 pub type LinuxDpi = FixedDpi;
 #[cfg(target_os = "linux")]
@@ -35,7 +40,7 @@ pub type MacClipboard = SystemClipboard;
 #[cfg(target_os = "macos")]
 pub type MacIme = MemoryIme;
 #[cfg(target_os = "macos")]
-pub type MacAccessibility = MemoryAccessibility;
+pub type MacAccessibility = MacOSAccessibility;
 #[cfg(target_os = "macos")]
 pub type MacDpi = FixedDpi;
 #[cfg(target_os = "macos")]
@@ -73,6 +78,11 @@ pub fn native_services() -> NativePlatformServices {
     PlatformServices {
         clipboard: SystemClipboard::default(),
         ime: MemoryIme::default(),
+        #[cfg(target_os = "macos")]
+        accessibility: MacOSAccessibility::default(),
+        #[cfg(target_os = "linux")]
+        accessibility: crate::impls::LinuxAccessibility::default(),
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         accessibility: MemoryAccessibility::default(),
         dpi: FixedDpi::default(),
         font_fallback: BasicFontFallback,
