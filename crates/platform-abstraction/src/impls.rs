@@ -176,6 +176,12 @@ impl Accessibility for LinuxAccessibility {
         if text.is_empty() {
             return;
         }
+        // Only speak when a screen reader is actually active.  Orca (and any
+        // other AT-SPI consumer) sets AT_SPI_BUS_ADDRESS in the session; if
+        // that variable is absent there is nothing listening so we bail out.
+        if std::env::var_os("AT_SPI_BUS_ADDRESS").is_none() {
+            return;
+        }
         // Try spd-say (speech-dispatcher) first; fall back to espeak.
         // Both are spawned fire-and-forget — we don't wait for them to finish.
         let launched = std::process::Command::new("spd-say")

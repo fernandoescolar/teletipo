@@ -1,10 +1,9 @@
 use std::env;
 
-#[cfg(target_os = "linux")]
-use crate::impls::LinuxAccessibility;
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 use crate::impls::MemoryAccessibility;
 use crate::impls::{BasicFontFallback, FixedDpi, MemoryIme, SystemClipboard};
+#[cfg(target_os = "macos")]
 use crate::macos::MacOSAccessibility;
 use crate::traits::{Accessibility, Clipboard, DpiAwareness, FontFallback, Ime};
 use crate::types::{DisplayBackend, PlatformKind};

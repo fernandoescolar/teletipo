@@ -20,7 +20,7 @@ A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with 
 - Prompt-aware navigation using OSC 133 shell markers (`Jump to Previous Prompt` / `Jump to Next Prompt`)
 - **Shell integration** — automatic OSC 133 A/B/C/D and OSC 7 hooks injected into zsh and bash at startup; tracks prompt boundaries, command start/output start, exit codes, and current working directory without any manual shell config
 - **OSC 8 hyperlinks** — clickable links emitted by tools like `ls --hyperlink`, `bat`, `delta`, and others are rendered with an underline and opened with your OS default handler on click; `file://` URIs are resolved locally
-- **Screen reader / VoiceOver support** (macOS) — new command completions and their exit status are announced via `NSAccessibilityPostNotificationWithUserInfo` so VoiceOver speaks them aloud without any navigation; a full semantic accessibility tree (terminal viewport, command zones, hyperlinks) is pushed to the platform AT layer after each frame
+- **Screen reader support** — new command completions and their exit status are announced automatically; VoiceOver on macOS and Orca on Linux (via speech-dispatcher / espeak) are supported; announcements are suppressed when no screen reader is active
 - Right-click context menus for tabs and the terminal pane
 - Drag-and-drop support for applying YAML themes or pasting file paths into the command editor
 - Scrollback activity indicator with quick jump back to bottom
@@ -50,6 +50,32 @@ Any program that emits [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5a
 - **Click** a hyperlink to open it with your OS default handler (`open` on macOS, `xdg-open` on Linux)
 - `file://` URIs are resolved to a local path — the host part is stripped automatically
 - OSC 8 links take precedence over any regex-based URL patterns for the same text span
+
+## Accessibility
+
+Teletipo integrates with the platform screen reader on each OS. Announcements are driven by OSC 133 shell markers — each time a command finishes, the command text, exit status, and a brief output preview are sent to the active screen reader.
+
+### macOS — VoiceOver
+
+Announcements use `NSAccessibilityPostNotificationWithUserInfo` (AppKit). A full semantic accessibility tree is pushed to the AT layer after each frame, covering the terminal viewport, individual command zones, and hyperlinks.
+
+VoiceOver does not need any special configuration. Enable it in **System Settings › Accessibility › VoiceOver** or press `Cmd + F5`.
+
+### Linux — Orca
+
+Announcements are delivered by spawning `spd-say` (speech-dispatcher, used by Orca) with a fire-and-forget child process. If `spd-say` is not available, `espeak` is tried as a fallback.
+
+**Announcements are only made when a screen reader is running.** Teletipo checks for the `AT_SPI_BUS_ADDRESS` environment variable, which Orca sets in the session when it is active. If the variable is absent nothing is spawned.
+
+To use Orca with Teletipo:
+
+1. Install speech-dispatcher: `sudo apt install speech-dispatcher` (Debian/Ubuntu) or your distro equivalent.
+2. Start Orca (`orca` command, or toggle it in **Settings › Accessibility**).
+3. Launch Teletipo — command completions will be spoken automatically.
+
+### Windows
+
+A no-op stub is currently compiled in for Windows. Screen reader support (MSAA / UIA) is planned for a future release.
 
 ## Before install
 
