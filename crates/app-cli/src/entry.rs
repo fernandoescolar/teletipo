@@ -31,7 +31,7 @@ struct Cli {
         long,
         env = "TELETIPO_RENDERER",
         value_enum,
-        default_value_t = RendererBackend::Wgpu,
+        default_value_t = RendererBackend::Glow,
         help = "Select GPU renderer backend"
     )]
     renderer: RendererBackend,

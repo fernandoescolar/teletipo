@@ -9,7 +9,7 @@ A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with 
 
 ## Features
 
-- GPU-accelerated rendering with selectable backend: `wgpu` (default) or experimental `glow`
+- GPU-accelerated rendering with selectable backend: `glow` (default) or `wgpu`
 - Multi-tab workflow with tab reordering, middle-click close, and per-tab unread/bell badges
 - Stateful ANSI/VT100 parser (CSI, DEC sequences, SGR, alternate screen, scrollback)
 - Primary and alternate screen buffers
@@ -120,19 +120,17 @@ teletipo --exec "htop"
 # Expose Prometheus metrics on 127.0.0.1:9898
 teletipo --metrics
 
-# Try the experimental OpenGL backend
-teletipo --renderer glow
+# Use the wgpu backend instead of the default glow
+teletipo --renderer wgpu
 
 # Or select the renderer backend via environment variable
-TELETIPO_RENDERER=glow teletipo
+TELETIPO_RENDERER=wgpu teletipo
 
 # Increase runtime logging verbosity
 RUST_LOG=app_cli=debug,render_wgpu=info,render_glow=info teletipo
 ```
 
 Runtime logs are written automatically to daily-rotated files under the platform data directory (see [File Locations](#file-locations)).
-
-`--renderer glow` now includes system-font rasterization plus rustybuzz shaping for terminal text, improving ligatures and glyph positioning versus the initial bitmap-only fallback.
 
 ## Keyboard Shortcuts
 
@@ -324,8 +322,8 @@ Teletipo stores its files in the standard OS directories via the [`dirs`](https:
 | `crates/editor-core` | Editor buffer and undo/redo |
 | `crates/editor-lang` | Token-based syntax highlighting helpers |
 | `crates/platform-abstraction` | Cross-platform adapters (clipboard, window control, process metadata, IME/accessibility) |
-| `crates/render-glow` | Experimental glow renderer backend (`winit + glutin + glow`) with broad UI parity and rustybuzz-shaped terminal text |
-| `crates/render-wgpu` | WGPU renderer, snapshot-to-geometry conversion, text/background overlay rendering |
+| `crates/render-glow` | Default glow renderer backend (`winit + glutin + glow`) with system-font rasterization, rustybuzz-shaped terminal text, and full UI parity |
+| `crates/render-wgpu` | WGPU renderer backend, snapshot-to-geometry conversion, shared types and text/background overlay rendering |
 | `crates/terminal-ansi` | ANSI/VT parser and action model |
 | `crates/terminal-screen` | Screen/grid model, styles, scrollback, damage tracking |
 | `crates/terminal-core` | Applies parser actions over screen state |
