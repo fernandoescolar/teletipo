@@ -251,7 +251,10 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             }
         }
         if *btn_state == ElementState::Pressed {
-            if matches!(state.overlays.pending_update, Some(crate::UpdateBanner::Available(_))) {
+            if matches!(
+                state.overlays.pending_update,
+                Some(crate::UpdateBanner::Available(_))
+            ) {
                 crate::updater::restart_app();
                 return true;
             }

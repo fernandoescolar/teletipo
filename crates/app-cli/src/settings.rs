@@ -45,6 +45,7 @@ fn shell_option(label: impl Into<String>, command: impl Into<String>) -> ShellOp
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn shell_option_label_from_path(path: &str) -> String {
     PathBuf::from(path)
         .file_name()
