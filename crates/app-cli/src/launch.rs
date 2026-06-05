@@ -355,6 +355,7 @@ pub(crate) fn build_initial_state(
             active_font_idx: 0,
         },
         update_rx: Some(update_rx),
+        update_last_checked: std::time::Instant::now(),
         settings: crate::SettingsUiState::default(),
         command_palette: None,
         should_exit: false,

@@ -116,6 +116,16 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
     }
+
+    // Re-arm the update check once per day while the app stays open.
+    const UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+    if state.update_rx.is_none()
+        && state.overlays.pending_update.is_none()
+        && state.update_last_checked.elapsed() >= UPDATE_INTERVAL
+    {
+        state.update_rx = Some(crate::updater::spawn_update());
+        state.update_last_checked = std::time::Instant::now();
+    }
     // shows the update banner for testing without needing to run the background thread or build an actual update:
     // state.overlays.pending_update.get_or_insert(crate::UpdateBanner::Available("TEST".to_owned()));
 

@@ -136,10 +136,25 @@ fn build_updater() -> anyhow::Result<Box<dyn self_update::update::ReleaseUpdate>
 fn try_update() -> Result<Option<String>, String> {
     let exe_path =
         executable_path().map_err(|err| format!("could not resolve current executable: {err}"))?;
+
+    // Build the updater first so we can check availability before touching disk.
+    let updater = build_updater().map_err(|err| err.to_string())?;
+
+    // Check whether a newer release exists before creating a backup.
+    let latest = updater
+        .get_latest_release()
+        .map_err(|err| err.to_string())?;
+    if !self_update::version::bump_is_greater(cargo_crate_version!(), &latest.version)
+        .unwrap_or(false)
+    {
+        info!("no update available");
+        return Ok(None);
+    }
+
+    // A newer version exists — back up before overwriting.
     let backup_path = backup_current_executable(&exe_path)
         .map_err(|err| format!("could not save rollback backup: {err}"))?;
 
-    let updater = build_updater().map_err(|err| err.to_string())?;
     let status = updater.update().map_err(|err| {
         warn!(error = %err, backup = %backup_path.display(), "update failed; rollback backup preserved");
         err.to_string()
@@ -155,7 +170,9 @@ fn try_update() -> Result<Option<String>, String> {
             Ok(Some(v))
         }
         self_update::Status::UpToDate(_) => {
-            info!(backup = %backup_path.display(), "no update available");
+            // No actual install happened; remove the backup we just created.
+            let _ = fs::remove_file(&backup_path);
+            info!("no update available");
             Ok(None)
         }
     }
