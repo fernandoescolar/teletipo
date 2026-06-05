@@ -72,8 +72,118 @@ pub(crate) struct GpuState<'a> {
     terminal_verts_cache: Vec<f32>,
 }
 
+struct FontInitResources {
+    font: Option<fontdue::Font>,
+    font_data: Option<Box<[u8]>>,
+    font_size: f32,
+    cell_w_px: f32,
+    cell_h_px: f32,
+    glyph_cache: HashMap<char, CachedGlyph>,
+    bold_font: Option<fontdue::Font>,
+    bold_glyph_cache: HashMap<char, CachedGlyph>,
+    atlas_alloc_x: u32,
+    atlas_alloc_y: u32,
+    atlas_row_h: u32,
+    unicode_fallback_font: Option<fontdue::Font>,
+}
+
+struct AsciiRasterContext<'a> {
+    font_size: f32,
+    queue: &'a wgpu::Queue,
+    atlas_texture: &'a wgpu::Texture,
+    atlas_alloc_x: &'a mut u32,
+    atlas_alloc_y: &'a mut u32,
+    atlas_row_h: &'a mut u32,
+    cell_h_px: f32,
+}
+
+fn rasterize_ascii_glyphs(
+    font: Option<&fontdue::Font>,
+    ctx: &mut AsciiRasterContext<'_>,
+) -> HashMap<char, CachedGlyph> {
+    let mut glyph_cache = HashMap::new();
+    if let Some(font) = font {
+        for ch in ' '..='~' {
+            let (metrics, bitmap) = font.rasterize(ch, ctx.font_size);
+            let cached = pack_glyph(
+                ctx.queue,
+                ctx.atlas_texture,
+                ctx.atlas_alloc_x,
+                ctx.atlas_alloc_y,
+                ctx.atlas_row_h,
+                &metrics,
+                &bitmap,
+                ctx.cell_h_px,
+            );
+            glyph_cache.insert(ch, cached);
+        }
+    }
+    glyph_cache
+}
+
+fn init_font_resources(
+    queue: &wgpu::Queue,
+    atlas_texture: &wgpu::Texture,
+    render_config: &RenderConfig,
+) -> FontInitResources {
+    // The system-font database is expensive to build (scans hundreds of
+    // files on macOS and keeps mmap handles open), so we build it once,
+    // share it across lookups, then drop it before returning.
+    let font_db = load_system_font_database();
+    let font_size = render_config.font.font_size;
+    let font_bytes = load_font_bytes(&font_db, &render_config.font);
+    let font = font_bytes.as_ref().and_then(|bytes| {
+        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+    });
+    let font_data = font_bytes.map(Vec::into_boxed_slice);
+    let (cell_w_px, cell_h_px) = font
+        .as_ref()
+        .map(|f| (f.metrics('M', font_size).advance_width, font_size * 1.2))
+        .unwrap_or((font_size * 0.6, font_size * 1.2));
+
+    let mut atlas_alloc_x = 0u32;
+    let mut atlas_alloc_y = 0u32;
+    let mut atlas_row_h = 0u32;
+    let mut raster_ctx = AsciiRasterContext {
+        font_size,
+        queue,
+        atlas_texture,
+        atlas_alloc_x: &mut atlas_alloc_x,
+        atlas_alloc_y: &mut atlas_alloc_y,
+        atlas_row_h: &mut atlas_row_h,
+        cell_h_px,
+    };
+    let glyph_cache = rasterize_ascii_glyphs(font.as_ref(), &mut raster_ctx);
+
+    let unicode_fallback_font = load_unicode_fallback_font_bytes(&font_db).and_then(|bytes| {
+        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+    });
+
+    let bold_font_bytes = load_bold_font_bytes(&font_db, &render_config.font);
+    let bold_font = bold_font_bytes.as_ref().and_then(|bytes| {
+        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+    });
+    let bold_glyph_cache = rasterize_ascii_glyphs(bold_font.as_ref(), &mut raster_ctx);
+
+    drop(font_db);
+
+    FontInitResources {
+        font,
+        font_data,
+        font_size,
+        cell_w_px,
+        cell_h_px,
+        glyph_cache,
+        bold_font,
+        bold_glyph_cache,
+        atlas_alloc_x,
+        atlas_alloc_y,
+        atlas_row_h,
+        unicode_fallback_font,
+    }
+}
+
 impl<'a> GpuState<'a> {
-    #[allow(clippy::too_many_lines)] // sequential wgpu adapter/device/queue setup
     pub(crate) async fn new(window: &'a Window, render_config: &RenderConfig) -> Result<Self> {
         let crate::surface::SurfaceInit {
             surface,
@@ -102,84 +212,23 @@ impl<'a> GpuState<'a> {
             pipeline: text_pipeline,
             vertex_buf: text_vertex_buf,
         } = crate::surface::build_text_pipeline(&device, format, &atlas_bgl);
-
-        // Font loading and ASCII glyph pre-rasterization.
-        //
-        // The system-font database is expensive to build (scans hundreds of
-        // files on macOS and keeps mmap handles open), so we build it once,
-        // share it across all font lookups, and drop it before this function
-        // returns — releasing the backing mmaps so they don't inflate RSS for
-        // the lifetime of the renderer.
-        let font_db = load_system_font_database();
-        let font_size = render_config.font.font_size;
-        // `font_bytes` is consumed below: the same allocation is reused as
-        // `font_data` (for rustybuzz shaping) so we don't keep two copies of
-        // the font in memory.
-        let font_bytes = load_font_bytes(&font_db, &render_config.font);
-        let font = font_bytes.as_ref().and_then(|bytes| {
-            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
-        });
-        let font_data: Option<Box<[u8]>> = font_bytes.map(Vec::into_boxed_slice);
-        let (cell_w_px, cell_h_px) = font
-            .as_ref()
-            .map(|f| (f.metrics('M', font_size).advance_width, font_size * 1.2))
-            .unwrap_or((font_size * 0.6, font_size * 1.2));
-
-        let mut glyph_cache: HashMap<char, CachedGlyph> = HashMap::new();
-        let mut atlas_alloc_x = 0u32;
-        let mut atlas_alloc_y = 0u32;
-        let mut atlas_row_h = 0u32;
-        if let Some(ref f) = font {
-            for ch in ' '..='~' {
-                let (metrics, bitmap) = f.rasterize(ch, font_size);
-                let cached = pack_glyph(
-                    &queue,
-                    &atlas_texture,
-                    &mut atlas_alloc_x,
-                    &mut atlas_alloc_y,
-                    &mut atlas_row_h,
-                    &metrics,
-                    &bitmap,
-                    cell_h_px,
-                );
-                glyph_cache.insert(ch, cached);
-            }
-        }
-
-        // Unicode fallback font for non-ASCII symbols not in the primary monospace font.
-        let unicode_fallback_font = load_unicode_fallback_font_bytes(&font_db).and_then(|bytes| {
-            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
-        });
+        let FontInitResources {
+            font,
+            font_data,
+            font_size,
+            cell_w_px,
+            cell_h_px,
+            glyph_cache,
+            bold_font,
+            bold_glyph_cache,
+            atlas_alloc_x,
+            atlas_alloc_y,
+            atlas_row_h,
+            unicode_fallback_font,
+        } = init_font_resources(&queue, &atlas_texture, render_config);
 
         // Colour emoji font is loaded lazily on first use — see
         // `glyph_raster::ensure_emoji_font_loaded`.
-
-        // Bold font: load and rasterize into the same atlas with a separate cache.
-        let bold_font_bytes = load_bold_font_bytes(&font_db, &render_config.font);
-        let bold_font = bold_font_bytes.as_ref().and_then(|bytes| {
-            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
-        });
-        let mut bold_glyph_cache: HashMap<char, CachedGlyph> = HashMap::new();
-        if let Some(ref bf) = bold_font {
-            for ch in ' '..='~' {
-                let (metrics, bitmap) = bf.rasterize(ch, font_size);
-                let cached = pack_glyph(
-                    &queue,
-                    &atlas_texture,
-                    &mut atlas_alloc_x,
-                    &mut atlas_alloc_y,
-                    &mut atlas_row_h,
-                    &metrics,
-                    &bitmap,
-                    cell_h_px,
-                );
-                bold_glyph_cache.insert(ch, cached);
-            }
-        }
-
-        // Done with the system font database — drop it now so the indexed
-        // file handles / mmaps don't sit around for the renderer's lifetime.
-        drop(font_db);
 
         Ok(Self {
             surface,

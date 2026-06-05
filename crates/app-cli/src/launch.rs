@@ -194,7 +194,6 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
     }
 }
 
-#[allow(clippy::too_many_lines)] // sequential boot-time wiring; refactor tracked separately
 pub(crate) fn build_initial_state(
     rows: usize,
     cols: usize,
@@ -234,6 +233,64 @@ pub(crate) fn build_initial_state(
         }]
     };
 
+    let tabs = build_tabs(saved_tabs, rows, cols, &effective_shell, exec)?;
+
+    let mut state = GpuRuntimeState {
+        tabs,
+        active_tab: 0,
+        shell: effective_shell,
+        modifiers: crate::ModifierState::default(),
+        layout: crate::LayoutState {
+            window_width,
+            window_height,
+            window_x,
+            window_y,
+            scale_factor: 1.0,
+            cell_w: 8.4,
+            cell_h: 16.8,
+        },
+        cursor: crate::CursorState::default(),
+        drag: crate::DragState::default(),
+        overlays: crate::OverlayState::default(),
+        user_config,
+        config_error,
+        themes_fonts: crate::ThemeFontState {
+            available_themes: {
+                theme::install_default_themes();
+                theme::load_themes()
+            },
+            active_theme_idx: None,
+            available_fonts: enumerate_font_families(),
+            active_font_idx: 0,
+        },
+        update_rx: Some(update_rx),
+        update_last_checked: std::time::Instant::now(),
+        settings: crate::SettingsUiState::default(),
+        command_palette: None,
+        should_exit: false,
+        shell_services: Box::new(crate::shell::SystemShell::new()),
+    };
+
+    apply_theme_and_font_selection(&mut state);
+    if let Some(ref err) = state.config_error {
+        use std::time::Duration;
+        state.overlays.toasts.push_back(crate::state::Toast::new(
+            format!("Config error: {err}"),
+            crate::state::ToastKind::Error,
+            Duration::from_secs(8),
+        ));
+    }
+
+    Ok(state)
+}
+
+fn build_tabs(
+    saved_tabs: Vec<TabSession>,
+    rows: usize,
+    cols: usize,
+    effective_shell: &str,
+    exec: Option<&str>,
+) -> anyhow::Result<Vec<TabState>> {
     let mut tabs: Vec<TabState> = Vec::new();
     for (i, saved) in saved_tabs.into_iter().enumerate() {
         let mut app = build_app(rows, cols)?;
@@ -254,13 +311,7 @@ pub(crate) fn build_initial_state(
             Some(initial_cwd.as_str())
         };
         let (pty, integration) = if i == 0 {
-            match spawn_pty(
-                &effective_shell,
-                rows as u16,
-                cols as u16,
-                exec,
-                restore_cwd,
-            ) {
+            match spawn_pty(effective_shell, rows as u16, cols as u16, exec, restore_cwd) {
                 Ok((p, integ)) => (Some(p), integ),
                 Err(err) => {
                     app.feed_terminal(format!("PTY unavailable: {err}\n").as_bytes());
@@ -268,15 +319,9 @@ pub(crate) fn build_initial_state(
                 }
             }
         } else {
-            spawn_pty(
-                &effective_shell,
-                rows as u16,
-                cols as u16,
-                None,
-                restore_cwd,
-            )
-            .map(|(p, integ)| (Some(p), integ))
-            .unwrap_or((None, false))
+            spawn_pty(effective_shell, rows as u16, cols as u16, None, restore_cwd)
+                .map(|(p, integ)| (Some(p), integ))
+                .unwrap_or((None, false))
         };
         tabs.push(TabState {
             app,
@@ -325,43 +370,10 @@ pub(crate) fn build_initial_state(
             a11y_screen_version: 0,
         });
     }
+    Ok(tabs)
+}
 
-    let mut state = GpuRuntimeState {
-        tabs,
-        active_tab: 0,
-        shell: effective_shell,
-        modifiers: crate::ModifierState::default(),
-        layout: crate::LayoutState {
-            window_width,
-            window_height,
-            window_x,
-            window_y,
-            scale_factor: 1.0,
-            cell_w: 8.4,
-            cell_h: 16.8,
-        },
-        cursor: crate::CursorState::default(),
-        drag: crate::DragState::default(),
-        overlays: crate::OverlayState::default(),
-        user_config,
-        config_error,
-        themes_fonts: crate::ThemeFontState {
-            available_themes: {
-                theme::install_default_themes();
-                theme::load_themes()
-            },
-            active_theme_idx: None,
-            available_fonts: enumerate_font_families(),
-            active_font_idx: 0,
-        },
-        update_rx: Some(update_rx),
-        update_last_checked: std::time::Instant::now(),
-        settings: crate::SettingsUiState::default(),
-        command_palette: None,
-        should_exit: false,
-        shell_services: Box::new(crate::shell::SystemShell::new()),
-    };
-
+fn apply_theme_and_font_selection(state: &mut GpuRuntimeState) {
     state.themes_fonts.active_theme_idx =
         state.user_config.active_theme.as_ref().and_then(|name| {
             state
@@ -383,19 +395,6 @@ pub(crate) fn build_initial_state(
                 .position(|f| &f.family == family)
         })
         .unwrap_or(0);
-
-    // Surface a config parse error as a startup toast so users notice it even
-    // when they never open the Settings panel.
-    if let Some(ref err) = state.config_error {
-        use std::time::Duration;
-        state.overlays.toasts.push_back(crate::state::Toast::new(
-            format!("Config error: {err}"),
-            crate::state::ToastKind::Error,
-            Duration::from_secs(8),
-        ));
-    }
-
-    Ok(state)
 }
 
 pub(crate) fn sanitize_terminal_size(rows: usize, cols: usize) -> (usize, usize) {

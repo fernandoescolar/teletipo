@@ -139,7 +139,6 @@ impl GpuRuntimeState {
     }
 
     /// Pump PTY output for ALL tabs; returns `true` if the active tab received data.
-    #[allow(clippy::too_many_lines)] // sequential housekeeping over every tab
     #[allow(clippy::cognitive_complexity)] // sequential housekeeping over every tab
     pub(crate) fn pump_all_ptys(&mut self) -> bool {
         let mut active_had_data = false;
@@ -147,7 +146,6 @@ impl GpuRuntimeState {
         let mut dead_tabs: Vec<usize> = Vec::new();
         let mut exit_codes: Vec<(usize, i32)> = Vec::new();
         let mut resize_tabs: Vec<usize> = Vec::new();
-        let mut pty_status: Option<String> = None;
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             let Some(mut pty) = tab.pty.take() else {
                 continue;
@@ -219,39 +217,9 @@ impl GpuRuntimeState {
             self.finalize_pending_cmd(idx, code);
         }
         if !resize_tabs.is_empty() {
-            let lm = LayoutMetrics::new(
-                self.layout.window_width,
-                self.layout.window_height,
-                self.tab_bar_h(),
-                self.layout.cell_w,
-                self.layout.cell_h,
-                self.user_config.padding.horizontal as f32,
-                self.user_config.padding.vertical as f32,
-            );
-            let cols = lm.cols();
-            for i in resize_tabs {
-                if i >= self.tabs.len() {
-                    continue;
-                }
-                let rows = lm.term_rows(self.tabs[i].split_ratio);
-                self.resize_tab(i, rows, cols);
-            }
+            self.apply_fullscreen_resize_tabs(resize_tabs);
         }
-        // Close tabs whose shell exited; if it is the last tab, quit the app.
-        for &idx in dead_tabs.iter().rev() {
-            if pty_status.is_none() {
-                pty_status = Some(if self.tabs.len() == 1 {
-                    "PTY closed".to_owned()
-                } else {
-                    format!("PTY closed in tab {}", idx + 1)
-                });
-            }
-            if self.tabs.len() == 1 {
-                self.should_exit = true;
-            } else {
-                self.close_tab(idx);
-            }
-        }
+        let pty_status = self.process_dead_tabs(dead_tabs);
         if let Some(message) = pty_status {
             self.overlays.pty_status = Some((Instant::now(), message));
         }
@@ -266,6 +234,45 @@ impl GpuRuntimeState {
         }
 
         active_had_data
+    }
+
+    fn apply_fullscreen_resize_tabs(&mut self, resize_tabs: Vec<usize>) {
+        let lm = LayoutMetrics::new(
+            self.layout.window_width,
+            self.layout.window_height,
+            self.tab_bar_h(),
+            self.layout.cell_w,
+            self.layout.cell_h,
+            self.user_config.padding.horizontal as f32,
+            self.user_config.padding.vertical as f32,
+        );
+        let cols = lm.cols();
+        for i in resize_tabs {
+            if i >= self.tabs.len() {
+                continue;
+            }
+            let rows = lm.term_rows(self.tabs[i].split_ratio);
+            self.resize_tab(i, rows, cols);
+        }
+    }
+
+    fn process_dead_tabs(&mut self, dead_tabs: Vec<usize>) -> Option<String> {
+        let mut pty_status: Option<String> = None;
+        for &idx in dead_tabs.iter().rev() {
+            if pty_status.is_none() {
+                pty_status = Some(if self.tabs.len() == 1 {
+                    "PTY closed".to_owned()
+                } else {
+                    format!("PTY closed in tab {}", idx + 1)
+                });
+            }
+            if self.tabs.len() == 1 {
+                self.should_exit = true;
+            } else {
+                self.close_tab(idx);
+            }
+        }
+        pty_status
     }
 
     pub(crate) fn send_terminal_input(&mut self, bytes: &[u8]) {

@@ -158,13 +158,7 @@ pub(crate) fn apply_shell_choice(state: &mut GpuRuntimeState, command: Option<&s
     state.settings.dirty = true;
 }
 
-/// Build a `SettingsOverlay` snapshot from the current `GpuRuntimeState`.
-/// Returns `None` when the settings panel is closed.
-#[allow(clippy::too_many_lines)]
-pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<SettingsOverlay> {
-    if !state.settings.open {
-        return None;
-    }
+fn build_field_items(state: &GpuRuntimeState) -> Vec<SettingsItem> {
     let mut items: Vec<SettingsItem> = Vec::new();
     items.push(SettingsItem {
         is_header: true,
@@ -197,9 +191,6 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
                 value: String::new(),
             });
         }
-        // Font family and theme: searchable selectors (Enter = search mode, ← → = cycle).
-        // Numeric fields: selectable so they display "← N →" and ← → increments.
-        // Everything else: free-text via Enter.
         let is_searchable = (field.section == "font" && field.key == "family")
             || field.key == "theme"
             || (field.section == "terminal" && field.key == "shell");
@@ -225,8 +216,6 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
             value,
         });
     }
-
-    // Action rows — shown below the config fields.
     items.push(SettingsItem {
         is_header: true,
         is_selectable: false,
@@ -251,48 +240,58 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
         key: "Reveal Config in Finder".to_owned(),
         value: String::new(),
     });
+    items
+}
 
-    // Compute search matches when in search mode (font family or theme).
-    let (search_matches, search_selected, search_scroll_offset) = if let Some(ref buf) =
-        state.settings.search_buf
-        && state.settings.cursor < SETTINGS_FIELDS.len()
-    {
-        let q = buf.to_lowercase();
-        let field = &SETTINGS_FIELDS[state.settings.cursor];
-        let matches: Vec<String> = if field.section == "font" && field.key == "family" {
-            state
-                .themes_fonts
-                .available_fonts
-                .iter()
-                .filter(|f| f.family.to_lowercase().contains(&q))
-                .map(|f| f.family.clone())
-                .collect()
-        } else if field.key == "theme" {
-            state
-                .themes_fonts
-                .available_themes
-                .iter()
-                .filter(|t| t.name.to_lowercase().contains(&q))
-                .map(|t| t.name.clone())
-                .collect()
-        } else if field.section == "terminal" && field.key == "shell" {
-            shell_options()
-                .into_iter()
-                .filter(|s| s.label.to_lowercase().contains(&q))
-                .map(|s| s.label)
-                .collect()
-        } else {
-            vec![]
-        };
-        (
-            matches,
-            state.settings.search_selected,
-            state.settings.search_scroll_offset,
-        )
-    } else {
-        (vec![], 0, 0)
+fn compute_search_matches(state: &GpuRuntimeState) -> (Vec<String>, usize, usize) {
+    let Some(ref buf) = state.settings.search_buf else {
+        return (vec![], 0, 0);
     };
+    if state.settings.cursor >= SETTINGS_FIELDS.len() {
+        return (vec![], 0, 0);
+    }
+    let q = buf.to_lowercase();
+    let field = &SETTINGS_FIELDS[state.settings.cursor];
+    let matches: Vec<String> = if field.section == "font" && field.key == "family" {
+        state
+            .themes_fonts
+            .available_fonts
+            .iter()
+            .filter(|f| f.family.to_lowercase().contains(&q))
+            .map(|f| f.family.clone())
+            .collect()
+    } else if field.key == "theme" {
+        state
+            .themes_fonts
+            .available_themes
+            .iter()
+            .filter(|t| t.name.to_lowercase().contains(&q))
+            .map(|t| t.name.clone())
+            .collect()
+    } else if field.section == "terminal" && field.key == "shell" {
+        shell_options()
+            .into_iter()
+            .filter(|s| s.label.to_lowercase().contains(&q))
+            .map(|s| s.label)
+            .collect()
+    } else {
+        vec![]
+    };
+    (
+        matches,
+        state.settings.search_selected,
+        state.settings.search_scroll_offset,
+    )
+}
 
+/// Build a `SettingsOverlay` snapshot from the current `GpuRuntimeState`.
+/// Returns `None` when the settings panel is closed.
+pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<SettingsOverlay> {
+    if !state.settings.open {
+        return None;
+    }
+    let items = build_field_items(state);
+    let (search_matches, search_selected, search_scroll_offset) = compute_search_matches(state);
     Some(SettingsOverlay {
         items,
         cursor: state.settings.cursor,
