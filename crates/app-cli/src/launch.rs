@@ -209,6 +209,19 @@ pub(crate) fn build_initial_state(
     let window_x = session.window_x.unwrap_or(0);
     let window_y = session.window_y.unwrap_or(0);
 
+    let (user_config, config_error) = match load_config_result() {
+        Ok(cfg) => (cfg, None),
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to load config; using defaults");
+            (UserConfig::default(), Some(err.to_string()))
+        }
+    };
+    let effective_shell = user_config
+        .terminal
+        .shell
+        .clone()
+        .unwrap_or_else(|| shell.to_owned());
+
     let saved_tabs: Vec<TabSession> = if !session.tabs.is_empty() {
         session.tabs
     } else {
@@ -241,7 +254,7 @@ pub(crate) fn build_initial_state(
             Some(initial_cwd.as_str())
         };
         let (pty, integration) = if i == 0 {
-            match spawn_pty(shell, rows as u16, cols as u16, exec, restore_cwd) {
+            match spawn_pty(&effective_shell, rows as u16, cols as u16, exec, restore_cwd) {
                 Ok((p, integ)) => (Some(p), integ),
                 Err(err) => {
                     app.feed_terminal(format!("PTY unavailable: {err}\n").as_bytes());
@@ -249,7 +262,7 @@ pub(crate) fn build_initial_state(
                 }
             }
         } else {
-            spawn_pty(shell, rows as u16, cols as u16, None, restore_cwd)
+            spawn_pty(&effective_shell, rows as u16, cols as u16, None, restore_cwd)
                 .map(|(p, integ)| (Some(p), integ))
                 .unwrap_or((None, false))
         };
@@ -301,18 +314,10 @@ pub(crate) fn build_initial_state(
         });
     }
 
-    let (user_config, config_error) = match load_config_result() {
-        Ok(cfg) => (cfg, None),
-        Err(err) => {
-            tracing::warn!(error = %err, "failed to load config; using defaults");
-            (UserConfig::default(), Some(err.to_string()))
-        }
-    };
-
     let mut state = GpuRuntimeState {
         tabs,
         active_tab: 0,
-        shell: shell.to_owned(),
+        shell: effective_shell,
         modifiers: crate::ModifierState::default(),
         layout: crate::LayoutState {
             window_width,

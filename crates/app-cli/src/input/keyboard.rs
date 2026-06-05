@@ -6,6 +6,8 @@ use crate::coords::{
 use crate::search;
 use crate::settings;
 use render_wgpu::AppWindowEvent;
+#[cfg(target_os = "windows")]
+use std::path::PathBuf;
 use winit::event::ElementState;
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 
@@ -46,6 +48,68 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         return;
     }
 
+    #[cfg(target_os = "windows")]
+    if let Key::Character(ch) = &key_event.logical_key
+        && state.modifiers.ctrl_down
+    {
+        match ch.as_str() {
+            "t" | "T" => {
+                crate::commands::execute_ui_command(
+                    state,
+                    crate::commands::CommandId::NewTab,
+                    crate::commands::CommandContext::default(),
+                );
+                return;
+            }
+            "w" | "W" => {
+                crate::commands::execute_ui_command(
+                    state,
+                    crate::commands::CommandId::CloseTab,
+                    crate::commands::CommandContext::default(),
+                );
+                return;
+            }
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
+                if let Some(d) = ch.as_str().chars().next().and_then(|c| c.to_digit(10)) {
+                    let idx = (d as usize - 1).min(state.tabs.len() - 1);
+                    state.active_tab = idx;
+                    state.push_accessibility_tree();
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    if state.modifiers.ctrl_down {
+        match &key_event.logical_key {
+            Key::Named(NamedKey::PageUp) => {
+                state.active_tab = state.active_tab.saturating_sub(1);
+                state.push_accessibility_tree();
+                return;
+            }
+            Key::Named(NamedKey::PageDown) => {
+                let last = state.tabs.len() - 1;
+                state.active_tab = (state.active_tab + 1).min(last);
+                state.push_accessibility_tree();
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    // Windows often intercepts Win+Shift+P, so keep Ctrl+Shift+P as a
+    // reliable cross-platform way to open the command palette.
+    if let Key::Character(ch) = &key_event.logical_key
+        && state.modifiers.ctrl_down
+        && state.modifiers.shift_down
+        && ch.as_str().eq_ignore_ascii_case("p")
+    {
+        open_command_palette(state);
+        return;
+    }
+
     // When the shell is waiting on a foreground command (vim, less, htop,
     // sudo, a running script, ssh, …) route typing and navigation keys
     // straight to the PTY instead of the command editor.  Also covers the
@@ -66,14 +130,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 return;
             }
             Key::Named(NamedKey::Enter) => {
-                #[cfg(windows)]
-                {
-                    state.send_terminal_input(b"\r\n");
-                }
-                #[cfg(not(windows))]
-                {
-                    state.send_terminal_input(b"\r");
-                }
+                state.send_terminal_input(b"\r");
                 return;
             }
             Key::Named(NamedKey::Backspace) => {
@@ -423,7 +480,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
                 );
             }
             // Cmd+Shift+P — open command palette
-            "P" if state.modifiers.shift_down => {
+            p if state.modifiers.shift_down && p.eq_ignore_ascii_case("p") => {
                 open_command_palette(state);
                 return;
             }
@@ -860,6 +917,14 @@ fn open_command_palette(state: &mut GpuRuntimeState) {
         });
     }
 
+    #[cfg(target_os = "windows")]
+    for (label, shell) in windows_palette_shell_targets() {
+        items.push(PaletteItem {
+            label: format!("New Tab ({label})"),
+            action: PaletteAction::NewTabWithShell(shell),
+        });
+    }
+
     let n = items.len();
     let filtered: Vec<usize> = (0..n).collect();
     state.open_command_palette_modal(CommandPaletteState {
@@ -961,5 +1026,43 @@ fn execute_palette_action(state: &mut GpuRuntimeState) {
                 );
             }
         }
+        PaletteAction::NewTabWithShell(shell) => {
+            state.add_new_tab_with_shell(Some(shell.as_str()));
+        }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_palette_shell_targets() -> Vec<(String, String)> {
+    let mut out = vec![
+        ("PowerShell".to_owned(), "powershell.exe".to_owned()),
+        ("cmd".to_owned(), "cmd.exe".to_owned()),
+        ("WSL".to_owned(), "wsl.exe".to_owned()),
+    ];
+
+    let git_bash_candidates = [
+        std::env::var("ProgramFiles")
+            .ok()
+            .map(|p| PathBuf::from(p).join("Git").join("bin").join("bash.exe")),
+        std::env::var("ProgramFiles(x86)")
+            .ok()
+            .map(|p| PathBuf::from(p).join("Git").join("bin").join("bash.exe")),
+        std::env::var("LocalAppData")
+            .ok()
+            .map(|p| {
+                PathBuf::from(p)
+                    .join("Programs")
+                    .join("Git")
+                    .join("bin")
+                    .join("bash.exe")
+            }),
+    ];
+    if let Some(git_bash) = git_bash_candidates.into_iter().flatten().find(|p| p.exists()) {
+        out.push((
+            "Git Bash".to_owned(),
+            git_bash.to_string_lossy().into_owned(),
+        ));
+    }
+
+    out
 }

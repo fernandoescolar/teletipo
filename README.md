@@ -193,21 +193,23 @@ Runtime logs are written automatically to daily-rotated files under the platform
 
 | Shortcut | Action |
 |---|---|
-| `Cmd + T` | New tab |
-| `Cmd + W` | Close current tab |
-| `Cmd + [` | Previous tab |
-| `Cmd + ]` | Next tab |
-| `Cmd + 1 – 9` | Jump to tab N |
+| `Cmd + T` / `Ctrl + T` | New tab (`Cmd` on macOS, `Ctrl` on Windows) |
+| `Cmd + W` / `Ctrl + W` | Close current tab (`Cmd` on macOS, `Ctrl` on Windows) |
+| `Cmd + [` / `Ctrl + PageUp` | Previous tab (`Cmd` on macOS, `Ctrl` on Windows) |
+| `Cmd + ]` / `Ctrl + PageDown` | Next tab (`Cmd` on macOS, `Ctrl` on Windows) |
+| `Cmd + 1 – 9` / `Ctrl + 1 – 9` | Jump to tab N (`Cmd` on macOS, `Ctrl` on Windows) |
 
 ### Command palette
 
 | Shortcut | Action |
 |---|---|
-| `Cmd + Shift + P` | Open command palette |
+| `Cmd + Shift + P` / `Ctrl + Shift + P` | Open command palette (`Cmd` on macOS, `Ctrl` on Linux/Windows) |
 | `↑` / `↓` | Move through commands |
 | `Enter` | Execute highlighted command |
 | `Escape` | Close the palette |
 | typing / `Backspace` | Filter commands live |
+
+On Windows, the palette also includes shell-specific tab entries: `New Tab (PowerShell)`, `New Tab (cmd)`, `New Tab (WSL)`, and `New Tab (Git Bash)` (shown when Git Bash is detected).
 
 ### Command input (editor)
 

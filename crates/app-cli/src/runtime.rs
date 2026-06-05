@@ -495,6 +495,10 @@ impl GpuRuntimeState {
     }
 
     pub(crate) fn add_new_tab(&mut self) {
+        self.add_new_tab_with_shell(None);
+    }
+
+    pub(crate) fn add_new_tab_with_shell(&mut self, shell_override: Option<&str>) {
         let split_ratio = self.tab().split_ratio;
         // After adding the new tab there will be at least 2 tabs, so the tab bar
         // will appear and steal one cell row - account for that when sizing the PTY.
@@ -517,7 +521,11 @@ impl GpuRuntimeState {
             }
         };
         let active_cwd = self.tab().cwd.clone();
-        let (pty, integration) = spawn_pty(&self.shell, rows, cols, None, Some(&active_cwd))
+        let chosen_shell = shell_override
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.shell);
+        let (pty, integration) = spawn_pty(chosen_shell, rows, cols, None, Some(&active_cwd))
             .map(|(p, i)| (Some(p), i))
             .unwrap_or((None, false));
         self.tabs.push(TabState {

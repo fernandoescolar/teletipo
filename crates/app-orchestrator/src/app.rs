@@ -415,14 +415,9 @@ impl App {
     ) -> io::Result<bool> {
         if let Some(payload) = self.editor.command_payload(prefer_selection) {
             pty.write_input(payload.as_bytes())?;
-            #[cfg(windows)]
-            {
-                pty.write_input(b"\r\n")?;
-            }
-            #[cfg(not(windows))]
-            {
-                pty.write_input(b"\n")?;
-            }
+            // PTYs expect Enter as CR; sending CRLF can be interpreted as two
+            // submits by some shells (notably WSL/Git Bash via ConPTY).
+            pty.write_input(b"\r")?;
             self.editor.clear();
             Ok(true)
         } else {

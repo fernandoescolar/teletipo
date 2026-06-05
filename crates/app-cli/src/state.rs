@@ -152,6 +152,7 @@ pub(crate) enum PaletteAction {
     Command(crate::commands::CommandId),
     SetTheme(usize),
     SetFont(usize),
+    NewTabWithShell(String),
 }
 
 /// A single item in the command palette list.
