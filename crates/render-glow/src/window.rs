@@ -291,6 +291,7 @@ where
                             );
                             let scaled_font_size = base_font_size * scale_factor as f32;
                             painter.set_font_size(scaled_font_size);
+                            painter.clear_atlas_textures(&gl);
                             (cell_w_px, cell_h_px) = painter.cell_metrics();
                             on_event(AppWindowEvent::Resized {
                                 width: size.width,

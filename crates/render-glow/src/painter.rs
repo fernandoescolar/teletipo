@@ -304,6 +304,45 @@ impl GlPainter {
         }
     }
 
+    /// Clear both glyph atlases after a DPI/font-size jump so stale texels do
+    /// not bleed into newly packed glyphs when linear filtering is enabled.
+    pub(crate) fn clear_atlas_textures(&self, gl: &glow::Context) {
+        let mono_clear = vec![0_u8; (ATLAS_TEX_SIZE * ATLAS_TEX_SIZE) as usize];
+        let color_clear = vec![0_u8; (COLOR_ATLAS_TEX_SIZE * COLOR_ATLAS_TEX_SIZE * 4) as usize];
+
+        unsafe {
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.atlas_texture));
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+            gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0,
+                0,
+                ATLAS_TEX_SIZE as i32,
+                ATLAS_TEX_SIZE as i32,
+                glow::RED,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(&mono_clear),
+            );
+
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.color_atlas_texture));
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+            gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0,
+                0,
+                COLOR_ATLAS_TEX_SIZE as i32,
+                COLOR_ATLAS_TEX_SIZE as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(&color_clear),
+            );
+
+            gl.bind_texture(glow::TEXTURE_2D, None);
+        }
+    }
+
     pub(crate) fn cell_metrics(&self) -> (f32, f32) {
         self.rasterizer.cell_metrics()
     }

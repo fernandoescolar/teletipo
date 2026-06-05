@@ -226,6 +226,13 @@ impl<'a> GpuState<'a> {
         self.surface.configure(&self.device, &self.config);
     }
 
+    pub(crate) fn invalidate_terminal_text_cache(&mut self) {
+        self.terminal_verts_cache.clear();
+        self.last_terminal_version = 0;
+        self.last_cursor_pos = (usize::MAX, usize::MAX);
+        self.last_scroll_offset = usize::MAX;
+    }
+
     #[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // GPU render loop; tracked as follow-up to T8/T16
     pub(crate) fn render(&mut self, snapshot: &RenderSnapshot) -> Result<()> {
         // Sync theme from snapshot so live config changes are picked up immediately.

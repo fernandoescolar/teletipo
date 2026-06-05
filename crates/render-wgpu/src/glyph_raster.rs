@@ -51,6 +51,9 @@ impl<'a> GpuState<'a> {
         self.atlas_alloc_x = 0;
         self.atlas_alloc_y = 0;
         self.atlas_row_h = 0;
+        // Cached terminal vertices embed previous cell metrics; invalidate them
+        // so the next frame rebuilds text geometry at the new scale.
+        self.invalidate_terminal_text_cache();
     }
 
     /// Ensure a ligature glyph (identified by its TTF glyph ID) is rasterized and

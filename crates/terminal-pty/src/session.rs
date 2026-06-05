@@ -53,6 +53,10 @@ fn gui_shell_path() -> String {
     )
 }
 
+fn default_term() -> String {
+    std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".to_string())
+}
+
 /// Writes per-shell integration scripts that make the shell emit
 /// `ESC ] 133 ; D ; <exit_code> BEL` before each prompt (OSC 133).
 /// Returns `None` if the shell is not supported or the files cannot be written.
@@ -173,6 +177,8 @@ impl PortablePtySession {
         cwd: Option<&str>,
     ) -> Result<(Self, bool)> {
         let integration = setup_shell_integration(shell);
+        let baseline_path = gui_shell_path();
+        let term = default_term();
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -186,6 +192,12 @@ impl PortablePtySession {
 
         let mut cmd = CommandBuilder::new(shell);
 
+        // Finder-launched app sessions on macOS may inherit a sparse env.
+        // Keep a deterministic baseline so full-screen terminal apps (vim, less)
+        // can rely on TERM and command lookup consistently.
+        cmd.env("PATH", &baseline_path);
+        cmd.env("TERM", &term);
+
         if let Some(ref setup) = integration {
             for arg in &setup.extra_args {
                 cmd.arg(arg);
@@ -194,6 +206,8 @@ impl PortablePtySession {
                 cmd.env(key, val);
             }
         }
+
+        debug!(shell = %shell, term = %term, integration_active = integration.is_some(), "spawning shell with normalized pty environment");
 
         if let Some(dir) = cwd
             && !dir.is_empty()
