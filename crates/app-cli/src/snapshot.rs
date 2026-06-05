@@ -116,6 +116,8 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
     }
+    // shows the update banner for testing without needing to run the background thread or build an actual update:
+    // state.overlays.pending_update.get_or_insert(crate::UpdateBanner::Available("TEST".to_owned()));
 
     let had_data = state.pump_all_ptys();
     if had_data {
@@ -384,7 +386,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let resize_overlay = if let Some(ref banner) = state.overlays.pending_update {
         Some(match banner {
             crate::UpdateBanner::Available(v) => {
-                format!("Updated to v{v} \u{2014} restart to apply")
+                format!("Update ready v{v} \u{2014} click to restart")
             }
             crate::UpdateBanner::Failed(err) => format!("Update failed: {err}"),
         })

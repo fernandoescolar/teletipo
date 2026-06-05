@@ -515,31 +515,6 @@ impl<'a> GpuState<'a> {
             self.last_scroll_offset = snapshot.scroll_offset;
         }
 
-        // Resize overlay text is rendered every frame (never cached) so it
-        // disappears at the same time as the background box.
-        if let Some(ref overlay_text) = snapshot.resize_overlay {
-            let n_chars = overlay_text.chars().count() as f32;
-            let text_w_px = n_chars * self.cell_w_px;
-            let term_h_px = tab_bar_h + snapshot.split_ratio * available_h;
-            let x_start = (self.size.width as f32 - text_w_px) / 2.0;
-            let y_start = (tab_bar_h + term_h_px) / 2.0 - self.cell_h_px / 2.0;
-            add_text_verts(
-                overlay_text,
-                y_start,
-                x_start,
-                [1.0, 1.0, 1.0, 1.0],
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
-                &mut text_verts,
-                0,
-            );
-        }
-
         let terminal_vert_count = (text_verts.len() / 8) as u32;
 
         let editor_skip = snapshot.editor_scroll_offset;
@@ -1444,6 +1419,40 @@ impl<'a> GpuState<'a> {
                     0,
                 );
             }
+        }
+
+        // Update banner text is rendered last so it stays in front of the
+        // rest of the UI and remains visible as a top-of-window panel.
+        if let Some(ref overlay_text) = snapshot.resize_overlay
+            && self.size.width > 0
+            && self.size.height > 0
+            && self.cell_w_px > 0.0
+            && self.cell_h_px > 0.0
+        {
+            let n_chars = overlay_text.chars().count() as f32;
+            let text_w_px = n_chars * self.cell_w_px;
+            let tab_bar_h = if !snapshot.tab_labels.is_empty() {
+                self.cell_h_px
+            } else {
+                0.0
+            };
+            let x_start = (self.size.width as f32 - text_w_px) / 2.0;
+            let y_start = tab_bar_h + self.cell_h_px;
+            add_text_verts(
+                overlay_text,
+                y_start,
+                x_start,
+                [1.0, 1.0, 1.0, 1.0],
+                &[],
+                &[],
+                &self.glyph_cache,
+                None,
+                self.cell_w_px,
+                self.cell_h_px,
+                self.size,
+                &mut text_verts,
+                0,
+            );
         }
 
         let total_vert_count = (text_verts.len() / 8) as u32;

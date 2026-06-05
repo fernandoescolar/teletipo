@@ -719,29 +719,6 @@ pub(crate) fn build_panel_vertices(
         }
     }
 
-    if let Some(ref overlay_text) = snapshot.resize_overlay
-        && size.width > 0
-        && size.height > 0
-        && cell_w_px > 0.0
-        && cell_h_px > 0.0
-    {
-        let n_chars = overlay_text.chars().count() as f32;
-        let padding_px = cell_w_px * 2.0;
-        let box_w_px = n_chars * cell_w_px + padding_px * 2.0;
-        let box_h_px = cell_h_px * 2.0;
-        let win_w = size.width as f32;
-        let win_h = size.height as f32;
-        let cx_px = win_w / 2.0;
-        let cy_px = snapshot.split_ratio * win_h / 2.0;
-        let px_x = 2.0 / win_w;
-        let px_y = 2.0 / win_h;
-        let x0 = (cx_px - box_w_px / 2.0) * px_x - 1.0;
-        let x1 = (cx_px + box_w_px / 2.0) * px_x - 1.0;
-        let y0 = 1.0 - (cy_px + box_h_px / 2.0) * px_y;
-        let y1 = 1.0 - (cy_px - box_h_px / 2.0) * px_y;
-        verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, [0.05, 0.08, 0.12, 0.90]));
-    }
-
     let edit_top_px = (1.0 - edit_top_ndc) / 2.0 * size.height as f32 + 2.0;
     let editor_scroll = snapshot.editor_scroll_offset;
 
@@ -818,6 +795,33 @@ pub(crate) fn build_panel_vertices(
             pad_h,
             pad_v,
         ));
+    }
+
+    if let Some(ref overlay_text) = snapshot.resize_overlay
+        && size.width > 0
+        && size.height > 0
+        && cell_w_px > 0.0
+        && cell_h_px > 0.0
+    {
+        let n_chars = overlay_text.chars().count() as f32;
+        let padding_px = cell_w_px * 2.0;
+        let box_w_px = n_chars * cell_w_px + padding_px * 2.0;
+        let box_h_px = cell_h_px * 2.0;
+        let win_w = size.width as f32;
+        let tab_bar_h = if !snapshot.tab_labels.is_empty() {
+            cell_h_px
+        } else {
+            0.0
+        };
+        let cx_px = win_w / 2.0;
+        let cy_px = tab_bar_h + cell_h_px * 1.55;
+        let px_x = 2.0 / win_w;
+        let px_y = 2.0 / size.height as f32;
+        let x0 = (cx_px - box_w_px / 2.0) * px_x - 1.0;
+        let x1 = (cx_px + box_w_px / 2.0) * px_x - 1.0;
+        let y0 = 1.0 - (cy_px + box_h_px / 2.0) * px_y;
+        let y1 = 1.0 - (cy_px - box_h_px / 2.0) * px_y;
+        verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, [0.05, 0.08, 0.12, 0.90]));
     }
 
     verts

@@ -251,6 +251,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             }
         }
         if *btn_state == ElementState::Pressed {
+            if matches!(state.overlays.pending_update, Some(crate::UpdateBanner::Available(_))) {
+                crate::updater::restart_app();
+                return true;
+            }
+
             // Command palette click handler.
             if state.command_palette.is_some() {
                 let palette_w_px = state.layout.cell_w as f64 * 50.0;
