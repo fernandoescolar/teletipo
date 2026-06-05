@@ -2,7 +2,6 @@ use crate::config::{SETTINGS_FIELDS, save_config};
 use crate::consts::SEARCH_MAX_VISIBLE;
 use crate::runtime::GpuRuntimeState;
 use render_wgpu::{SettingsItem, SettingsOverlay};
-#[cfg(target_os = "windows")]
 use std::path::PathBuf;
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};
@@ -33,70 +32,112 @@ fn numeric_step(section: &str, key: &str) -> Option<f32> {
     }
 }
 
-#[cfg(target_os = "windows")]
 #[derive(Clone)]
-struct WindowsShellOption {
-    label: String,
-    command: Option<String>,
+pub(crate) struct ShellOption {
+    pub(crate) label: String,
+    pub(crate) command: Option<String>,
 }
 
-#[cfg(target_os = "windows")]
-fn windows_shell_options() -> Vec<WindowsShellOption> {
-    let mut out = vec![
-        WindowsShellOption {
-            label: "(auto)".to_owned(),
-            command: None,
-        },
-        WindowsShellOption {
-            label: "PowerShell".to_owned(),
-            command: Some("powershell.exe".to_owned()),
-        },
-        WindowsShellOption {
-            label: "Command Prompt (cmd)".to_owned(),
-            command: Some("cmd.exe".to_owned()),
-        },
-        WindowsShellOption {
-            label: "WSL".to_owned(),
-            command: Some("wsl.exe".to_owned()),
-        },
-    ];
+fn shell_option(label: impl Into<String>, command: impl Into<String>) -> ShellOption {
+    ShellOption {
+        label: label.into(),
+        command: Some(command.into()),
+    }
+}
 
-    let git_bash_candidates = [
-        std::env::var("ProgramFiles")
-            .ok()
-            .map(|p| PathBuf::from(p).join("Git").join("bin").join("bash.exe")),
-        std::env::var("ProgramFiles(x86)")
-            .ok()
-            .map(|p| PathBuf::from(p).join("Git").join("bin").join("bash.exe")),
-        std::env::var("LocalAppData")
-            .ok()
-            .map(|p| {
+fn shell_option_label_from_path(path: &str) -> String {
+    PathBuf::from(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path)
+        .to_owned()
+}
+
+pub(crate) fn shell_options() -> Vec<ShellOption> {
+    let mut out = vec![ShellOption {
+        label: "(auto)".to_owned(),
+        command: None,
+    }];
+
+    #[cfg(target_os = "windows")]
+    {
+        out.extend([
+            shell_option("PowerShell", "powershell.exe"),
+            shell_option("Command Prompt (cmd)", "cmd.exe"),
+            shell_option("WSL", "wsl.exe"),
+        ]);
+
+        let git_bash_candidates = [
+            std::env::var("ProgramFiles")
+                .ok()
+                .map(|p| PathBuf::from(p).join("Git").join("bin").join("bash.exe")),
+            std::env::var("ProgramFiles(x86)")
+                .ok()
+                .map(|p| PathBuf::from(p).join("Git").join("bin").join("bash.exe")),
+            std::env::var("LocalAppData").ok().map(|p| {
                 PathBuf::from(p)
                     .join("Programs")
                     .join("Git")
                     .join("bin")
                     .join("bash.exe")
             }),
-    ];
-    let git_bash = git_bash_candidates
-        .into_iter()
-        .flatten()
-        .find(|p| p.exists())
-        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"));
-    out.push(WindowsShellOption {
-        label: "Git Bash".to_owned(),
-        command: Some(git_bash.to_string_lossy().into_owned()),
-    });
+        ];
+        let git_bash = git_bash_candidates
+            .into_iter()
+            .flatten()
+            .find(|p| p.exists())
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"));
+        out.push(ShellOption {
+            label: "Git Bash".to_owned(),
+            command: Some(git_bash.to_string_lossy().into_owned()),
+        });
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let mut candidates: Vec<ShellOption> = Vec::new();
+
+        if let Ok(shell) = std::env::var("SHELL")
+            && !shell.trim().is_empty()
+        {
+            let shell = shell.trim().to_owned();
+            candidates.push(shell_option(shell_option_label_from_path(&shell), shell));
+        }
+
+        let common_shells = [
+            ("zsh", "/bin/zsh"),
+            ("bash", "/bin/bash"),
+            ("sh", "/bin/sh"),
+            ("fish", "/usr/bin/fish"),
+            ("fish", "/usr/local/bin/fish"),
+            ("fish", "/opt/homebrew/bin/fish"),
+        ];
+        for (label, path) in common_shells {
+            let path = PathBuf::from(path);
+            if path.exists() {
+                let command = path.to_string_lossy().into_owned();
+                if candidates
+                    .iter()
+                    .all(|opt| opt.command.as_deref() != Some(command.as_str()))
+                {
+                    candidates.push(shell_option(label, command));
+                }
+            }
+        }
+
+        candidates.sort_by_key(|item| item.label.to_lowercase());
+        out.extend(candidates);
+    }
+
     out
 }
 
-#[cfg(target_os = "windows")]
-fn windows_shell_label_for_command(shell: Option<&str>) -> String {
+pub(crate) fn shell_label_for_command(shell: Option<&str>) -> String {
     let Some(shell) = shell else {
         return "(auto)".to_owned();
     };
     let normalized = shell.trim().to_ascii_lowercase();
-    for opt in windows_shell_options() {
+    for opt in shell_options() {
         if let Some(cmd) = opt.command
             && cmd.eq_ignore_ascii_case(&normalized)
         {
@@ -106,8 +147,7 @@ fn windows_shell_label_for_command(shell: Option<&str>) -> String {
     shell.to_owned()
 }
 
-#[cfg(target_os = "windows")]
-fn apply_windows_shell_choice(state: &mut GpuRuntimeState, command: Option<&str>) {
+pub(crate) fn apply_shell_choice(state: &mut GpuRuntimeState, command: Option<&str>) {
     let selected = command
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -161,7 +201,7 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
         // Everything else: free-text via Enter.
         let is_searchable = (field.section == "font" && field.key == "family")
             || field.key == "theme"
-            || (cfg!(target_os = "windows") && field.section == "terminal" && field.key == "shell");
+            || (field.section == "terminal" && field.key == "shell");
         let is_selectable = is_searchable || numeric_step(field.section, field.key).is_some();
         let value = if field.section == "font" && field.key == "family" {
             state
@@ -170,15 +210,8 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
                 .get(state.themes_fonts.active_font_idx)
                 .map(|f| f.family.clone())
                 .unwrap_or_else(|| "(default)".to_owned())
-        } else if cfg!(target_os = "windows") && field.section == "terminal" && field.key == "shell" {
-            #[cfg(target_os = "windows")]
-            {
-                windows_shell_label_for_command(state.user_config.terminal.shell.as_deref())
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                state.user_config.get_field(field.section, field.key)
-            }
+        } else if field.section == "terminal" && field.key == "shell" {
+            shell_label_for_command(state.user_config.terminal.shell.as_deref())
         } else {
             state.user_config.get_field(field.section, field.key)
         };
@@ -241,19 +274,12 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
                 .filter(|t| t.name.to_lowercase().contains(&q))
                 .map(|t| t.name.clone())
                 .collect()
-        } else if cfg!(target_os = "windows") && field.section == "terminal" && field.key == "shell" {
-            #[cfg(target_os = "windows")]
-            {
-                windows_shell_options()
-                    .into_iter()
-                    .filter(|s| s.label.to_lowercase().contains(&q))
-                    .map(|s| s.label)
-                    .collect()
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                vec![]
-            }
+        } else if field.section == "terminal" && field.key == "shell" {
+            shell_options()
+                .into_iter()
+                .filter(|s| s.label.to_lowercase().contains(&q))
+                .map(|s| s.label)
+                .collect()
         } else {
             vec![]
         };
@@ -405,31 +431,24 @@ pub(crate) fn handle_settings_key(
                     Some(state.themes_fonts.available_fonts[next].family.clone())
                 };
                 state.settings.dirty = true;
-            } else if cfg!(target_os = "windows")
-                && field.section == "terminal"
-                && field.key == "shell"
-            {
-                #[cfg(target_os = "windows")]
-                {
-                    let options = windows_shell_options();
-                    if !options.is_empty() {
-                        let cur = options
-                            .iter()
-                            .position(|opt| {
-                                windows_shell_label_for_command(
-                                    state.user_config.terminal.shell.as_deref(),
-                                ) == opt.label
-                            })
-                            .unwrap_or(0);
-                        let next = if is_right {
-                            (cur + 1) % options.len()
-                        } else if cur == 0 {
-                            options.len() - 1
-                        } else {
-                            cur - 1
-                        };
-                        apply_windows_shell_choice(state, options[next].command.as_deref());
-                    }
+            } else if field.section == "terminal" && field.key == "shell" {
+                let options = shell_options();
+                if !options.is_empty() {
+                    let cur = options
+                        .iter()
+                        .position(|opt| {
+                            shell_label_for_command(state.user_config.terminal.shell.as_deref())
+                                == opt.label
+                        })
+                        .unwrap_or(0);
+                    let next = if is_right {
+                        (cur + 1) % options.len()
+                    } else if cur == 0 {
+                        options.len() - 1
+                    } else {
+                        cur - 1
+                    };
+                    apply_shell_choice(state, options[next].command.as_deref());
                 }
             } else if let Some(step) = numeric_step(field.section, field.key) {
                 // Numeric field: increment / decrement by step.
@@ -473,9 +492,7 @@ pub(crate) fn handle_settings_key(
             let field = &SETTINGS_FIELDS[idx];
             let is_searchable = (field.section == "font" && field.key == "family")
                 || field.key == "theme"
-                || (cfg!(target_os = "windows")
-                    && field.section == "terminal"
-                    && field.key == "shell");
+                || (field.section == "terminal" && field.key == "shell");
             if is_searchable {
                 // Activate type-to-filter search mode (font family and theme).
                 state.settings.search_buf = Some(String::new());
@@ -510,9 +527,7 @@ pub(crate) fn handle_settings_key(
                 let field = &SETTINGS_FIELDS[state.settings.cursor];
                 let is_selectable = field.key == "theme"
                     || (field.section == "font" && field.key == "family")
-                    || (cfg!(target_os = "windows")
-                        && field.section == "terminal"
-                        && field.key == "shell")
+                    || (field.section == "terminal" && field.key == "shell")
                     || numeric_step(field.section, field.key).is_some();
                 if !is_selectable && !state.user_config.set_field(field.section, field.key, &buf) {
                     tracing::warn!(
@@ -568,18 +583,11 @@ fn search_match_count(state: &GpuRuntimeState) -> usize {
             .iter()
             .filter(|t| t.name.to_lowercase().contains(&buf))
             .count()
-    } else if cfg!(target_os = "windows") && field.section == "terminal" && field.key == "shell" {
-        #[cfg(target_os = "windows")]
-        {
-            windows_shell_options()
-                .into_iter()
-                .filter(|s| s.label.to_lowercase().contains(&buf))
-                .count()
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            0
-        }
+    } else if field.section == "terminal" && field.key == "shell" {
+        shell_options()
+            .into_iter()
+            .filter(|s| s.label.to_lowercase().contains(&buf))
+            .count()
     } else {
         0
     }
@@ -650,16 +658,13 @@ fn confirm_search_selection(state: &mut GpuRuntimeState) {
             apply_theme_file(&mut state.user_config, &tf);
             state.settings.dirty = true;
         }
-    } else if cfg!(target_os = "windows") && field.section == "terminal" && field.key == "shell" {
-        #[cfg(target_os = "windows")]
-        {
-            let matches: Vec<WindowsShellOption> = windows_shell_options()
-                .into_iter()
-                .filter(|s| s.label.to_lowercase().contains(&buf))
-                .collect();
-            if let Some(shell) = matches.get(state.settings.search_selected) {
-                apply_windows_shell_choice(state, shell.command.as_deref());
-            }
+    } else if field.section == "terminal" && field.key == "shell" {
+        let matches: Vec<ShellOption> = shell_options()
+            .into_iter()
+            .filter(|s| s.label.to_lowercase().contains(&buf))
+            .collect();
+        if let Some(shell) = matches.get(state.settings.search_selected) {
+            apply_shell_choice(state, shell.command.as_deref());
         }
     }
     state.settings.search_buf = None;

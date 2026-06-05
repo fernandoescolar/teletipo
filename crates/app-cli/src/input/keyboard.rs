@@ -6,8 +6,6 @@ use crate::coords::{
 use crate::search;
 use crate::settings;
 use render_wgpu::AppWindowEvent;
-#[cfg(target_os = "windows")]
-use std::path::PathBuf;
 use winit::event::ElementState;
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 
@@ -917,13 +915,16 @@ fn open_command_palette(state: &mut GpuRuntimeState) {
         });
     }
 
-    #[cfg(target_os = "windows")]
-    for (label, shell) in windows_palette_shell_targets() {
-        items.push(PaletteItem {
-            label: format!("New Tab ({label})"),
-            action: PaletteAction::NewTabWithShell(shell),
-        });
+    for shell in crate::settings::shell_options() {
+        if let Some(command) = shell.command {
+            items.push(PaletteItem {
+                label: format!("New Tab ({})", shell.label),
+                action: PaletteAction::NewTabWithShell(command),
+            });
+        }
     }
+
+    items.sort_by_key(|item| item.label.to_lowercase());
 
     let n = items.len();
     let filtered: Vec<usize> = (0..n).collect();
@@ -1030,39 +1031,4 @@ fn execute_palette_action(state: &mut GpuRuntimeState) {
             state.add_new_tab_with_shell(Some(shell.as_str()));
         }
     }
-}
-
-#[cfg(target_os = "windows")]
-fn windows_palette_shell_targets() -> Vec<(String, String)> {
-    let mut out = vec![
-        ("PowerShell".to_owned(), "powershell.exe".to_owned()),
-        ("cmd".to_owned(), "cmd.exe".to_owned()),
-        ("WSL".to_owned(), "wsl.exe".to_owned()),
-    ];
-
-    let git_bash_candidates = [
-        std::env::var("ProgramFiles")
-            .ok()
-            .map(|p| PathBuf::from(p).join("Git").join("bin").join("bash.exe")),
-        std::env::var("ProgramFiles(x86)")
-            .ok()
-            .map(|p| PathBuf::from(p).join("Git").join("bin").join("bash.exe")),
-        std::env::var("LocalAppData")
-            .ok()
-            .map(|p| {
-                PathBuf::from(p)
-                    .join("Programs")
-                    .join("Git")
-                    .join("bin")
-                    .join("bash.exe")
-            }),
-    ];
-    if let Some(git_bash) = git_bash_candidates.into_iter().flatten().find(|p| p.exists()) {
-        out.push((
-            "Git Bash".to_owned(),
-            git_bash.to_string_lossy().into_owned(),
-        ));
-    }
-
-    out
 }

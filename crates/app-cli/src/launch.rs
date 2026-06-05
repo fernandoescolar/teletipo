@@ -254,7 +254,13 @@ pub(crate) fn build_initial_state(
             Some(initial_cwd.as_str())
         };
         let (pty, integration) = if i == 0 {
-            match spawn_pty(&effective_shell, rows as u16, cols as u16, exec, restore_cwd) {
+            match spawn_pty(
+                &effective_shell,
+                rows as u16,
+                cols as u16,
+                exec,
+                restore_cwd,
+            ) {
                 Ok((p, integ)) => (Some(p), integ),
                 Err(err) => {
                     app.feed_terminal(format!("PTY unavailable: {err}\n").as_bytes());
@@ -262,9 +268,15 @@ pub(crate) fn build_initial_state(
                 }
             }
         } else {
-            spawn_pty(&effective_shell, rows as u16, cols as u16, None, restore_cwd)
-                .map(|(p, integ)| (Some(p), integ))
-                .unwrap_or((None, false))
+            spawn_pty(
+                &effective_shell,
+                rows as u16,
+                cols as u16,
+                None,
+                restore_cwd,
+            )
+            .map(|(p, integ)| (Some(p), integ))
+            .unwrap_or((None, false))
         };
         tabs.push(TabState {
             app,

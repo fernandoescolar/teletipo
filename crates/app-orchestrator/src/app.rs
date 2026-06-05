@@ -575,10 +575,7 @@ mod tests {
     use std::time::Duration;
     use terminal_pty::MockPty;
 
-    #[cfg(windows)]
-    const LINE_ENDING: &[u8] = b"\r\n";
-    #[cfg(not(windows))]
-    const LINE_ENDING: &[u8] = b"\n";
+    const LINE_ENDING: &[u8] = b"\r";
 
     /// Construct an `App` with the given terminal dimensions for testing.
     /// Panics if construction fails (invalid size).
