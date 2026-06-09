@@ -187,7 +187,7 @@ pub(crate) fn build_panel_vertices(
         let editor_top_px = tab_bar_h + snapshot.split_ratio * (size.height as f32 - tab_bar_h);
         let editor_h = (size.height as f32 - editor_top_px).max(0.0);
         let half_h = (editor_h * 0.28).clamp(18.0, 72.0);
-        let center_x = size.width as f32 * 0.5;
+        let left_x = pad_h + half_h * 0.15;
         let center_y = editor_top_px + editor_h * 0.5;
         let color = [
             theme.separator_focused[0],
@@ -198,7 +198,7 @@ pub(crate) fn build_panel_vertices(
         let thickness = (half_h * 0.16).max(3.0);
         for step in 0..half_h as usize {
             let dy = step as f32;
-            let x = center_x - half_h * 0.55 + dy * 0.55;
+            let x = left_x + dy * 0.55;
             for y in [center_y - half_h + dy, center_y + half_h - dy] {
                 let x0 = x * px_x - 1.0;
                 let x1 = (x + thickness) * px_x - 1.0;

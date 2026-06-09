@@ -135,6 +135,20 @@ pub(crate) fn editor_row_col_to_offset(text: &str, row: usize, col: usize) -> us
     line_start + char_byte
 }
 
+/// Return the byte offset at the start of the line containing `offset`.
+pub(crate) fn editor_line_start_offset(text: &str, offset: usize) -> usize {
+    let offset = offset.min(text.len());
+    text[..offset].rfind('\n').map_or(0, |index| index + 1)
+}
+
+/// Return the byte offset at the end of the line containing `offset`.
+pub(crate) fn editor_line_end_offset(text: &str, offset: usize) -> usize {
+    let offset = offset.min(text.len());
+    text[offset..]
+        .find('\n')
+        .map_or(text.len(), |index| offset + index)
+}
+
 /// Returns the (row, col) grid position of the cursor in `text`.
 /// row is 0-indexed; col is the character count from the start of the current line.
 pub(crate) fn editor_cursor_row_col(text: &str, offset: usize) -> (usize, usize) {
@@ -706,6 +720,24 @@ mod tests {
     #[test]
     fn leading_spaces_no_indent() {
         assert_eq!(line_leading_spaces("code", 4), "");
+    }
+
+    // ── editor line boundaries ───────────────────────────────────────────
+
+    #[test]
+    fn line_start_and_end_offsets_stay_on_current_line() {
+        let text = "first\nsecond line\nthird";
+        assert_eq!(editor_line_start_offset(text, 10), 6);
+        assert_eq!(editor_line_end_offset(text, 10), 17);
+    }
+
+    #[test]
+    fn line_boundaries_handle_first_last_and_unicode_lines() {
+        let text = "héllo\nworld";
+        assert_eq!(editor_line_start_offset(text, 3), 0);
+        assert_eq!(editor_line_end_offset(text, 3), 6);
+        assert_eq!(editor_line_start_offset(text, text.len()), 7);
+        assert_eq!(editor_line_end_offset(text, text.len()), text.len());
     }
 
     // ── cursor_at_line_end ───────────────────────────────────────────────

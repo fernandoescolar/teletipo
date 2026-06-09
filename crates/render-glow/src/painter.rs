@@ -743,7 +743,7 @@ impl GlPainter {
         }
         let editor_h = (layout.height - layout.editor_top).max(0.0);
         let half_h = (editor_h * 0.28).clamp(18.0, 72.0);
-        let center_x = layout.width * 0.5;
+        let left_x = layout.padding_h + half_h * 0.15;
         let center_y = layout.editor_top + editor_h * 0.5;
         let thickness = (half_h * 0.16).max(3.0);
         let color = [
@@ -754,7 +754,7 @@ impl GlPainter {
         ];
         for step in 0..half_h as usize {
             let dy = step as f32;
-            let x = center_x - half_h * 0.55 + dy * 0.55;
+            let x = left_x + dy * 0.55;
             for y in [center_y - half_h + dy, center_y + half_h - dy] {
                 self.push_rect(x, y, x + thickness, y + 2.0, color);
             }
