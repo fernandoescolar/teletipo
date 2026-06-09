@@ -58,6 +58,8 @@ pub struct RenderSnapshot {
     pub resize_overlay: Option<String>,
     pub editor_line_count: usize,
     pub editor_scroll_offset: usize,
+    /// Horizontal editor viewport offset in character cells.
+    pub editor_horizontal_scroll_offset: usize,
     pub editor_selection: Option<(usize, usize)>,
     pub selection: Option<(usize, usize, usize, usize)>,
     /// Highlight ranges for all terminal search matches in viewport coordinates.

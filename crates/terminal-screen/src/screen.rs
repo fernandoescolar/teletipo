@@ -372,19 +372,12 @@ impl Screen {
     }
 
     pub fn backspace(&mut self) {
-        let mut dirty_row = None;
-        {
-            let grid = self.active_grid_mut();
-            if grid.cursor_col > 0 {
-                grid.cursor_col -= 1;
-                let idx = grid.cursor_row * grid.cols + grid.cursor_col;
-                grid.cells[idx] = Cell::default();
-                dirty_row = Some(grid.cursor_row);
-            }
-        }
-        if let Some(row) = dirty_row {
-            self.mark_dirty_row(row);
-        }
+        // BS is a cursor movement control, not an erase operation.  Shell line
+        // editors use it while redrawing long input; erasing here damages prompt
+        // cells before the following redraw sequence has a chance to update them.
+        let grid = self.active_grid_mut();
+        grid.cursor_col = grid.cursor_col.saturating_sub(1);
+        grid.pending_wrap = false;
         self.bump_version();
     }
 
@@ -993,6 +986,19 @@ mod tests {
         }
 
         assert_eq!(screen.dump_text(), "ab  \ncd  ");
+    }
+
+    #[test]
+    fn backspace_moves_cursor_without_erasing_prompt_content() {
+        let mut screen = Screen::new(1, 8);
+        for ch in "prompt".chars() {
+            screen.put_char(ch);
+        }
+
+        screen.backspace();
+
+        assert_eq!(screen.cursor_col(), 5);
+        assert!(screen.dump_text().starts_with("prompt"));
     }
 
     #[test]

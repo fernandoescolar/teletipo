@@ -544,6 +544,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         resize_overlay,
         editor_line_count,
         editor_scroll_offset,
+        editor_horizontal_scroll_offset: state.tabs[active].editor_horizontal_scroll_offset,
         editor_selection,
         selection,
         search_highlights,

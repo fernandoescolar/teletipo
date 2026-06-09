@@ -414,7 +414,17 @@ impl App {
         prefer_selection: bool,
     ) -> io::Result<bool> {
         if let Some(payload) = self.editor.command_payload(prefer_selection) {
-            pty.write_input(payload.as_bytes())?;
+            // Submit through bracketed paste when the shell requests it.  A command
+            // can be hundreds of bytes long; sending it as one burst of ordinary
+            // keypresses makes readline/ZLE repeatedly redraw and reposition the
+            // prompt, which is both wasteful and prone to corrupting long lines.
+            if self.terminal.bracketed_paste() {
+                pty.write_input(b"\x1b[200~")?;
+                pty.write_input(payload.as_bytes())?;
+                pty.write_input(b"\x1b[201~")?;
+            } else {
+                pty.write_input(payload.as_bytes())?;
+            }
             // PTYs expect Enter as CR; sending CRLF can be interpreted as two
             // submits by some shells (notably WSL/Git Bash via ConPTY).
             pty.write_input(b"\r")?;
@@ -630,6 +640,21 @@ mod tests {
         assert!(sent);
         let expected = [b"echo run-buffer".as_ref(), LINE_ENDING].concat();
         assert_eq!(pty.input_log(), expected.as_slice());
+    }
+
+    #[test]
+    fn wraps_editor_command_in_bracketed_paste_when_enabled() {
+        let mut app = make_app(4, 32);
+        let mut pty = MockPty::default();
+        app.feed_terminal(b"\x1b[?2004h");
+        app.insert_editor_input("openssl s_client -connect example.com:443 </dev/null");
+
+        app.run_editor_command(&mut pty, false).expect("run");
+
+        assert_eq!(
+            pty.input_log(),
+            b"\x1b[200~openssl s_client -connect example.com:443 </dev/null\x1b[201~\r"
+        );
     }
 
     #[test]

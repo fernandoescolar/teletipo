@@ -158,6 +158,7 @@ mod tests {
             resize_overlay: None,
             editor_line_count: 1,
             editor_scroll_offset: 0,
+            editor_horizontal_scroll_offset: 0,
             editor_selection: None,
             selection: None,
             search_highlights: vec![],

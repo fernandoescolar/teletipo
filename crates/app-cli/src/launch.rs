@@ -328,6 +328,7 @@ fn build_tabs(
             pty,
             scroll_offset: 0,
             editor_scroll_offset: 0,
+            editor_horizontal_scroll_offset: 0,
             history: saved.history.clone(),
             history_index: None,
             saved_input: String::new(),

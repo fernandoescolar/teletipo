@@ -21,6 +21,8 @@ pub(crate) struct TabState {
     pub(crate) scroll_offset: usize,
     /// How many lines the command editor is scrolled (0 = top visible).
     pub(crate) editor_scroll_offset: usize,
+    /// Horizontal editor viewport offset in character cells.
+    pub(crate) editor_horizontal_scroll_offset: usize,
     /// Command history for this tab (oldest first).
     pub(crate) history: Vec<String>,
     /// Index into `history` while navigating; `None` = current (unsaved) input.
