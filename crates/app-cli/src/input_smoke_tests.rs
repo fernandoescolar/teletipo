@@ -28,6 +28,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         pty: None,
         scroll_offset: 0,
         editor_scroll_offset: 0,
+        editor_horizontal_scroll_offset: 0,
         history: Vec::new(),
         history_index: None,
         saved_input: String::new(),

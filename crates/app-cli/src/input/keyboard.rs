@@ -461,7 +461,7 @@ fn handle_super_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
     if !state.modifiers.super_down {
         return false;
     }
-    match ch {
+    match ch.to_ascii_lowercase().as_str() {
         "," => {
             crate::commands::execute_ui_command(
                 state,
@@ -514,6 +514,12 @@ fn handle_super_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
 fn handle_ctrl_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
     if !state.modifiers.ctrl_down {
         return false;
+    }
+    if ch.eq_ignore_ascii_case("a") {
+        let end = state.tab().app.editor_snapshot().len();
+        state.tab_mut().app.set_editor_cursor(0, false);
+        state.tab_mut().app.set_editor_cursor(end, true);
+        return true;
     }
     if ch == "," {
         crate::commands::execute_ui_command(

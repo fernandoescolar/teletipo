@@ -568,7 +568,7 @@ impl<'a> GpuState<'a> {
 
         let editor_skip = snapshot.editor_scroll_offset;
         let prefix_color = [0.40, 0.80, 1.00, 1.0_f32];
-        if editor_skip == 0 {
+        if editor_skip == 0 && snapshot.editor_horizontal_scroll_offset == 0 {
             add_text_verts(
                 "\u{276f} ",
                 edit_top_px + pad_v,
@@ -601,7 +601,7 @@ impl<'a> GpuState<'a> {
         add_text_verts(
             &padded_editor,
             edit_top_px + pad_v,
-            pad_h,
+            pad_h - snapshot.editor_horizontal_scroll_offset as f32 * self.cell_w_px,
             self.theme.text,
             &padded_hl,
             &[],

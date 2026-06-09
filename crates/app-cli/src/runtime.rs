@@ -366,6 +366,7 @@ impl GpuRuntimeState {
         tab.pty = Some(pty);
         tab.scroll_offset = 0;
         tab.editor_scroll_offset = 0;
+        tab.editor_horizontal_scroll_offset = 0;
     }
 
     pub(crate) fn history_prev(&mut self) {
@@ -387,6 +388,7 @@ impl GpuRuntimeState {
         tab.app.editor_clear();
         tab.app.insert_editor_input(&entry);
         tab.editor_scroll_offset = 0;
+        tab.editor_horizontal_scroll_offset = 0;
     }
 
     pub(crate) fn history_next(&mut self) {
@@ -402,6 +404,7 @@ impl GpuRuntimeState {
             tab.app.editor_clear();
             tab.app.insert_editor_input(&entry);
             tab.editor_scroll_offset = 0;
+            tab.editor_horizontal_scroll_offset = 0;
         } else {
             tab.history_index = None;
             let saved = tab.saved_input.clone();
@@ -542,6 +545,7 @@ impl GpuRuntimeState {
             pty,
             scroll_offset: 0,
             editor_scroll_offset: 0,
+            editor_horizontal_scroll_offset: 0,
             history: vec![],
             history_index: None,
             saved_input: String::new(),

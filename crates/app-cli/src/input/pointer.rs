@@ -1,7 +1,7 @@
 use crate::GpuRuntimeState;
 use crate::coords::{
     clamp_editor_scroll, cursor_to_terminal_cell, detect_terminal_links, editor_row_col_to_offset,
-    expand_tilde, extract_selection, strip_line_col,
+    editor_word_bounds, expand_tilde, extract_selection, strip_line_col,
 };
 use crate::launch::execute_context_menu_item;
 use crate::search;
@@ -158,7 +158,8 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             let prefix_cols = if row == 0 { 2.0_f64 } else { 0.0 };
             let col = ((*x - pad_h) / state.layout.cell_w as f64 - prefix_cols)
                 .max(0.0)
-                .floor() as usize;
+                .floor() as usize
+                + state.tab().editor_horizontal_scroll_offset;
             let text = state.tab().app.editor_snapshot();
             let offset = editor_row_col_to_offset(&text, row, col);
             state.tab_mut().app.set_editor_cursor(offset, true);
@@ -541,6 +542,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 };
                 state.cursor.last_click_time = Some(now);
                 state.cursor.last_click_cell = Some(cell);
+                state.cursor.last_click_was_editor = false;
                 state.cursor.click_count = click_count;
 
                 if click_count == 3 {
@@ -613,16 +615,36 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 let col = ((state.cursor.cursor_x - pad_h_f) / state.layout.cell_w as f64
                     - prefix_cols)
                     .max(0.0)
-                    .floor() as usize;
+                    .floor() as usize
+                    + state.tab().editor_horizontal_scroll_offset;
                 // Clicking in the editor clears any terminal text selection.
                 state.tab_mut().selection_anchor = None;
                 state.tab_mut().selection_end = None;
                 state.tab_mut().is_selecting = false;
                 let text = state.tab().app.editor_snapshot();
                 let offset = editor_row_col_to_offset(&text, row, col);
-                let extend = state.modifiers.shift_down;
-                state.tab_mut().app.set_editor_cursor(offset, extend);
-                state.tab_mut().is_selecting_editor = true;
+                const DOUBLE_CLICK_MS: u128 = 400;
+                let now = Instant::now();
+                let is_double_click = state.cursor.last_click_was_editor
+                    && state.cursor.last_click_cell == Some((row, col))
+                    && state.cursor.last_click_time.is_some_and(|last| {
+                        now.duration_since(last).as_millis() <= DOUBLE_CLICK_MS
+                    });
+                state.cursor.last_click_time = Some(now);
+                state.cursor.last_click_cell = Some((row, col));
+                state.cursor.last_click_was_editor = true;
+                if is_double_click {
+                    let (start, end) = editor_word_bounds(&text, offset);
+                    state.tab_mut().app.set_editor_cursor(start, false);
+                    state.tab_mut().app.set_editor_cursor(end, true);
+                    state.tab_mut().is_selecting_editor = false;
+                    state.cursor.click_count = 2;
+                } else {
+                    let extend = state.modifiers.shift_down;
+                    state.tab_mut().app.set_editor_cursor(offset, extend);
+                    state.tab_mut().is_selecting_editor = true;
+                    state.cursor.click_count = 1;
+                }
                 clamp_editor_scroll(state);
             }
         }
@@ -706,6 +728,31 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
 
         if state.cursor.cursor_y > term_bottom {
             let editor_text = state.tab().app.editor_snapshot();
+            if state.modifiers.shift_down {
+                let max_cols = editor_text
+                    .lines()
+                    .map(|line| line.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    + 2;
+                let visible_cols = if state.layout.cell_w > 0.0 {
+                    ((state.layout.window_width as f32
+                        - 2.0 * state.user_config.padding.horizontal as f32)
+                        / state.layout.cell_w)
+                        .floor()
+                        .max(1.0) as usize
+                } else {
+                    1
+                };
+                let max_scroll = max_cols.saturating_sub(visible_cols);
+                let prev = state.tab().editor_horizontal_scroll_offset;
+                state.tab_mut().editor_horizontal_scroll_offset = if *delta_lines > 0.0 {
+                    prev.saturating_sub(lines)
+                } else {
+                    prev.saturating_add(lines).min(max_scroll)
+                };
+                return true;
+            }
             let total_lines = editor_text.lines().count().max(1);
             let edit_h_px = state.layout.window_height as f64 - term_bottom;
             let pad_v = state.user_config.padding.vertical as f32;

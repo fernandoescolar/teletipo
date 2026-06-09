@@ -771,8 +771,9 @@ pub(crate) fn build_panel_vertices(
                 continue;
             }
             let visible_row = row - editor_scroll;
-            let x0 = (pad_h + from_col as f32 * cell_w_px) * px_x - 1.0;
-            let x1 = (pad_h + to_col as f32 * cell_w_px) * px_x - 1.0;
+            let horizontal_scroll = snapshot.editor_horizontal_scroll_offset as f32;
+            let x0 = (pad_h + (from_col as f32 - horizontal_scroll) * cell_w_px) * px_x - 1.0;
+            let x1 = (pad_h + (to_col as f32 - horizontal_scroll) * cell_w_px) * px_x - 1.0;
             let y_top_px = edit_top_px + pad_v + visible_row as f32 * cell_h_px;
             let y1 = 1.0 - y_top_px * px_y;
             let y0 = 1.0 - (y_top_px + cell_h_px) * px_y;
@@ -792,6 +793,7 @@ pub(crate) fn build_panel_vertices(
             size,
             theme.cursor,
             editor_scroll,
+            snapshot.editor_horizontal_scroll_offset,
             pad_h,
             pad_v,
         ));
@@ -1377,6 +1379,7 @@ pub(crate) fn editor_caret_verts(
     size: PhysicalSize<u32>,
     color: [f32; 4],
     scroll_offset: usize,
+    horizontal_scroll_offset: usize,
     pad_h: f32,
     pad_v: f32,
 ) -> [f32; 36] {
@@ -1401,7 +1404,7 @@ pub(crate) fn editor_caret_verts(
     let col = col_in_editor + if row == 0 { EDITOR_PREFIX_COLS } else { 0 };
     let px_x = 2.0 / win_w;
     let px_y = 2.0 / win_h;
-    let gx0 = pad_h + col as f32 * cell_w_px;
+    let gx0 = pad_h + (col as f32 - horizontal_scroll_offset as f32) * cell_w_px;
     let gy0 = edit_top_px + pad_v + visible_row as f32 * cell_h_px;
     let x0 = gx0 * px_x - 1.0;
     let x1 = (gx0 + 2.0) * px_x - 1.0;

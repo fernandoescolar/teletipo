@@ -44,6 +44,8 @@ pub(crate) struct CursorState {
     pub(crate) last_click_time: Option<std::time::Instant>,
     /// Terminal cell (row, col) of the last left-click (for proximity check).
     pub(crate) last_click_cell: Option<(usize, usize)>,
+    /// Whether the previous click was inside the command editor.
+    pub(crate) last_click_was_editor: bool,
     /// Consecutive click count: 1 = single, 2 = double, 3 = triple.
     pub(crate) click_count: u8,
 }

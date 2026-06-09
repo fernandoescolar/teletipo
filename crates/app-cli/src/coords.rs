@@ -3,9 +3,22 @@ use render_wgpu::SCROLLBAR_W_PX;
 
 use crate::GpuRuntimeState;
 
-/// Pure scroll-clamp helper: given a `cursor_row`, the number of `visible_rows`,
-/// and the `current_offset`, returns the new scroll offset that keeps the cursor
-/// in view.  The offset is unchanged when the cursor is already visible.
+/// Keep the editor caret column inside the horizontal viewport.
+pub(crate) fn clamp_editor_horizontal_scroll_offset(
+    cursor_col: usize,
+    visible_cols: usize,
+    current_offset: usize,
+) -> usize {
+    if cursor_col < current_offset {
+        cursor_col
+    } else if cursor_col >= current_offset + visible_cols {
+        cursor_col + 1 - visible_cols
+    } else {
+        current_offset
+    }
+}
+
+/// Keep the editor caret row inside the vertical viewport.
 pub(crate) fn clamp_editor_scroll_offset(
     cursor_row: usize,
     visible_rows: usize,
@@ -26,14 +39,26 @@ pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
     let window_height = state.layout.window_height;
     let cell_h = state.layout.cell_h;
     let pad_v = state.user_config.padding.vertical as f32;
+    let visible_cols = if cell_h > 0.0 && state.layout.cell_w > 0.0 {
+        ((state.layout.window_width as f32 - 2.0 * state.user_config.padding.horizontal as f32)
+            / state.layout.cell_w)
+            .floor()
+            .max(1.0) as usize
+    } else {
+        1
+    };
     let active = state.active_tab;
     let tab = &mut state.tabs[active];
     let text = tab.app.editor_snapshot();
     let offset = tab.app.editor_cursor_offset();
-    let caret_row = text[..offset.min(text.len())]
+    let before = &text[..offset.min(text.len())];
+    let caret_row = before.chars().filter(|&c| c == '\n').count();
+    let caret_col = before
+        .rsplit_once('\n')
+        .map_or(before, |(_, line)| line)
         .chars()
-        .filter(|&c| c == '\n')
-        .count();
+        .count()
+        + usize::from(caret_row == 0) * 2;
     let editor_h_px = (1.0 - tab.split_ratio) * (window_height as f32 - tab_bar_h);
     // Text starts pad_v pixels below the pane top, so the usable row area is smaller.
     let visible_rows = if cell_h > 0.0 {
@@ -43,6 +68,50 @@ pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
     };
     tab.editor_scroll_offset =
         clamp_editor_scroll_offset(caret_row, visible_rows, tab.editor_scroll_offset);
+    tab.editor_horizontal_scroll_offset = clamp_editor_horizontal_scroll_offset(
+        caret_col,
+        visible_cols,
+        tab.editor_horizontal_scroll_offset,
+    );
+}
+
+/// Return the byte range of the code-like word at `offset`.
+///
+/// Identifiers include Unicode alphanumeric characters and underscores. When
+/// the click lands on punctuation or whitespace, that single character is
+/// selected, matching the behavior of common code editors.
+pub(crate) fn editor_word_bounds(text: &str, offset: usize) -> (usize, usize) {
+    if text.is_empty() {
+        return (0, 0);
+    }
+    let mut at = offset.min(text.len());
+    if at == text.len() {
+        at = text.char_indices().next_back().map_or(0, |(idx, _)| idx);
+    } else {
+        while at > 0 && !text.is_char_boundary(at) {
+            at -= 1;
+        }
+    }
+    let ch = text[at..].chars().next().expect("valid character boundary");
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    if !is_word(ch) {
+        return (at, at + ch.len_utf8());
+    }
+    let mut start = at;
+    for (idx, candidate) in text[..at].char_indices().rev() {
+        if !is_word(candidate) {
+            break;
+        }
+        start = idx;
+    }
+    let mut end = at + ch.len_utf8();
+    for candidate in text[end..].chars() {
+        if !is_word(candidate) {
+            break;
+        }
+        end += candidate.len_utf8();
+    }
+    (start, end)
 }
 
 /// Convert an editor (row, col) grid position to a byte offset in `text`.
@@ -525,6 +594,38 @@ mod tests {
     fn cursor_row_col_counts_characters_not_bytes() {
         // "ñ" (U+00F1) = 2 bytes; column count is in chars.
         assert_eq!(editor_cursor_row_col("ñx", 3), (0, 2));
+    }
+
+    // ── editor horizontal scroll and word selection ──────────────────────
+
+    #[test]
+    fn horizontal_scroll_keeps_caret_visible() {
+        assert_eq!(clamp_editor_horizontal_scroll_offset(20, 10, 0), 11);
+        assert_eq!(clamp_editor_horizontal_scroll_offset(4, 10, 11), 4);
+        assert_eq!(clamp_editor_horizontal_scroll_offset(8, 10, 4), 4);
+    }
+
+    #[test]
+    fn editor_word_bounds_selects_code_identifier() {
+        let text = "echo certificate_name.pem";
+        assert_eq!(editor_word_bounds(text, 10), (5, 21));
+        assert_eq!(
+            &text[editor_word_bounds(text, 10).0..editor_word_bounds(text, 10).1],
+            "certificate_name"
+        );
+    }
+
+    #[test]
+    fn editor_word_bounds_handles_unicode_and_punctuation() {
+        let text = "echo café.pem";
+        assert_eq!(
+            &text[editor_word_bounds(text, 7).0..editor_word_bounds(text, 7).1],
+            "café"
+        );
+        assert_eq!(
+            &text[editor_word_bounds(text, 10).0..editor_word_bounds(text, 10).1],
+            "."
+        );
     }
 
     // ── cursor_to_terminal_cell ──────────────────────────────────────────
