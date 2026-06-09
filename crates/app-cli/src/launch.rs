@@ -284,6 +284,7 @@ pub(crate) fn build_initial_state(
     Ok(state)
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_tabs(
     mut saved_tabs: Vec<TabSession>,
     rows: usize,
