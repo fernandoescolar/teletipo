@@ -159,6 +159,22 @@ fn failed_command_is_kept_in_history() {
 }
 
 #[test]
+fn repeated_commands_are_kept_in_history() {
+    let mut state = build_test_state(Box::new(shell::NullShell::default()));
+
+    state.tabs[0].pending_cmd = Some("cargo test".to_owned());
+    state.finalize_pending_cmd(0, 0);
+    state.tabs[0].pending_cmd = Some("cargo test".to_owned());
+    state.finalize_pending_cmd(0, 0);
+
+    assert_eq!(
+        state.tabs[0].history,
+        vec!["cargo test".to_owned(), "cargo test".to_owned()]
+    );
+    assert_eq!(state.tabs[0].history_entries[0].count, 2);
+}
+
+#[test]
 fn jump_to_prev_prompt_scrolls_back() {
     let mut state = build_test_state(Box::new(shell::NullShell::default()));
     state.resize_tab(0, 4, 80);

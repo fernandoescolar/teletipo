@@ -285,12 +285,48 @@ pub(crate) fn build_initial_state(
 }
 
 fn build_tabs(
-    saved_tabs: Vec<TabSession>,
+    mut saved_tabs: Vec<TabSession>,
     rows: usize,
     cols: usize,
     effective_shell: &str,
     exec: Option<&str>,
 ) -> anyhow::Result<Vec<TabState>> {
+    // History belongs to the command editor, not to one tab. Older sessions
+    // stored separate histories, so use the most complete timeline and recover
+    // commands found only in another tab before giving every tab the same view.
+    let mut shared_history = saved_tabs
+        .iter()
+        .max_by_key(|tab| tab.history.len())
+        .map(|tab| tab.history.clone())
+        .unwrap_or_default();
+    for tab in &saved_tabs {
+        for command in &tab.history {
+            if !shared_history.iter().any(|saved| saved == command) {
+                shared_history.push(command.clone());
+            }
+        }
+    }
+    let mut shared_entries: Vec<HistoryEntry> = Vec::new();
+    for tab in &saved_tabs {
+        for entry in &tab.history_entries {
+            if let Some(saved) = shared_entries
+                .iter_mut()
+                .find(|saved| saved.cmd == entry.cmd)
+            {
+                saved.count = saved.count.max(entry.count);
+                saved.last_used_secs = saved.last_used_secs.max(entry.last_used_secs);
+            } else {
+                shared_entries.push(entry.clone());
+            }
+        }
+    }
+    for tab in &mut saved_tabs {
+        tab.history.clone_from(&shared_history);
+        if !shared_entries.is_empty() {
+            tab.history_entries.clone_from(&shared_entries);
+        }
+    }
+
     let mut tabs: Vec<TabState> = Vec::new();
     for (i, saved) in saved_tabs.into_iter().enumerate() {
         let mut app = build_app(rows, cols)?;

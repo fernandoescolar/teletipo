@@ -439,6 +439,7 @@ impl GlPainter {
             layout.height,
             snapshot.theme.editor_bg,
         );
+        self.draw_editor_watermark(snapshot, &layout);
         self.push_rect(
             0.0,
             layout.terminal_h,
@@ -733,6 +734,30 @@ impl GlPainter {
             }
 
             line_char_start = line_char_start.saturating_add(line.chars().count() + 1);
+        }
+    }
+
+    fn draw_editor_watermark(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
+        if snapshot.terminal_fullscreen {
+            return;
+        }
+        let editor_h = (layout.height - layout.editor_top).max(0.0);
+        let half_h = (editor_h * 0.28).clamp(18.0, 72.0);
+        let center_x = layout.width * 0.5;
+        let center_y = layout.editor_top + editor_h * 0.5;
+        let thickness = (half_h * 0.16).max(3.0);
+        let color = [
+            snapshot.theme.separator_focused[0],
+            snapshot.theme.separator_focused[1],
+            snapshot.theme.separator_focused[2],
+            0.08,
+        ];
+        for step in 0..half_h as usize {
+            let dy = step as f32;
+            let x = center_x - half_h * 0.55 + dy * 0.55;
+            for y in [center_y - half_h + dy, center_y + half_h - dy] {
+                self.push_rect(x, y, x + thickness, y + 2.0, color);
+            }
         }
     }
 

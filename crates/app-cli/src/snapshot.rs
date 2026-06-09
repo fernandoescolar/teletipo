@@ -34,13 +34,15 @@ fn tab_button_label(index: usize, title: Option<&str>, cwd: &str, max_chars: usi
 
 fn tab_button_label_for_tab(
     index: usize,
-    title: Option<&str>,
+    _title: Option<&str>,
     cwd: &str,
     command_running: bool,
     pending_cmd: Option<&str>,
     max_chars: usize,
 ) -> String {
-    let resolved_title = title.map(str::trim).filter(|title| !title.is_empty());
+    // Shells commonly publish the same generic OSC title for every tab. Use
+    // live per-tab state for labels so tabs remain distinguishable; OSC titles
+    // still drive the native window title.
     let fallback = if command_running {
         if let Some(cmd) = pending_cmd.map(str::trim).filter(|cmd| !cmd.is_empty()) {
             truncate_display(&format!("[run] {cmd}"), max_chars)
@@ -53,7 +55,7 @@ fn tab_button_label_for_tab(
     } else {
         shorten_cwd_label(cwd, max_chars)
     };
-    tab_button_label(index, resolved_title.or(Some(&fallback)), cwd, max_chars)
+    tab_button_label(index, Some(&fallback), cwd, max_chars)
 }
 
 fn tab_button_max_chars(tab_width_px: f32, cell_w_px: f32) -> usize {
@@ -678,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_button_label_uses_running_command_when_no_title() {
+    fn tab_button_label_uses_running_command() {
         assert_eq!(
             tab_button_label_for_tab(0, None, "/tmp/project", true, Some("cargo test"), 20),
             "Cmd+1  [run] cargo test"
@@ -690,6 +692,14 @@ mod tests {
         assert_eq!(
             tab_button_label_for_tab(0, None, "/tmp/project", true, None, 20),
             "Cmd+1  [run] /tmp/project"
+        );
+    }
+
+    #[test]
+    fn tab_button_label_prefers_per_tab_cwd_over_generic_shell_title() {
+        assert_eq!(
+            tab_button_label_for_tab(1, Some("shell"), "/tmp/project", false, None, 20),
+            "Cmd+2  /tmp/project"
         );
     }
 }

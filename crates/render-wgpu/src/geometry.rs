@@ -13,7 +13,7 @@ use winit::dpi::PhysicalSize;
 use crate::atlas::{CachedGlyph, ShapedGlyph};
 use crate::types::RenderSnapshot;
 
-pub const SCROLLBAR_W_PX: f32 = 10.0;
+pub const SCROLLBAR_W_PX: f32 = 5.0;
 
 pub(crate) const VERTEX_BUF_CAPACITY: u64 = 2 << 20;
 
@@ -178,6 +178,36 @@ pub(crate) fn build_panel_vertices(
         split_y - sep_half,
         theme.editor_bg,
     ));
+
+    // A subtle, oversized chevron identifies the command editor without
+    // shifting the editable text or changing pointer coordinates.
+    if size.width > 0 && size.height > 0 && !snapshot.terminal_fullscreen {
+        let px_x = 2.0 / size.width as f32;
+        let px_y = 2.0 / size.height as f32;
+        let editor_top_px = tab_bar_h + snapshot.split_ratio * (size.height as f32 - tab_bar_h);
+        let editor_h = (size.height as f32 - editor_top_px).max(0.0);
+        let half_h = (editor_h * 0.28).clamp(18.0, 72.0);
+        let center_x = size.width as f32 * 0.5;
+        let center_y = editor_top_px + editor_h * 0.5;
+        let color = [
+            theme.separator_focused[0],
+            theme.separator_focused[1],
+            theme.separator_focused[2],
+            0.08,
+        ];
+        let thickness = (half_h * 0.16).max(3.0);
+        for step in 0..half_h as usize {
+            let dy = step as f32;
+            let x = center_x - half_h * 0.55 + dy * 0.55;
+            for y in [center_y - half_h + dy, center_y + half_h - dy] {
+                let x0 = x * px_x - 1.0;
+                let x1 = (x + thickness) * px_x - 1.0;
+                let y_top = 1.0 - y * px_y;
+                let y_bottom = 1.0 - (y + 2.0) * px_y;
+                verts.extend_from_slice(&quad_verts(x0, y_bottom, x1, y_top, color));
+            }
+        }
+    }
     verts.extend_from_slice(&quad_verts(
         -1.0,
         split_y - sep_half,
