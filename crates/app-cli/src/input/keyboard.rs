@@ -1,7 +1,8 @@
 use crate::GpuRuntimeState;
 use crate::coords::{
     clamp_editor_scroll, current_line_prefix, cursor_at_line_end, editor_cursor_row_col,
-    editor_row_col_to_offset, extract_selection, line_leading_spaces, replace_cursor_line,
+    editor_line_end_offset, editor_line_start_offset, editor_row_col_to_offset, extract_selection,
+    line_leading_spaces, replace_cursor_line,
 };
 use crate::search;
 use crate::settings;
@@ -718,25 +719,27 @@ fn handle_named_key_navigation(
             true
         }
         NamedKey::Home => {
-            if state.modifiers.super_down {
-                let tab = state.tab_mut();
-                tab.scroll_offset = tab.app.scrollback_len();
-                state.push_accessibility_tree();
+            let extend = state.modifiers.shift_down;
+            let text = state.tab().app.editor_snapshot();
+            let offset = state.tab().app.editor_cursor_offset();
+            let target = if state.modifiers.ctrl_down || state.modifiers.super_down {
+                0
             } else {
-                let extend = state.modifiers.shift_down;
-                state.tab_mut().app.set_editor_cursor(0, extend);
-            }
+                editor_line_start_offset(&text, offset)
+            };
+            state.tab_mut().app.set_editor_cursor(target, extend);
             true
         }
         NamedKey::End => {
-            if state.modifiers.super_down {
-                state.tab_mut().scroll_offset = 0;
-                state.push_accessibility_tree();
+            let extend = state.modifiers.shift_down;
+            let text = state.tab().app.editor_snapshot();
+            let offset = state.tab().app.editor_cursor_offset();
+            let target = if state.modifiers.ctrl_down || state.modifiers.super_down {
+                text.len()
             } else {
-                let extend = state.modifiers.shift_down;
-                let end = state.tab().app.editor_snapshot().len();
-                state.tab_mut().app.set_editor_cursor(end, extend);
-            }
+                editor_line_end_offset(&text, offset)
+            };
+            state.tab_mut().app.set_editor_cursor(target, extend);
             true
         }
         NamedKey::Space => {

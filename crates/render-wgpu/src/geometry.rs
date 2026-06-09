@@ -13,8 +13,7 @@ use winit::dpi::PhysicalSize;
 use crate::atlas::{CachedGlyph, ShapedGlyph};
 use crate::types::RenderSnapshot;
 
-pub const SCROLLBAR_W_PX: f32 = 10.0;
-pub(crate) const EDITOR_PREFIX_COLS: usize = 2;
+pub const SCROLLBAR_W_PX: f32 = 5.0;
 
 pub(crate) const VERTEX_BUF_CAPACITY: u64 = 2 << 20;
 
@@ -179,6 +178,36 @@ pub(crate) fn build_panel_vertices(
         split_y - sep_half,
         theme.editor_bg,
     ));
+
+    // A subtle, oversized chevron identifies the command editor without
+    // shifting the editable text or changing pointer coordinates.
+    if size.width > 0 && size.height > 0 && !snapshot.terminal_fullscreen {
+        let px_x = 2.0 / size.width as f32;
+        let px_y = 2.0 / size.height as f32;
+        let editor_top_px = tab_bar_h + snapshot.split_ratio * (size.height as f32 - tab_bar_h);
+        let editor_h = (size.height as f32 - editor_top_px).max(0.0);
+        let half_h = (editor_h * 0.28).clamp(18.0, 72.0);
+        let left_x = pad_h + half_h * 0.15;
+        let center_y = editor_top_px + editor_h * 0.5;
+        let color = [
+            theme.separator_focused[0],
+            theme.separator_focused[1],
+            theme.separator_focused[2],
+            0.08,
+        ];
+        let thickness = (half_h * 0.16).max(3.0);
+        for step in 0..half_h as usize {
+            let dy = step as f32;
+            let x = left_x + dy * 0.55;
+            for y in [center_y - half_h + dy, center_y + half_h - dy] {
+                let x0 = x * px_x - 1.0;
+                let x1 = (x + thickness) * px_x - 1.0;
+                let y_top = 1.0 - y * px_y;
+                let y_bottom = 1.0 - (y + 2.0) * px_y;
+                verts.extend_from_slice(&quad_verts(x0, y_bottom, x1, y_top, color));
+            }
+        }
+    }
     verts.extend_from_slice(&quad_verts(
         -1.0,
         split_y - sep_half,
@@ -717,6 +746,35 @@ pub(crate) fn build_panel_vertices(
                 thumb_color,
             ));
         }
+
+        let max_cols = snapshot
+            .editor_text
+            .lines()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0);
+        let track_left_px = snapshot.padding_h as f32;
+        let track_right_px = size.width as f32 - SCROLLBAR_W_PX - snapshot.padding_h as f32;
+        let track_w_px = track_right_px - track_left_px;
+        let visible_cols = (track_w_px / cell_w_px).floor().max(1.0);
+        if max_cols as f32 > visible_cols && track_w_px > 0.0 {
+            let px_x = 2.0 / size.width as f32;
+            let px_y = 2.0 / size.height as f32;
+            let x0 = track_left_px * px_x - 1.0;
+            let x1 = track_right_px * px_x - 1.0;
+            let y0 = -1.0;
+            let y1 = 1.0 - (size.height as f32 - SCROLLBAR_W_PX) * px_y;
+            verts.extend_from_slice(&quad_verts(x0, y0, x1, y1, theme.separator));
+            let thumb_w_px = (visible_cols / max_cols as f32).clamp(0.05, 1.0) * track_w_px;
+            let max_scroll = max_cols as f32 - visible_cols;
+            let scroll_pos =
+                (snapshot.editor_horizontal_scroll_offset as f32 / max_scroll).clamp(0.0, 1.0);
+            let thumb_left_px = track_left_px + scroll_pos * (track_w_px - thumb_w_px);
+            let tx0 = thumb_left_px * px_x - 1.0;
+            let tx1 = (thumb_left_px + thumb_w_px) * px_x - 1.0;
+            let [r, g, b, _] = theme.separator_focused;
+            verts.extend_from_slice(&quad_verts(tx0, y0, tx1, y1, [r, g, b, 0.85]));
+        }
     }
 
     let edit_top_px = (1.0 - edit_top_ndc) / 2.0 * size.height as f32 + 2.0;
@@ -746,23 +804,14 @@ pub(crate) fn build_panel_vertices(
                 Some(pos) => before[pos + 1..].chars().map(char_col_width).sum(),
                 None => before.chars().map(char_col_width).sum(),
             };
-            (
-                row,
-                col_in_text + if row == 0 { EDITOR_PREFIX_COLS } else { 0 },
-            )
+            (row, col_in_text)
         };
         let (start_row, start_col) = to_visual(s_start);
         let (end_row, end_col) = to_visual(s_end);
         let sel_color = [0.20_f32, 0.48, 1.0, 0.38];
         let max_cols = (size.width as f32 / cell_w_px).ceil() as usize + 1;
         for row in start_row..=end_row {
-            let from_col = if row == start_row {
-                start_col
-            } else if row == 0 {
-                EDITOR_PREFIX_COLS
-            } else {
-                0
-            };
+            let from_col = if row == start_row { start_col } else { 0 };
             let to_col = if row == end_row { end_col } else { max_cols };
             if from_col >= to_col {
                 continue;
@@ -1401,7 +1450,7 @@ pub(crate) fn editor_caret_verts(
         Some(pos) => before[pos + 1..].chars().map(char_col_width).sum(),
         None => before.chars().map(char_col_width).sum(),
     };
-    let col = col_in_editor + if row == 0 { EDITOR_PREFIX_COLS } else { 0 };
+    let col = col_in_editor;
     let px_x = 2.0 / win_w;
     let px_y = 2.0 / win_h;
     let gx0 = pad_h + (col as f32 - horizontal_scroll_offset as f32) * cell_w_px;

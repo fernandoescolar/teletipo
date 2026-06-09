@@ -287,73 +287,54 @@ impl GpuRuntimeState {
         tab.pty = Some(pty);
     }
 
-    /// Commit `pending_cmd` (if any) for `tab_idx` to history.
-    /// Called when the shell reports an exit code via OSC 133.
-    pub(crate) fn finalize_pending_cmd(&mut self, tab_idx: usize, _exit_code: i32) {
-        let tab = &mut self.tabs[tab_idx];
-        let Some(text) = tab.pending_cmd.take() else {
-            return;
-        };
-        if text.is_empty() {
-            return;
-        }
-        // Deduplicate.
-        tab.history.retain(|e| e.trim() != text.as_str());
-        // Upsert frecency entry.
+    fn record_history_command(&mut self, text: String) {
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let entry_idx = tab
-            .history_entries
-            .iter()
-            .position(|e| e.cmd.trim() == text.as_str());
-        if let Some(idx) = entry_idx {
-            tab.history_entries[idx].count += 1;
-            tab.history_entries[idx].last_used_secs = now_secs;
-        } else {
-            tab.history_entries.push(HistoryEntry {
-                cmd: text.clone(),
-                count: 1,
-                last_used_secs: now_secs,
-            });
+        for tab in &mut self.tabs {
+            // Keep every execution in chronological order, including duplicates,
+            // matching conventional shell history navigation.
+            tab.history.push(text.clone());
+            if let Some(entry) = tab
+                .history_entries
+                .iter_mut()
+                .find(|entry| entry.cmd.trim() == text.as_str())
+            {
+                entry.count = entry.count.saturating_add(1);
+                entry.last_used_secs = now_secs;
+            } else {
+                tab.history_entries.push(HistoryEntry {
+                    cmd: text.clone(),
+                    count: 1,
+                    last_used_secs: now_secs,
+                });
+            }
         }
-        tab.history.push(text);
+    }
+
+    /// Commit `pending_cmd` (if any) for `tab_idx` to shared history.
+    /// Called when the shell reports an exit code via OSC 133.
+    pub(crate) fn finalize_pending_cmd(&mut self, tab_idx: usize, _exit_code: i32) {
+        let Some(text) = self.tabs[tab_idx].pending_cmd.take() else {
+            return;
+        };
+        if !text.is_empty() {
+            self.record_history_command(text);
+        }
     }
 
     pub(crate) fn run_editor_command(&mut self) {
         let active = self.active_tab;
-        let tab = &mut self.tabs[active];
-        let text = tab.app.editor_snapshot();
-        let text = text.trim().to_string();
+        let text = self.tabs[active].app.editor_snapshot().trim().to_string();
         if !text.is_empty() {
-            if tab.shell_integration {
-                // Defer: save to history only after the shell reports exit code 0.
-                tab.pending_cmd = Some(text);
+            if self.tabs[active].shell_integration {
+                self.tabs[active].pending_cmd = Some(text);
             } else {
-                // No integration - save immediately (original behaviour).
-                tab.history.retain(|e| e.trim() != text.as_str());
-                let now_secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let entry_idx = tab
-                    .history_entries
-                    .iter()
-                    .position(|e| e.cmd.trim() == text.as_str());
-                if let Some(idx) = entry_idx {
-                    tab.history_entries[idx].count += 1;
-                    tab.history_entries[idx].last_used_secs = now_secs;
-                } else {
-                    tab.history_entries.push(HistoryEntry {
-                        cmd: text.clone(),
-                        count: 1,
-                        last_used_secs: now_secs,
-                    });
-                }
-                tab.history.push(text);
+                self.record_history_command(text);
             }
         }
+        let tab = &mut self.tabs[active];
         // Always reset navigation state regardless of integration mode.
         tab.history_index = None;
         tab.saved_input = String::new();
@@ -533,6 +514,8 @@ impl GpuRuntimeState {
             }
         };
         let active_cwd = self.tab().cwd.clone();
+        let history = self.tab().history.clone();
+        let history_entries = self.tab().history_entries.clone();
         let chosen_shell = shell_override
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -546,7 +529,7 @@ impl GpuRuntimeState {
             scroll_offset: 0,
             editor_scroll_offset: 0,
             editor_horizontal_scroll_offset: 0,
-            history: vec![],
+            history,
             history_index: None,
             saved_input: String::new(),
             split_ratio,
@@ -565,7 +548,7 @@ impl GpuRuntimeState {
                 .unwrap_or_default(),
             suggestion_prefix: None,
             suggestion_index: None,
-            history_entries: vec![],
+            history_entries,
             pending_cmd: None,
             shell_integration: integration,
             search: crate::search::SearchState::default(),
