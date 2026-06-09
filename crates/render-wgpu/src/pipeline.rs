@@ -393,7 +393,6 @@ impl<'a> GpuState<'a> {
             }
         }
 
-        self.ensure_glyph('\u{276f}');
         self.ensure_glyph('\u{d7}'); // × close-button character
         for ch in terminal_text
             .chars()
@@ -567,36 +566,17 @@ impl<'a> GpuState<'a> {
         let terminal_vert_count = (text_verts.len() / 8) as u32;
 
         let editor_skip = snapshot.editor_scroll_offset;
-        let prefix_color = [0.40, 0.80, 1.00, 1.0_f32];
-        if editor_skip == 0 && snapshot.editor_horizontal_scroll_offset == 0 {
-            add_text_verts(
-                "\u{276f} ",
-                edit_top_px + pad_v,
-                pad_h,
-                prefix_color,
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
-                &mut text_verts,
-                0,
-            );
-        }
         let editor_hl = highlight_shell(&snapshot.editor_text);
-        let mut padded_hl: Vec<Option<[f32; 3]>> = vec![None, None];
-        padded_hl.extend(editor_hl);
+        let mut padded_hl = editor_hl;
         // Append ghost-text suggestion in dim grey when present.
         let padded_editor = if snapshot.editor_suggestion.is_empty() {
-            format!("  {}", snapshot.editor_text)
+            snapshot.editor_text.clone()
         } else {
             let ghost_color: [f32; 3] = [0.50, 0.50, 0.50];
             for _ in snapshot.editor_suggestion.chars() {
                 padded_hl.push(Some(ghost_color));
             }
-            format!("  {}{}", snapshot.editor_text, snapshot.editor_suggestion)
+            format!("{}{}", snapshot.editor_text, snapshot.editor_suggestion)
         };
         add_text_verts(
             &padded_editor,

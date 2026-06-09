@@ -737,12 +737,6 @@ impl GlPainter {
     }
 
     fn draw_editor_text(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
-        // The editor has a 2-column prompt prefix "❯ " on the first visible
-        // line, matching the wgpu renderer (EDITOR_PREFIX_COLS = 2).
-        const PREFIX: &str = "\u{276f} ";
-        const PREFIX_COLOR: [f32; 4] = [0.40, 0.80, 1.00, 1.0];
-        const EDITOR_PREFIX_COLS: usize = 2;
-
         let default_fg = [
             snapshot.theme.text[0],
             snapshot.theme.text[1],
@@ -755,15 +749,6 @@ impl GlPainter {
         let hl = highlight_shell(&snapshot.editor_text);
         let mut char_idx = 0usize; // tracks index into `hl` as we iterate chars
 
-        // Draw "❯ " prefix on the first visible line only.
-        if row_offset == 0 {
-            let y = layout.editor_top + layout.padding_v;
-            for (ci, ch) in PREFIX.chars().enumerate() {
-                let x = layout.padding_h + ci as f32 * layout.cell_w_px;
-                self.push_glyph(ch, x, y, layout.cell_w_px, layout.cell_h_px, PREFIX_COLOR);
-            }
-        }
-
         for (line_idx, line) in snapshot.editor_text.lines().enumerate() {
             if line_idx < row_offset {
                 char_idx = char_idx.saturating_add(line.chars().count() + 1);
@@ -774,12 +759,12 @@ impl GlPainter {
             if y + layout.cell_h_px > max_y {
                 break;
             }
-            // Row 0 starts after the prefix; subsequent rows start at col 0.
-            let col_offset = if line_idx == 0 { EDITOR_PREFIX_COLS } else { 0 };
-            let mut vcol = col_offset; // visual column (accounts for wide chars)
+            let mut vcol = 0usize; // visual column (accounts for wide chars)
             for ch in line.chars() {
                 let cw = char_col_width(ch);
-                let x = layout.padding_h + vcol as f32 * layout.cell_w_px;
+                let x = layout.padding_h
+                    + (vcol as f32 - snapshot.editor_horizontal_scroll_offset as f32)
+                        * layout.cell_w_px;
                 if x + layout.cell_w_px > max_x {
                     break;
                 }
@@ -805,14 +790,12 @@ impl GlPainter {
         if snapshot.editor_suggestion.is_empty() {
             return;
         }
-        const EDITOR_PREFIX_COLS: usize = 2;
         let (row, col) =
             editor_offset_to_row_col(&snapshot.editor_text, snapshot.editor_cursor_offset);
         let visible_row = row.saturating_sub(snapshot.editor_scroll_offset);
         let y = layout.editor_top + layout.padding_v + visible_row as f32 * layout.cell_h_px;
-        // Offset the column by the prefix width on the first editor line.
-        let col_offset = if row == 0 { EDITOR_PREFIX_COLS } else { 0 };
-        let base_x = layout.padding_h + (col + col_offset) as f32 * layout.cell_w_px;
+        let base_x = layout.padding_h
+            + (col as f32 - snapshot.editor_horizontal_scroll_offset as f32) * layout.cell_w_px;
         let color = [
             snapshot.theme.text[0],
             snapshot.theme.text[1],
@@ -1017,7 +1000,6 @@ impl GlPainter {
         if end <= start {
             return;
         }
-        const EDITOR_PREFIX_COLS: usize = 2;
         let sel_c = [0.35, 0.50, 0.80, 0.35];
         let mut idx = 0usize;
         for (line_idx, line) in snapshot.editor_text.lines().enumerate() {
@@ -1035,10 +1017,11 @@ impl GlPainter {
                 let from = start.saturating_sub(row_start_idx);
                 let to = end.min(row_end_idx).saturating_sub(row_start_idx);
                 if to > from {
-                    let col_offset = if line_idx == 0 { EDITOR_PREFIX_COLS } else { 0 };
+                    let horizontal_scroll = snapshot.editor_horizontal_scroll_offset as f32;
                     let y = layout.editor_top + layout.padding_v + row as f32 * layout.cell_h_px;
-                    let x0 = layout.padding_h + (from + col_offset) as f32 * layout.cell_w_px;
-                    let x1 = layout.padding_h + (to + col_offset) as f32 * layout.cell_w_px;
+                    let x0 =
+                        layout.padding_h + (from as f32 - horizontal_scroll) * layout.cell_w_px;
+                    let x1 = layout.padding_h + (to as f32 - horizontal_scroll) * layout.cell_w_px;
                     self.push_rect(x0, y, x1, y + layout.cell_h_px, sel_c);
                 }
             }
@@ -1722,49 +1705,97 @@ impl GlPainter {
     }
 
     fn draw_scrollbar(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
-        if snapshot.scrollback_lines == 0 {
-            return;
-        }
         let sb_w = SCROLLBAR_W_PX;
-        let track_top = layout.tab_bar_h;
-        let track_bottom = layout.terminal_h;
-        let track_h = track_bottom - track_top;
-        if track_h <= 0.0 || layout.cell_h_px <= 0.0 {
-            return;
-        }
         let sb_left = layout.width - sb_w;
-
-        // Track
-        self.push_rect(
-            sb_left,
-            track_top,
-            layout.width,
-            track_bottom,
-            snapshot.theme.separator,
-        );
-
-        // Thumb: fraction = visible_rows / total_rows, clamped to [5%, 100%]
-        let term_h_px = layout.terminal_h - layout.tab_bar_h;
-        let visible_rows = (term_h_px / layout.cell_h_px).floor();
-        let total_rows = visible_rows + snapshot.scrollback_lines as f32;
-        let thumb_fraction = (visible_rows / total_rows).clamp(0.05, 1.0);
-        let thumb_h = thumb_fraction * track_h;
-        let scrollable_h = track_h - thumb_h;
-
-        // scroll_offset=0 → thumb at bottom (newest); max → thumb at top (oldest)
-        let scroll_pos =
-            (snapshot.scroll_offset as f32 / snapshot.scrollback_lines as f32).clamp(0.0, 1.0);
-        let thumb_top = track_top + (1.0 - scroll_pos) * scrollable_h;
-        let thumb_bottom = thumb_top + thumb_h;
-
         let [r, g, b, _] = snapshot.theme.separator_focused;
-        self.push_rect(
-            sb_left,
-            thumb_top,
-            layout.width,
-            thumb_bottom,
-            [r, g, b, 0.85],
-        );
+        let thumb_color = [r, g, b, 0.85];
+
+        if snapshot.scrollback_lines > 0 {
+            let track_top = layout.tab_bar_h;
+            let track_bottom = layout.terminal_h;
+            let track_h = track_bottom - track_top;
+            if track_h > 0.0 && layout.cell_h_px > 0.0 {
+                self.push_rect(
+                    sb_left,
+                    track_top,
+                    layout.width,
+                    track_bottom,
+                    snapshot.theme.separator,
+                );
+                let visible_rows = (track_h / layout.cell_h_px).floor();
+                let total_rows = visible_rows + snapshot.scrollback_lines as f32;
+                let thumb_h = (visible_rows / total_rows).clamp(0.05, 1.0) * track_h;
+                let scroll_pos = (snapshot.scroll_offset as f32 / snapshot.scrollback_lines as f32)
+                    .clamp(0.0, 1.0);
+                let thumb_top = track_top + (1.0 - scroll_pos) * (track_h - thumb_h);
+                self.push_rect(
+                    sb_left,
+                    thumb_top,
+                    layout.width,
+                    thumb_top + thumb_h,
+                    thumb_color,
+                );
+            }
+        }
+
+        let editor_h = layout.height - layout.editor_top;
+        let visible_rows = ((editor_h - layout.padding_v) / layout.cell_h_px)
+            .floor()
+            .max(1.0);
+        if snapshot.editor_line_count as f32 > visible_rows {
+            self.push_rect(
+                sb_left,
+                layout.editor_top,
+                layout.width,
+                layout.height,
+                snapshot.theme.separator,
+            );
+            let thumb_h =
+                (visible_rows / snapshot.editor_line_count as f32).clamp(0.05, 1.0) * editor_h;
+            let max_scroll = snapshot.editor_line_count as f32 - visible_rows;
+            let scroll_pos = (snapshot.editor_scroll_offset as f32 / max_scroll).clamp(0.0, 1.0);
+            let thumb_top = layout.editor_top + scroll_pos * (editor_h - thumb_h);
+            self.push_rect(
+                sb_left,
+                thumb_top,
+                layout.width,
+                thumb_top + thumb_h,
+                thumb_color,
+            );
+        }
+
+        let max_cols = snapshot
+            .editor_text
+            .lines()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0);
+        let track_left = layout.padding_h;
+        let track_right = sb_left - layout.padding_h;
+        let track_w = track_right - track_left;
+        let visible_cols = (track_w / layout.cell_w_px).floor().max(1.0);
+        if max_cols as f32 > visible_cols && track_w > 0.0 {
+            let track_top = layout.height - SCROLLBAR_W_PX;
+            self.push_rect(
+                track_left,
+                track_top,
+                track_right,
+                layout.height,
+                snapshot.theme.separator,
+            );
+            let thumb_w = (visible_cols / max_cols as f32).clamp(0.05, 1.0) * track_w;
+            let max_scroll = max_cols as f32 - visible_cols;
+            let scroll_pos =
+                (snapshot.editor_horizontal_scroll_offset as f32 / max_scroll).clamp(0.0, 1.0);
+            let thumb_left = track_left + scroll_pos * (track_w - thumb_w);
+            self.push_rect(
+                thumb_left,
+                track_top,
+                thumb_left + thumb_w,
+                layout.height,
+                thumb_color,
+            );
+        }
     }
 
     fn draw_scroll_indicator(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
@@ -1807,12 +1838,11 @@ impl GlPainter {
         let color = snapshot.theme.cursor;
 
         if snapshot.editor_focused && !snapshot.terminal_fullscreen {
-            const EDITOR_PREFIX_COLS: usize = 2;
             let (row, col) =
                 editor_offset_to_row_col(&snapshot.editor_text, snapshot.editor_cursor_offset);
             let visible_row = row.saturating_sub(snapshot.editor_scroll_offset);
-            let col_offset = if row == 0 { EDITOR_PREFIX_COLS } else { 0 };
-            let x = layout.padding_h + (col + col_offset) as f32 * layout.cell_w_px;
+            let x = layout.padding_h
+                + (col as f32 - snapshot.editor_horizontal_scroll_offset as f32) * layout.cell_w_px;
             let y = layout.editor_top + layout.padding_v + visible_row as f32 * layout.cell_h_px;
             let w = (layout.cell_w_px * 0.12).max(2.0);
             self.push_rect(x, y, x + w, y + layout.cell_h_px, color);

@@ -25,6 +25,8 @@ pub(crate) struct DragState {
     pub(crate) dragging_terminal_scrollbar: bool,
     /// Whether the user is currently dragging the editor scrollbar thumb.
     pub(crate) dragging_editor_scrollbar: bool,
+    /// Whether the user is currently dragging the editor horizontal scrollbar thumb.
+    pub(crate) dragging_editor_horizontal_scrollbar: bool,
     /// Index of the tab being dragged, if any.
     pub(crate) tab_drag: Option<usize>,
     /// Cursor x position at the moment the tab drag began.

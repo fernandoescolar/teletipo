@@ -40,7 +40,9 @@ pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
     let cell_h = state.layout.cell_h;
     let pad_v = state.user_config.padding.vertical as f32;
     let visible_cols = if cell_h > 0.0 && state.layout.cell_w > 0.0 {
-        ((state.layout.window_width as f32 - 2.0 * state.user_config.padding.horizontal as f32)
+        ((state.layout.window_width as f32
+            - 2.0 * state.user_config.padding.horizontal as f32
+            - SCROLLBAR_W_PX)
             / state.layout.cell_w)
             .floor()
             .max(1.0) as usize
@@ -57,8 +59,7 @@ pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
         .rsplit_once('\n')
         .map_or(before, |(_, line)| line)
         .chars()
-        .count()
-        + usize::from(caret_row == 0) * 2;
+        .count();
     let editor_h_px = (1.0 - tab.split_ratio) * (window_height as f32 - tab_bar_h);
     // Text starts pad_v pixels below the pane top, so the usable row area is smaller.
     let visible_rows = if cell_h > 0.0 {

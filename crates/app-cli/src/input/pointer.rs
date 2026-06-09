@@ -106,6 +106,25 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 let max_scroll = state.tab().app.scrollback_len();
                 state.tab_mut().scroll_offset = ((1.0 - frac) * max_scroll as f64) as usize;
             }
+        } else if state.drag.dragging_editor_horizontal_scrollbar {
+            let pad_h = state.user_config.padding.horizontal as f64;
+            let track_w =
+                (state.layout.window_width as f64 - 2.0 * pad_h - SCROLLBAR_W_PX as f64).max(1.0);
+            let frac = ((*x - pad_h) / track_w).clamp(0.0, 1.0);
+            let editor_text = state.tab().app.editor_snapshot();
+            let max_cols = editor_text
+                .lines()
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0);
+            let visible_cols = if state.layout.cell_w > 0.0 {
+                (track_w / state.layout.cell_w as f64).floor().max(1.0) as usize
+            } else {
+                1
+            };
+            let max_scroll = max_cols.saturating_sub(visible_cols);
+            state.tab_mut().editor_horizontal_scroll_offset =
+                (frac * max_scroll as f64).round() as usize;
         } else if state.drag.dragging_editor_scrollbar {
             let available_h = state.layout.window_height as f64 - tab_bar_h;
             let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
@@ -155,10 +174,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 .max(0.0)
                 .floor() as usize
                 + editor_scroll_offset;
-            let prefix_cols = if row == 0 { 2.0_f64 } else { 0.0 };
-            let col = ((*x - pad_h) / state.layout.cell_w as f64 - prefix_cols)
-                .max(0.0)
-                .floor() as usize
+            let col = ((*x - pad_h) / state.layout.cell_w as f64).max(0.0).floor() as usize
                 + state.tab().editor_horizontal_scroll_offset;
             let text = state.tab().app.editor_snapshot();
             let offset = editor_row_col_to_offset(&text, row, col);
@@ -222,6 +238,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             state.drag.dragging_separator = false;
             state.drag.dragging_terminal_scrollbar = false;
             state.drag.dragging_editor_scrollbar = false;
+            state.drag.dragging_editor_horizontal_scrollbar = false;
             state.tab_mut().is_selecting = false;
             state.tab_mut().is_selecting_editor = false;
             state.cursor.mouse_btn_held = None;
@@ -429,6 +446,34 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             }
 
             if !fullscreen
+                && state.cursor.cursor_y
+                    >= state.layout.window_height as f64 - SCROLLBAR_W_PX as f64
+                && state.cursor.cursor_x < sb_left
+            {
+                let pad_h = state.user_config.padding.horizontal as f64;
+                let track_w = (sb_left - 2.0 * pad_h).max(1.0);
+                let frac = ((state.cursor.cursor_x - pad_h) / track_w).clamp(0.0, 1.0);
+                let editor_text = state.tab().app.editor_snapshot();
+                let max_cols = editor_text
+                    .lines()
+                    .map(|line| line.chars().count())
+                    .max()
+                    .unwrap_or(0);
+                let visible_cols = if state.layout.cell_w > 0.0 {
+                    (track_w / state.layout.cell_w as f64).floor().max(1.0) as usize
+                } else {
+                    1
+                };
+                let max_scroll = max_cols.saturating_sub(visible_cols);
+                if max_scroll > 0 {
+                    state.tab_mut().editor_horizontal_scroll_offset =
+                        (frac * max_scroll as f64).round() as usize;
+                    state.drag.dragging_editor_horizontal_scrollbar = true;
+                    return true;
+                }
+            }
+
+            if !fullscreen
                 && state.cursor.cursor_x >= sb_left
                 && state.cursor.cursor_y > term_bottom
             {
@@ -611,9 +656,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     .max(0.0)
                     .floor() as usize
                     + editor_scroll_offset;
-                let prefix_cols = if row == 0 { 2.0_f64 } else { 0.0 };
-                let col = ((state.cursor.cursor_x - pad_h_f) / state.layout.cell_w as f64
-                    - prefix_cols)
+                let col = ((state.cursor.cursor_x - pad_h_f) / state.layout.cell_w as f64)
                     .max(0.0)
                     .floor() as usize
                     + state.tab().editor_horizontal_scroll_offset;
@@ -733,8 +776,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     .lines()
                     .map(|line| line.chars().count())
                     .max()
-                    .unwrap_or(0)
-                    + 2;
+                    .unwrap_or(0);
                 let visible_cols = if state.layout.cell_w > 0.0 {
                     ((state.layout.window_width as f32
                         - 2.0 * state.user_config.padding.horizontal as f32)
