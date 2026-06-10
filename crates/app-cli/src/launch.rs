@@ -351,6 +351,7 @@ fn process_shared_tab_data(saved_tabs: &[TabSession]) -> (Vec<String>, Vec<Histo
 }
 
 /// Build a single tab with its associated PTY and application state
+#[allow(clippy::too_many_arguments)]
 fn build_single_tab(
     index: usize,
     saved: &TabSession,
