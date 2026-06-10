@@ -355,7 +355,9 @@ pub(crate) fn build_panel_vertices(
             verts.extend_from_slice(&quad_verts(x0_ndc, y_bot_ndc, x1_ndc, y_top_ndc, MENU_BG));
             // Per-item hover highlight.
             for item_idx in 0..item_count {
-                if menu.hovered_item == Some(item_idx) {
+                if menu.hovered_item == Some(item_idx)
+                    && menu.enabled_items.get(item_idx) == Some(&true)
+                {
                     let iy_top = 1.0 - (my + item_idx as f32 * menu_item_h) * px_y;
                     let iy_bot = 1.0 - (my + (item_idx + 1) as f32 * menu_item_h) * px_y;
                     verts

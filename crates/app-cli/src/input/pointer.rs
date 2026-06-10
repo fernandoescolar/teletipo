@@ -11,6 +11,7 @@ use winit::event::{ElementState, MouseButton};
 
 const TAB_MENU_ITEMS: &[&str] = &["New Tab", "Close Tab", "Move Left", "Move Right"];
 const TERMINAL_MENU_ITEMS: &[&str] = &["Copy", "Paste", "Scroll to Bottom"];
+const EDITOR_MENU_ITEMS: &[&str] = &["Undo", "Redo", "Copy", "Cut", "Paste", "Select All"];
 
 fn context_menu_width_px(cell_w: f32, items: &[String]) -> f64 {
     let max_chars = items.iter().map(|s| s.chars().count()).max().unwrap_or(8);
@@ -71,7 +72,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             let in_menu = *x >= mx && *x <= mx + menu_w && *y >= my && *y <= my + menu_h;
             menu.hovered_item = if in_menu {
                 let item = ((*y - my) / menu_item_h) as usize;
-                if item < menu.items.len() {
+                if item < menu.items.len() && menu.enabled_items.get(item) == Some(&true) {
                     Some(item)
                 } else {
                     None
@@ -333,6 +334,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                         }
                         crate::state::ContextMenuKind::Terminal => {
                             execute_terminal_context_menu_item(state, item);
+                        }
+                        crate::state::ContextMenuKind::Editor => {
+                            execute_editor_context_menu_item(state, item);
                         }
                     }
                 }
@@ -736,12 +740,17 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                         y_px: tab_bar_h,
                         hovered_item: None,
                         items: TAB_MENU_ITEMS.iter().map(|s| (*s).to_owned()).collect(),
+                        enabled_items: vec![true; TAB_MENU_ITEMS.len()],
                     });
                 }
             } else {
-                // Terminal pane right-click menu.
+                // Terminal/editor pane right-click menu.
                 let available_h = state.layout.window_height as f64 - tab_bar_h;
-                let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
+                let term_bottom = if state.tab().app.is_alternate_screen() {
+                    state.layout.window_height as f64
+                } else {
+                    tab_bar_h + available_h * state.tab().split_ratio as f64
+                };
                 if state.cursor.cursor_y >= tab_bar_h && state.cursor.cursor_y <= term_bottom {
                     state.overlays.context_menu = Some(crate::state::ContextMenuState {
                         kind: crate::state::ContextMenuKind::Terminal,
@@ -752,6 +761,29 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                             .iter()
                             .map(|s| (*s).to_owned())
                             .collect(),
+                        enabled_items: vec![true; TERMINAL_MENU_ITEMS.len()],
+                    });
+                } else if state.cursor.cursor_y > term_bottom {
+                    let has_selection = state.tab().app.editor_selection().is_some();
+                    let has_text = !state.tab().app.editor_snapshot().is_empty();
+                    let can_paste = state
+                        .shell_services
+                        .clipboard_get()
+                        .is_some_and(|text| !text.is_empty());
+                    state.overlays.context_menu = Some(crate::state::ContextMenuState {
+                        kind: crate::state::ContextMenuKind::Editor,
+                        x_px: state.cursor.cursor_x,
+                        y_px: state.cursor.cursor_y,
+                        hovered_item: None,
+                        items: EDITOR_MENU_ITEMS.iter().map(|s| (*s).to_owned()).collect(),
+                        enabled_items: vec![
+                            state.tab().app.editor_can_undo(),
+                            state.tab().app.editor_can_redo(),
+                            has_selection,
+                            has_selection,
+                            can_paste,
+                            has_text,
+                        ],
                     });
                 }
             }
@@ -869,6 +901,58 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     false
+}
+
+fn editor_selected_text(state: &GpuRuntimeState) -> Option<String> {
+    let (start, end) = state.tab().app.editor_selection()?;
+    state
+        .tab()
+        .app
+        .editor_snapshot()
+        .get(start..end)
+        .map(str::to_owned)
+}
+
+fn copy_editor_selection(state: &mut GpuRuntimeState) -> bool {
+    let Some(selected) = editor_selected_text(state).filter(|text| !text.is_empty()) else {
+        return false;
+    };
+    let copied_len = selected.chars().count();
+    state.shell_services.clipboard_set(selected);
+    state.push_toast(
+        format!("Copied {copied_len} chars"),
+        crate::state::ToastKind::Success,
+    );
+    true
+}
+
+fn paste_into_editor(state: &mut GpuRuntimeState) {
+    if let Some(text) = state.shell_services.clipboard_get() {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        if !normalized.is_empty() {
+            state.tab_mut().app.insert_editor_input(&normalized);
+        }
+    }
+}
+
+pub(crate) fn execute_editor_context_menu_item(state: &mut GpuRuntimeState, item: usize) {
+    match item {
+        0 if state.tab().app.editor_can_undo() => state.tab_mut().app.editor_undo(),
+        1 if state.tab().app.editor_can_redo() => state.tab_mut().app.editor_redo(),
+        2 => {
+            copy_editor_selection(state);
+        }
+        3 if copy_editor_selection(state) => state.tab_mut().app.editor_backspace(),
+        4 => paste_into_editor(state),
+        5 => {
+            let end = state.tab().app.editor_snapshot().len();
+            if end > 0 {
+                state.tab_mut().app.set_editor_cursor(0, false);
+                state.tab_mut().app.set_editor_cursor(end, true);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn execute_terminal_context_menu_item(state: &mut GpuRuntimeState, item: usize) {

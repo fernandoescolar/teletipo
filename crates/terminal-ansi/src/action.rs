@@ -14,6 +14,10 @@ pub enum Action {
     CursorDown(u16),
     CursorForward(u16),
     CursorBackward(u16),
+    CursorNextLine(u16),
+    CursorPreviousLine(u16),
+    CursorHorizontalAbsolute(u16),
+    CursorVerticalAbsolute(u16),
     CursorPosition {
         row: u16,
         col: u16,

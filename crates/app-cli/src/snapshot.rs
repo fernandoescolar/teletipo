@@ -509,6 +509,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         x_px: m.x_px as f32,
         y_px: m.y_px as f32,
         items: m.items.clone(),
+        enabled_items: m.enabled_items.clone(),
         hovered_item: m.hovered_item,
     });
 

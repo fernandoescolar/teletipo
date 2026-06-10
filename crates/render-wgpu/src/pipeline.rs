@@ -730,7 +730,9 @@ impl<'a> GpuState<'a> {
                 let mx = menu.x_px.min(self.size.width as f32 - menu_w).max(0.0);
                 let my = menu.y_px.min(self.size.height as f32 - menu_h).max(0.0);
                 for (i, item) in menu.items.iter().enumerate() {
-                    let text_color = if menu.hovered_item == Some(i) {
+                    let text_color = if menu.enabled_items.get(i) != Some(&true) {
+                        [0.42_f32, 0.46, 0.52, 1.0]
+                    } else if menu.hovered_item == Some(i) {
                         [1.0_f32, 1.0, 1.0, 1.0]
                     } else {
                         [0.78_f32, 0.82, 0.87, 1.0]

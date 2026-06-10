@@ -21,7 +21,7 @@ A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with 
 - **Shell integration** — automatic OSC 133 A/B/C/D and OSC 7 hooks injected into zsh and bash at startup; tracks prompt boundaries, command start/output start, exit codes, and current working directory without any manual shell config
 - **OSC 8 hyperlinks** — clickable links emitted by tools like `ls --hyperlink`, `bat`, `delta`, and others are rendered with an underline and opened with your OS default handler on click; `file://` URIs are resolved locally
 - **Screen reader support** — new command completions and their exit status are announced automatically; VoiceOver on macOS and Orca on Linux (via speech-dispatcher / espeak) are supported; announcements are suppressed when no screen reader is active
-- Right-click context menus for tabs and the terminal pane
+- Right-click context menus for tabs, the terminal pane, and editor undo/redo
 - Drag-and-drop support for applying YAML themes or pasting file paths into the command editor
 - Scrollback activity indicator with quick jump back to bottom
 - Themeable (YAML theme files, ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night)
@@ -217,6 +217,8 @@ On Windows, the palette also includes shell-specific tab entries: `New Tab (Powe
 |---|---|
 | `Enter` | Submit command |
 | `Shift + Enter` | Insert newline (multi-line input) |
+| `Cmd + Z` / `Ctrl + Z` | Undo the last editor change |
+| `Cmd + Shift + Z` / `Ctrl + Shift + Z` / `Ctrl + Y` | Redo the last undone editor change |
 | `↑` / `↓` | Navigate command history (when cursor is on first/last line) |
 | `↑` / `↓` | Move cursor up/down in multi-line input |
 | `←` / `→` | Move cursor left/right |
@@ -292,6 +294,7 @@ Press `Tab` at the end of any line to open the suggestion popup, which shows his
 | Middle-click a tab | Close that tab |
 | Right-click a tab | Tab context menu |
 | Right-click in terminal | Terminal context menu (`Copy`, `Paste`, `Scroll to Bottom`) |
+| Right-click in command editor | Editor context menu (`Undo`, `Redo`, `Copy`, `Cut`, `Paste`, `Select All`); unavailable actions are disabled |
 | Click the scroll activity badge | Jump back to the bottom of scrollback |
 | Drop a `*.yaml` file on the window | Apply that theme immediately |
 | Drop any other file on the window | Paste its path into the command editor |

@@ -286,12 +286,36 @@ pub(crate) fn build_initial_state(
 
 #[allow(clippy::too_many_lines)]
 fn build_tabs(
-    mut saved_tabs: Vec<TabSession>,
+    saved_tabs: Vec<TabSession>,
     rows: usize,
     cols: usize,
     effective_shell: &str,
     exec: Option<&str>,
 ) -> anyhow::Result<Vec<TabState>> {
+    // Process shared history and entries across all tabs
+    let (shared_history, shared_entries) = process_shared_tab_data(&saved_tabs);
+
+    // Apply shared data to each tab
+    let mut tabs: Vec<TabState> = Vec::new();
+    for (i, saved) in saved_tabs.into_iter().enumerate() {
+        let tab_state = build_single_tab(
+            i,
+            &saved,
+            rows,
+            cols,
+            effective_shell,
+            exec,
+            &shared_history,
+            &shared_entries,
+        )?;
+        tabs.push(tab_state);
+    }
+
+    Ok(tabs)
+}
+
+/// Process shared history and entries across all tabs to ensure consistency
+fn process_shared_tab_data(saved_tabs: &[TabSession]) -> (Vec<String>, Vec<HistoryEntry>) {
     // History belongs to the command editor, not to one tab. Older sessions
     // stored separate histories, so use the most complete timeline and recover
     // commands found only in another tab before giving every tab the same view.
@@ -300,15 +324,16 @@ fn build_tabs(
         .max_by_key(|tab| tab.history.len())
         .map(|tab| tab.history.clone())
         .unwrap_or_default();
-    for tab in &saved_tabs {
+    for tab in saved_tabs {
         for command in &tab.history {
             if !shared_history.iter().any(|saved| saved == command) {
                 shared_history.push(command.clone());
             }
         }
     }
+
     let mut shared_entries: Vec<HistoryEntry> = Vec::new();
-    for tab in &saved_tabs {
+    for tab in saved_tabs {
         for entry in &tab.history_entries {
             if let Some(saved) = shared_entries
                 .iter_mut()
@@ -321,94 +346,108 @@ fn build_tabs(
             }
         }
     }
-    for tab in &mut saved_tabs {
-        tab.history.clone_from(&shared_history);
-        if !shared_entries.is_empty() {
-            tab.history_entries.clone_from(&shared_entries);
-        }
+
+    (shared_history, shared_entries)
+}
+
+/// Build a single tab with its associated PTY and application state
+#[allow(clippy::too_many_arguments)]
+fn build_single_tab(
+    index: usize,
+    saved: &TabSession,
+    rows: usize,
+    cols: usize,
+    effective_shell: &str,
+    exec: Option<&str>,
+    shared_history: &[String],
+    shared_entries: &[HistoryEntry],
+) -> anyhow::Result<TabState> {
+    let mut app = build_app(rows, cols)?;
+
+    // Feed terminal output
+    for line in saved.terminal_output.lines() {
+        app.feed_terminal(line.as_bytes());
+        app.feed_terminal(b"\r\n");
     }
 
-    let mut tabs: Vec<TabState> = Vec::new();
-    for (i, saved) in saved_tabs.into_iter().enumerate() {
-        let mut app = build_app(rows, cols)?;
-        for line in saved.terminal_output.lines() {
-            app.feed_terminal(line.as_bytes());
-            app.feed_terminal(b"\r\n");
-        }
-        let initial_cwd: String = if !saved.cwd.is_empty() {
-            saved.cwd.clone()
-        } else {
-            std::env::current_dir()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        };
-        let restore_cwd = if initial_cwd.is_empty() {
-            None
-        } else {
-            Some(initial_cwd.as_str())
-        };
-        let (pty, integration) = if i == 0 {
-            match spawn_pty(effective_shell, rows as u16, cols as u16, exec, restore_cwd) {
-                Ok((p, integ)) => (Some(p), integ),
-                Err(err) => {
-                    app.feed_terminal(format!("PTY unavailable: {err}\n").as_bytes());
-                    (None, false)
-                }
+    // Determine current working directory
+    let initial_cwd: String = if !saved.cwd.is_empty() {
+        saved.cwd.clone()
+    } else {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+
+    let restore_cwd = if initial_cwd.is_empty() {
+        None
+    } else {
+        Some(initial_cwd.as_str())
+    };
+
+    // Spawn PTY session
+    let (pty, integration) = if index == 0 {
+        match spawn_pty(effective_shell, rows as u16, cols as u16, exec, restore_cwd) {
+            Ok((p, integ)) => (Some(p), integ),
+            Err(err) => {
+                app.feed_terminal(format!("PTY unavailable: {err}\n").as_bytes());
+                (None, false)
             }
+        }
+    } else {
+        spawn_pty(effective_shell, rows as u16, cols as u16, None, restore_cwd)
+            .map(|(p, integ)| (Some(p), integ))
+            .unwrap_or((None, false))
+    };
+
+    // Build and return the tab state
+    Ok(TabState {
+        app,
+        pty,
+        scroll_offset: 0,
+        editor_scroll_offset: 0,
+        editor_horizontal_scroll_offset: 0,
+        history: shared_history.to_vec(),
+        history_index: None,
+        saved_input: String::new(),
+        split_ratio: saved.split_ratio,
+        was_terminal_fullscreen: false,
+        pre_fullscreen_split_ratio: saved.split_ratio,
+        selection_anchor: None,
+        selection_anchor_scroll: 0,
+        selection_end: None,
+        selection_end_scroll: 0,
+        is_selecting: false,
+        is_selecting_editor: false,
+        last_terminal_text: String::new(),
+        term_row_count: rows,
+        cwd: initial_cwd,
+        suggestion_prefix: None,
+        suggestion_index: None,
+        // Backward compat: if no frecency data is stored, seed each history
+        // entry with count=1 and an artificial age so older entries rank lower.
+        history_entries: if saved.history_entries.is_empty() {
+            saved
+                .history
+                .iter()
+                .enumerate()
+                .map(|(i, cmd)| HistoryEntry {
+                    cmd: cmd.clone(),
+                    count: 1,
+                    last_used_secs: i as u64,
+                })
+                .collect()
         } else {
-            spawn_pty(effective_shell, rows as u16, cols as u16, None, restore_cwd)
-                .map(|(p, integ)| (Some(p), integ))
-                .unwrap_or((None, false))
-        };
-        tabs.push(TabState {
-            app,
-            pty,
-            scroll_offset: 0,
-            editor_scroll_offset: 0,
-            editor_horizontal_scroll_offset: 0,
-            history: saved.history.clone(),
-            history_index: None,
-            saved_input: String::new(),
-            split_ratio: saved.split_ratio,
-            was_terminal_fullscreen: false,
-            pre_fullscreen_split_ratio: saved.split_ratio,
-            selection_anchor: None,
-            selection_anchor_scroll: 0,
-            selection_end: None,
-            selection_end_scroll: 0,
-            is_selecting: false,
-            is_selecting_editor: false,
-            last_terminal_text: String::new(),
-            term_row_count: rows,
-            cwd: initial_cwd,
-            suggestion_prefix: None,
-            suggestion_index: None,
-            // Backward compat: if no frecency data is stored, seed each history
-            // entry with count=1 and an artificial age so older entries rank lower.
-            history_entries: if saved.history_entries.is_empty() {
-                saved
-                    .history
-                    .iter()
-                    .enumerate()
-                    .map(|(i, cmd)| HistoryEntry {
-                        cmd: cmd.clone(),
-                        count: 1,
-                        last_used_secs: i as u64,
-                    })
-                    .collect()
-            } else {
-                saved.history_entries.clone()
-            },
-            pending_cmd: None,
-            shell_integration: integration,
-            search: crate::search::SearchState::default(),
-            command_running: false,
-            unread_output: false,
-            bell_pending: false,
-            a11y_screen_version: 0,
-        });
-    }
-    Ok(tabs)
+            shared_entries.to_vec()
+        },
+        pending_cmd: None,
+        shell_integration: integration,
+        search: crate::search::SearchState::default(),
+        command_running: false,
+        unread_output: false,
+        bell_pending: false,
+        a11y_screen_version: 0,
+    })
 }
 
 fn apply_theme_and_font_selection(state: &mut GpuRuntimeState) {

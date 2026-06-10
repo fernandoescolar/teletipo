@@ -1,6 +1,9 @@
 mod keyboard;
 mod pointer;
 
+#[cfg(test)]
+pub(crate) use pointer::execute_editor_context_menu_item;
+
 use crate::GpuRuntimeState;
 use render_wgpu::AppWindowEvent;
 

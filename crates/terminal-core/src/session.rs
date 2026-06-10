@@ -27,6 +27,10 @@ pub trait TerminalDisplay {
     fn cursor_down(&mut self, n: u16);
     fn cursor_forward(&mut self, n: u16);
     fn cursor_backward(&mut self, n: u16);
+    fn cursor_next_line(&mut self, n: u16);
+    fn cursor_previous_line(&mut self, n: u16);
+    fn cursor_horizontal_absolute(&mut self, col: u16);
+    fn cursor_vertical_absolute(&mut self, row: u16);
     fn cursor_position(&mut self, row: u16, col: u16);
     fn save_cursor(&mut self);
     fn restore_cursor(&mut self);
@@ -102,6 +106,22 @@ impl TerminalDisplay for Screen {
 
     fn cursor_backward(&mut self, n: u16) {
         Screen::cursor_backward(self, n)
+    }
+
+    fn cursor_next_line(&mut self, n: u16) {
+        Screen::cursor_next_line(self, n)
+    }
+
+    fn cursor_previous_line(&mut self, n: u16) {
+        Screen::cursor_previous_line(self, n)
+    }
+
+    fn cursor_horizontal_absolute(&mut self, col: u16) {
+        Screen::cursor_horizontal_absolute(self, col)
+    }
+
+    fn cursor_vertical_absolute(&mut self, row: u16) {
+        Screen::cursor_vertical_absolute(self, row)
     }
 
     fn cursor_position(&mut self, row: u16, col: u16) {
@@ -393,6 +413,12 @@ where
                 Action::CursorDown(n) => self.screen.cursor_down(n),
                 Action::CursorForward(n) => self.screen.cursor_forward(n),
                 Action::CursorBackward(n) => self.screen.cursor_backward(n),
+                Action::CursorNextLine(n) => self.screen.cursor_next_line(n),
+                Action::CursorPreviousLine(n) => self.screen.cursor_previous_line(n),
+                Action::CursorHorizontalAbsolute(col) => {
+                    self.screen.cursor_horizontal_absolute(col)
+                }
+                Action::CursorVerticalAbsolute(row) => self.screen.cursor_vertical_absolute(row),
                 Action::CursorPosition { row, col } => self.screen.cursor_position(row, col),
                 Action::SaveCursor => self.screen.save_cursor(),
                 Action::RestoreCursor => self.screen.restore_cursor(),
@@ -703,6 +729,14 @@ mod tests {
 
         fn cursor_backward(&mut self, _n: u16) {}
 
+        fn cursor_next_line(&mut self, _n: u16) {}
+
+        fn cursor_previous_line(&mut self, _n: u16) {}
+
+        fn cursor_horizontal_absolute(&mut self, _col: u16) {}
+
+        fn cursor_vertical_absolute(&mut self, _row: u16) {}
+
         fn cursor_position(&mut self, _row: u16, _col: u16) {}
 
         fn save_cursor(&mut self) {}
@@ -827,6 +861,21 @@ mod tests {
         let snapshot = session.snapshot_text();
         assert!(snapshot.contains("hello"));
         assert!(snapshot.contains("world"));
+    }
+
+    #[test]
+    fn progress_updates_using_cursor_horizontal_absolute_rewrite_one_line() {
+        let mut session = make_session(3, 20);
+
+        session.feed(b"Downloading 10%\x1b[1G\x1b[2K");
+        session.feed(b"Downloading 50%\x1b[1G\x1b[2K");
+        session.feed(b"Downloading 100%");
+
+        let snapshot = session.snapshot_text();
+        assert!(snapshot.contains("Downloading 100%"));
+        assert!(!snapshot.contains("Downloading 10%"));
+        assert!(!snapshot.contains("Downloading 50%"));
+        assert_eq!(session.scrollback_len(), 0);
     }
 
     #[test]
