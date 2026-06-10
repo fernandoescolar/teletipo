@@ -135,6 +135,14 @@ impl AppEditor {
         }
     }
 
+    pub fn can_undo(&self) -> bool {
+        self.buffer.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.buffer.can_redo()
+    }
+
     pub fn undo(&mut self) {
         self.buffer.undo();
     }
@@ -374,6 +382,14 @@ impl App {
     /// Returns the selected byte range in the editor, or `None` if nothing is selected.
     pub fn editor_selection(&self) -> Option<(usize, usize)> {
         self.editor.selection()
+    }
+
+    pub fn editor_can_undo(&self) -> bool {
+        self.editor.can_undo()
+    }
+
+    pub fn editor_can_redo(&self) -> bool {
+        self.editor.can_redo()
     }
 
     pub fn editor_undo(&mut self) {

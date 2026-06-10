@@ -385,6 +385,7 @@ impl Screen {
         let grid = self.active_grid_mut();
         let delta = n as usize;
         grid.cursor_row = grid.cursor_row.saturating_sub(delta);
+        grid.pending_wrap = false;
         self.bump_version();
     }
 
@@ -392,6 +393,7 @@ impl Screen {
         let grid = self.active_grid_mut();
         let delta = n as usize;
         grid.cursor_row = (grid.cursor_row + delta).min(grid.rows.saturating_sub(1));
+        grid.pending_wrap = false;
         self.bump_version();
     }
 
@@ -399,6 +401,7 @@ impl Screen {
         let grid = self.active_grid_mut();
         let delta = n as usize;
         grid.cursor_col = (grid.cursor_col + delta).min(grid.cols.saturating_sub(1));
+        grid.pending_wrap = false;
         self.bump_version();
     }
 
@@ -406,6 +409,40 @@ impl Screen {
         let grid = self.active_grid_mut();
         let delta = n as usize;
         grid.cursor_col = grid.cursor_col.saturating_sub(delta);
+        grid.pending_wrap = false;
+        self.bump_version();
+    }
+
+    pub fn cursor_next_line(&mut self, n: u16) {
+        let grid = self.active_grid_mut();
+        let delta = n as usize;
+        grid.cursor_row = (grid.cursor_row + delta).min(grid.rows.saturating_sub(1));
+        grid.cursor_col = 0;
+        grid.pending_wrap = false;
+        self.bump_version();
+    }
+
+    pub fn cursor_previous_line(&mut self, n: u16) {
+        let grid = self.active_grid_mut();
+        grid.cursor_row = grid.cursor_row.saturating_sub(n as usize);
+        grid.cursor_col = 0;
+        grid.pending_wrap = false;
+        self.bump_version();
+    }
+
+    pub fn cursor_horizontal_absolute(&mut self, col_1based: u16) {
+        let grid = self.active_grid_mut();
+        grid.cursor_col = col_1based.saturating_sub(1) as usize;
+        grid.clamp_cursor();
+        grid.pending_wrap = false;
+        self.bump_version();
+    }
+
+    pub fn cursor_vertical_absolute(&mut self, row_1based: u16) {
+        let grid = self.active_grid_mut();
+        grid.cursor_row = row_1based.saturating_sub(1) as usize;
+        grid.clamp_cursor();
+        grid.pending_wrap = false;
         self.bump_version();
     }
 
@@ -414,6 +451,7 @@ impl Screen {
         grid.cursor_row = row_1based.saturating_sub(1) as usize;
         grid.cursor_col = col_1based.saturating_sub(1) as usize;
         grid.clamp_cursor();
+        grid.pending_wrap = false;
         self.bump_version();
     }
 
@@ -1053,6 +1091,28 @@ mod tests {
         let all = screen.dump_text_with_scrollback();
         assert!(all.contains("ab"));
         assert!(all.contains("ef"));
+    }
+
+    #[test]
+    fn absolute_and_line_cursor_movements_cancel_pending_wrap() {
+        let mut screen = Screen::new(3, 4);
+        for ch in "abcd".chars() {
+            screen.put_char(ch);
+        }
+
+        screen.cursor_horizontal_absolute(1);
+        screen.put_char('x');
+        assert!(screen.dump_text().starts_with("xbcd"));
+
+        screen.cursor_next_line(1);
+        screen.put_char('y');
+        screen.cursor_previous_line(1);
+        screen.cursor_vertical_absolute(3);
+        screen.put_char('z');
+
+        assert_eq!(screen.cursor_row(), 2);
+        assert!(screen.dump_text().contains('y'));
+        assert!(screen.dump_text().contains('z'));
     }
 
     #[test]

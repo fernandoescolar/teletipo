@@ -162,6 +162,10 @@ impl Parser {
             b'B' => actions.push(Action::CursorDown(first_or(&params, 1))),
             b'C' => actions.push(Action::CursorForward(first_or(&params, 1))),
             b'D' => actions.push(Action::CursorBackward(first_or(&params, 1))),
+            b'E' => actions.push(Action::CursorNextLine(first_or(&params, 1))),
+            b'F' => actions.push(Action::CursorPreviousLine(first_or(&params, 1))),
+            b'G' | b'`' => actions.push(Action::CursorHorizontalAbsolute(first_or(&params, 1))),
+            b'd' => actions.push(Action::CursorVerticalAbsolute(first_or(&params, 1))),
             b'H' | b'f' => {
                 let row = first_or(&params, 1);
                 let col = nth_or(&params, 1, 1);
@@ -318,6 +322,31 @@ mod tests {
                 name: "cursor_backward",
                 input: format!("\x1b[{}D", n).into_bytes(),
                 expected: vec![Action::CursorBackward(n)],
+            });
+            out.push(Fixture {
+                name: "cursor_next_line",
+                input: format!("\x1b[{}E", n).into_bytes(),
+                expected: vec![Action::CursorNextLine(n)],
+            });
+            out.push(Fixture {
+                name: "cursor_previous_line",
+                input: format!("\x1b[{}F", n).into_bytes(),
+                expected: vec![Action::CursorPreviousLine(n)],
+            });
+            out.push(Fixture {
+                name: "cursor_horizontal_absolute",
+                input: format!("\x1b[{}G", n).into_bytes(),
+                expected: vec![Action::CursorHorizontalAbsolute(n)],
+            });
+            out.push(Fixture {
+                name: "horizontal_position_absolute",
+                input: format!("\x1b[{}\x60", n).into_bytes(),
+                expected: vec![Action::CursorHorizontalAbsolute(n)],
+            });
+            out.push(Fixture {
+                name: "cursor_vertical_absolute",
+                input: format!("\x1b[{}d", n).into_bytes(),
+                expected: vec![Action::CursorVerticalAbsolute(n)],
             });
         }
 

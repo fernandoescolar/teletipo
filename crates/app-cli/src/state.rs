@@ -105,6 +105,7 @@ pub(crate) enum ModalOverlay {
 pub(crate) enum ContextMenuKind {
     Tab { tab_idx: usize },
     Terminal,
+    Editor,
 }
 
 /// Open context menu state shared by tab bar and terminal pane.
@@ -115,6 +116,7 @@ pub(crate) struct ContextMenuState {
     pub(crate) y_px: f64,
     pub(crate) hovered_item: Option<usize>,
     pub(crate) items: Vec<String>,
+    pub(crate) enabled_items: Vec<bool>,
 }
 
 #[allow(dead_code)]

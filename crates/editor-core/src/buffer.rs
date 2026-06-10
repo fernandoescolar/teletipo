@@ -229,6 +229,16 @@ impl EditorBuffer {
         true
     }
 
+    /// Returns whether an edit is available to undo.
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    /// Returns whether an edit is available to redo.
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
     pub fn undo(&mut self) {
         if let Some(edit) = self.history.pop_undo() {
             match &edit {
@@ -338,11 +348,17 @@ mod tests {
     #[test]
     fn insert_undo_redo_cycle() {
         let mut buf = EditorBuffer::new();
+        assert!(!buf.can_undo());
+        assert!(!buf.can_redo());
         buf.insert_str("echo hi");
         assert_eq!(buf.text(), "echo hi");
 
+        assert!(buf.can_undo());
+        assert!(!buf.can_redo());
         buf.undo();
         assert_eq!(buf.text(), "");
+        assert!(!buf.can_undo());
+        assert!(buf.can_redo());
 
         buf.redo();
         assert_eq!(buf.text(), "echo hi");

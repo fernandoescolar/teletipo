@@ -231,6 +231,85 @@ fn null_shell_clipboard_roundtrip_via_state() {
 }
 
 #[test]
+fn editor_context_menu_reports_action_availability() {
+    use winit::event::{ElementState, MouseButton};
+
+    let mut state = build_test_state(Box::new(shell::NullShell::default()));
+    state.tab_mut().app.insert_editor_input("hello");
+    input::handle_event(
+        &mut state,
+        AppWindowEvent::CursorMoved { x: 100.0, y: 500.0 },
+    );
+    input::handle_event(
+        &mut state,
+        AppWindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Right,
+        },
+    );
+
+    let menu = state
+        .overlays
+        .context_menu
+        .as_ref()
+        .expect("editor context menu");
+    assert_eq!(
+        menu.items,
+        ["Undo", "Redo", "Copy", "Cut", "Paste", "Select All"]
+    );
+    assert_eq!(menu.enabled_items, [true, false, false, false, false, true]);
+
+    state.tab_mut().app.set_editor_cursor(0, false);
+    state.tab_mut().app.set_editor_cursor(5, true);
+    state.shell_services.clipboard_set("paste me".to_owned());
+    input::handle_event(
+        &mut state,
+        AppWindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Right,
+        },
+    );
+
+    let menu = state
+        .overlays
+        .context_menu
+        .as_ref()
+        .expect("editor context menu");
+    assert_eq!(menu.enabled_items, [true, false, true, true, true, true]);
+}
+
+#[test]
+fn editor_context_menu_executes_all_actions() {
+    let mut state = build_test_state(Box::new(shell::NullShell::default()));
+    state.tab_mut().app.insert_editor_input("hello");
+    state.tab_mut().app.set_editor_cursor(0, false);
+    state.tab_mut().app.set_editor_cursor(5, true);
+
+    input::execute_editor_context_menu_item(&mut state, 2);
+    assert_eq!(
+        state.shell_services.clipboard_get().as_deref(),
+        Some("hello")
+    );
+
+    input::execute_editor_context_menu_item(&mut state, 3);
+    assert_eq!(state.tab().app.editor_snapshot(), "");
+
+    input::execute_editor_context_menu_item(&mut state, 0);
+    assert_eq!(state.tab().app.editor_snapshot(), "hello");
+
+    input::execute_editor_context_menu_item(&mut state, 5);
+    assert_eq!(state.tab().app.editor_selection(), Some((0, 5)));
+
+    state.shell_services.clipboard_set("world\r\n".to_owned());
+    input::execute_editor_context_menu_item(&mut state, 4);
+    assert_eq!(state.tab().app.editor_snapshot(), "world\n");
+
+    input::execute_editor_context_menu_item(&mut state, 0);
+    input::execute_editor_context_menu_item(&mut state, 1);
+    assert_eq!(state.tab().app.editor_snapshot(), "world\n");
+}
+
+#[test]
 fn startup_snapshot_renders_command_output() {
     use std::sync::mpsc::channel;
     use std::time::{Duration, Instant};

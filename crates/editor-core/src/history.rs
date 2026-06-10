@@ -30,4 +30,12 @@ impl EditHistory {
     pub(crate) fn clear_redo(&mut self) {
         self.redo.clear();
     }
+
+    pub(crate) fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub(crate) fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
 }

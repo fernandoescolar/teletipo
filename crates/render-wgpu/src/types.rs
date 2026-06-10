@@ -226,6 +226,8 @@ pub struct ContextMenu {
     pub y_px: f32,
     /// Menu items in draw order.
     pub items: Vec<String>,
+    /// Whether each item is available for interaction.
+    pub enabled_items: Vec<bool>,
     /// Currently hovered menu item index.
     pub hovered_item: Option<usize>,
 }

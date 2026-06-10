@@ -476,6 +476,13 @@ fn handle_super_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
             state.tab_mut().app.set_editor_cursor(end, true);
         }
         "f" => activate_search_overlay(state),
+        "z" => {
+            if state.modifiers.shift_down {
+                state.tab_mut().app.editor_redo();
+            } else {
+                state.tab_mut().app.editor_undo();
+            }
+        }
         "t" => crate::commands::execute_ui_command(
             state,
             crate::commands::CommandId::NewTab,
@@ -532,6 +539,18 @@ fn handle_ctrl_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
     }
     if ch == "f" {
         activate_search_overlay(state);
+        return true;
+    }
+    if ch.eq_ignore_ascii_case("z") {
+        if state.modifiers.shift_down {
+            state.tab_mut().app.editor_redo();
+        } else {
+            state.tab_mut().app.editor_undo();
+        }
+        return true;
+    }
+    if ch.eq_ignore_ascii_case("y") {
+        state.tab_mut().app.editor_redo();
         return true;
     }
     send_ctrl_character_to_terminal(state, ch);
