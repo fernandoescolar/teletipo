@@ -706,7 +706,8 @@ impl<'a> GpuState<'a> {
             // Fixed UI characters used in settings overlay rendering:
             // ← → (arrows), ↑ ↓ (footer nav), ▶ (dropdown marker), ▌ (cursor hint).
             for ch in [
-                '\u{2190}', '\u{2192}', '\u{2191}', '\u{2193}', '\u{25b6}', '\u{258e}',
+                '\u{2190}', '\u{2192}', '\u{2191}', '\u{2193}', '\u{25b6}', '\u{258e}', '\u{2502}',
+                '\u{2500}',
             ] {
                 self.ensure_glyph(ch);
             }
@@ -718,7 +719,7 @@ impl<'a> GpuState<'a> {
             if menu.items.is_empty() {
                 // nothing to draw
             } else {
-                let menu_item_h = self.cell_h_px * 1.15;
+                let menu_item_h = self.cell_h_px * 1.4;
                 let max_chars = menu
                     .items
                     .iter()
@@ -731,11 +732,14 @@ impl<'a> GpuState<'a> {
                 let my = menu.y_px.min(self.size.height as f32 - menu_h).max(0.0);
                 for (i, item) in menu.items.iter().enumerate() {
                     let text_color = if menu.enabled_items.get(i) != Some(&true) {
-                        [0.42_f32, 0.46, 0.52, 1.0]
-                    } else if menu.hovered_item == Some(i) {
-                        [1.0_f32, 1.0, 1.0, 1.0]
+                        [
+                            snapshot.theme.text[0] * 0.5,
+                            snapshot.theme.text[1] * 0.5,
+                            snapshot.theme.text[2] * 0.5,
+                            snapshot.theme.text[3],
+                        ]
                     } else {
-                        [0.78_f32, 0.82, 0.87, 1.0]
+                        snapshot.theme.text
                     };
                     // Vertically centre the text within each item row.
                     let y_item = my + i as f32 * menu_item_h + (menu_item_h - self.cell_h_px) * 0.5;

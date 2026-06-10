@@ -394,7 +394,7 @@ fn running_block_header_and_right_click_actions_are_visible_and_enabled() {
     let rendered = snapshot::build_snapshot(&mut state).terminal_text_from_rows();
     assert!(rendered.contains("●"), "running status should be visible");
     assert!(
-        rendered.contains("▾  ↻  ✎  ⧉"),
+        rendered.contains("▶  E  C  ↓"),
         "quick actions should be visible"
     );
 
@@ -409,7 +409,8 @@ fn running_block_header_and_right_click_actions_are_visible_and_enabled() {
 
     assert!(state.tab().selected_block.is_some());
     let menu = state.overlays.context_menu.as_ref().expect("terminal menu");
-    assert!(menu.enabled_items[3..].iter().all(|enabled| *enabled));
+    assert!(menu.enabled_items[3..8].iter().all(|enabled| *enabled));
+    assert!(!menu.enabled_items[8]);
 }
 
 #[test]
@@ -424,9 +425,67 @@ fn quick_action_copy_icon_targets_block_header() {
         .app
         .feed_terminal(b"prompt\x1b]133;B\x07\x1b]133;C\x07quick\r\n\x1b]133;D;0\x07");
 
-    assert!(state.activate_block_quick_action(0, 79, 80));
+    assert!(state.activate_block_quick_action(0, 76, 80));
     assert_eq!(
         state.shell_services.clipboard_get().as_deref(),
         Some("echo quick")
     );
+}
+
+#[test]
+fn terminal_context_menu_last_item_hitbox_matches_drawn_row() {
+    use winit::event::{ElementState, MouseButton};
+
+    let mut state = build_test_state(Box::new(shell::NullShell::default()));
+    state.tabs[0].app.feed_terminal(b"\x1b]133;A\x07");
+    state.tabs[0]
+        .app
+        .terminal
+        .register_submitted_command("echo menu".to_owned());
+    state.tabs[0]
+        .app
+        .feed_terminal(b"prompt\x1b]133;B\x07\x1b]133;C\x07menu\r\n\x1b]133;D;0\x07");
+    input::handle_event(&mut state, AppWindowEvent::CursorMoved { x: 20.0, y: 8.0 });
+    input::handle_event(
+        &mut state,
+        AppWindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Right,
+        },
+    );
+
+    let row_h = state.layout.cell_h as f64 * 1.4;
+    let last = state.overlays.context_menu.as_ref().unwrap().items.len() - 1;
+    input::handle_event(
+        &mut state,
+        AppWindowEvent::CursorMoved {
+            x: 30.0,
+            y: 8.0 + (last as f64 + 0.5) * row_h,
+        },
+    );
+    assert_eq!(
+        state.overlays.context_menu.as_ref().unwrap().hovered_item,
+        Some(last)
+    );
+}
+
+#[test]
+fn collapse_all_command_blocks_collapses_every_long_output() {
+    let mut state = build_test_state(Box::new(shell::NullShell::default()));
+    for command in ["one", "two"] {
+        state.tabs[0].app.feed_terminal(b"\x1b]133;A\x07");
+        state.tabs[0]
+            .app
+            .terminal
+            .register_submitted_command(command.to_owned());
+        state.tabs[0]
+            .app
+            .feed_terminal(b"prompt\x1b]133;B\x07\x1b]133;C\x07");
+        for _ in 0..21 {
+            state.tabs[0].app.feed_terminal(b"line\r\n");
+        }
+        state.tabs[0].app.feed_terminal(b"\x1b]133;D;0\x07");
+    }
+    state.collapse_all_command_blocks();
+    assert_eq!(state.tabs[0].collapsed_blocks.len(), 2);
 }

@@ -300,7 +300,7 @@ Press `Tab` at the end of any line to open the suggestion popup, which shows his
 | Drag the scrollbar | Scroll terminal or editor |
 | Middle-click a tab | Close that tab |
 | Right-click a tab | Tab context menu |
-| Right-click in terminal | Terminal context menu (`Copy`, `Paste`, `Scroll to Bottom`) |
+| Right-click in terminal | Terminal context menu, including selected-block actions and `Collapse All Command Blocks` |
 | Right-click in command editor | Editor context menu (`Undo`, `Redo`, `Copy`, `Cut`, `Paste`, `Select All`); unavailable actions are disabled |
 | Click the scroll activity badge | Jump back to the bottom of scrollback |
 | Drop a `*.yaml` file on the window | Apply that theme immediately |

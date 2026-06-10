@@ -320,9 +320,29 @@ pub(crate) fn build_panel_vertices(
         && cell_w_px > 0.0
         && cell_h_px > 0.0
     {
-        const MENU_BG: [f32; 4] = [0.12, 0.15, 0.20, 0.97];
-        const MENU_BORDER: [f32; 4] = [0.25, 0.32, 0.42, 1.0];
-        const MENU_HOVER: [f32; 4] = [0.20, 0.28, 0.44, 1.0];
+        let add_c = |a: [f32; 4], d: f32| -> [f32; 4] {
+            [
+                (a[0] + d).clamp(0.0, 1.0),
+                (a[1] + d).clamp(0.0, 1.0),
+                (a[2] + d).clamp(0.0, 1.0),
+                a[3],
+            ]
+        };
+        let mix_c = |a: [f32; 4], b: [f32; 4], t: f32| -> [f32; 4] {
+            [
+                a[0] + (b[0] - a[0]) * t,
+                a[1] + (b[1] - a[1]) * t,
+                a[2] + (b[2] - a[2]) * t,
+                a[3] + (b[3] - a[3]) * t,
+            ]
+        };
+        let menu_bg = add_c(snapshot.theme.terminal_bg, 0.01);
+        let menu_border = snapshot.theme.separator_focused;
+        let menu_hover = mix_c(
+            add_c(snapshot.theme.terminal_bg, 0.08),
+            snapshot.theme.separator_focused,
+            0.20,
+        );
         let item_count = menu.items.len();
         if item_count > 0 {
             let max_chars = menu
@@ -331,7 +351,7 @@ pub(crate) fn build_panel_vertices(
                 .map(|s| s.chars().count())
                 .max()
                 .unwrap_or(8);
-            let menu_item_h = cell_h_px * 1.15;
+            let menu_item_h = cell_h_px * 1.4;
             let menu_w = cell_w_px * (max_chars.max(8) as f32 + 2.0);
             let menu_h = menu_item_h * item_count as f32;
             let px_x = 2.0 / size.width as f32;
@@ -349,10 +369,10 @@ pub(crate) fn build_panel_vertices(
                 y_bot_ndc - px_y,
                 x1_ndc + px_x,
                 y_top_ndc + px_y,
-                MENU_BORDER,
+                menu_border,
             ));
             // Menu background.
-            verts.extend_from_slice(&quad_verts(x0_ndc, y_bot_ndc, x1_ndc, y_top_ndc, MENU_BG));
+            verts.extend_from_slice(&quad_verts(x0_ndc, y_bot_ndc, x1_ndc, y_top_ndc, menu_bg));
             // Per-item hover highlight.
             for item_idx in 0..item_count {
                 if menu.hovered_item == Some(item_idx)
@@ -361,7 +381,7 @@ pub(crate) fn build_panel_vertices(
                     let iy_top = 1.0 - (my + item_idx as f32 * menu_item_h) * px_y;
                     let iy_bot = 1.0 - (my + (item_idx + 1) as f32 * menu_item_h) * px_y;
                     verts
-                        .extend_from_slice(&quad_verts(x0_ndc, iy_bot, x1_ndc, iy_top, MENU_HOVER));
+                        .extend_from_slice(&quad_verts(x0_ndc, iy_bot, x1_ndc, iy_top, menu_hover));
                 }
             }
         }

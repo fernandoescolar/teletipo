@@ -234,6 +234,12 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         // Tint empty cells across it and keep a visible rail at the left edge.
         for cell in &mut row.cells {
             if cell.ch == ' ' {
+                cell.ch = '─';
+                cell.fg = Some([
+                    status_color[0] + 0.18,
+                    status_color[1] + 0.18,
+                    status_color[2] + 0.18,
+                ]);
                 cell.bg = Some(status_color);
             }
         }
@@ -270,14 +276,18 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         } else {
             "○ ready".to_owned()
         };
+        // Use glyphs already guaranteed by both renderers. Collapse is last/rightmost.
         let controls = if state.tabs[active].collapsed_blocks.contains(&block.id) {
-            "▸  ↻  ✎  ⧉"
+            "▶  E  C  →"
         } else {
-            "▾  ↻  ✎  ⧉"
+            "▶  E  C  ↓"
         };
         let label = format!("{status}  {controls}");
         let start = row.cells.len().saturating_sub(label.chars().count());
-        if row.cells[start..].iter().all(|cell| cell.ch == ' ') {
+        if row.cells[start..]
+            .iter()
+            .all(|cell| matches!(cell.ch, ' ' | '─'))
+        {
             for (cell, ch) in row.cells[start..].iter_mut().zip(label.chars()) {
                 cell.ch = ch;
                 cell.bg = Some(status_color);

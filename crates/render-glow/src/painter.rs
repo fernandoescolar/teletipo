@@ -1231,6 +1231,7 @@ impl GlPainter {
     }
 
     fn draw_context_menu(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
+        use crate::types::{clamp_color, mix_color};
         let Some(menu) = &snapshot.context_menu else {
             return;
         };
@@ -1243,23 +1244,24 @@ impl GlPainter {
             .map(|s| s.chars().count())
             .max()
             .unwrap_or(8) as f32;
-        let w = (max_chars * layout.cell_w_px + layout.cell_w_px * 2.0).min(layout.width * 0.5);
+        let w = max_chars * layout.cell_w_px + layout.cell_w_px * 2.0;
         let row_h = layout.cell_h_px * 1.4;
         let h = row_h * menu.items.len() as f32;
         let x0 = menu.x_px.clamp(0.0, (layout.width - w).max(0.0));
         let y0 = menu.y_px.clamp(0.0, (layout.height - h).max(0.0));
-        self.push_rect(
-            x0 - 1.0,
-            y0 - 1.0,
-            x0 + w + 1.0,
-            y0 + h + 1.0,
-            [0.35, 0.55, 0.90, 0.95],
+        let menu_bg = clamp_color(snapshot.theme.terminal_bg, 0.01);
+        let menu_border = snapshot.theme.separator_focused;
+        let menu_hover = mix_color(
+            clamp_color(snapshot.theme.terminal_bg, 0.08),
+            snapshot.theme.separator_focused,
+            0.20,
         );
-        self.push_rect(x0, y0, x0 + w, y0 + h, [0.09, 0.11, 0.18, 0.97]);
+        self.push_rect(x0 - 1.0, y0 - 1.0, x0 + w + 1.0, y0 + h + 1.0, menu_border);
+        self.push_rect(x0, y0, x0 + w, y0 + h, menu_bg);
         for (i, item) in menu.items.iter().enumerate() {
             let iy = y0 + i as f32 * row_h;
             if Some(i) == menu.hovered_item {
-                self.push_rect(x0, iy, x0 + w, iy + row_h, [0.20, 0.32, 0.58, 0.75]);
+                self.push_rect(x0, iy, x0 + w, iy + row_h, menu_hover);
             }
             for (ci, ch) in item.chars().take(36).enumerate() {
                 self.push_glyph(
@@ -1268,7 +1270,11 @@ impl GlPainter {
                     iy + 2.0,
                     layout.cell_w_px,
                     layout.cell_h_px,
-                    [0.92, 0.94, 0.98, 1.0],
+                    if menu.enabled_items.get(i) == Some(&true) {
+                        snapshot.theme.text
+                    } else {
+                        clamp_color(snapshot.theme.text, -0.35)
+                    },
                 );
             }
         }

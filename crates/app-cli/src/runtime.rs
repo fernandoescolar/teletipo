@@ -502,10 +502,10 @@ impl GpuRuntimeState {
         }
         let offset = col.saturating_sub(cols - 10);
         match offset {
-            0..=1 => self.toggle_selected_block_collapse(),
-            3..=4 => self.rerun_selected_block_command(),
-            6..=7 => self.edit_selected_block_command(),
-            9..=10 => self.copy_selected_block_command(),
+            0 => self.rerun_selected_block_command(),
+            3 => self.edit_selected_block_command(),
+            6 => self.copy_selected_block_command(),
+            9 => self.toggle_selected_block_collapse(),
             _ => return false,
         }
         true
@@ -577,6 +577,30 @@ impl GpuRuntimeState {
         }
         self.edit_selected_block_command();
         self.run_editor_command();
+    }
+
+    pub(crate) fn collapse_all_command_blocks(&mut self) {
+        let collapsible: Vec<_> = self
+            .tab()
+            .app
+            .execution_blocks()
+            .iter()
+            .filter(|block| {
+                self.tab()
+                    .app
+                    .block_output(block.id)
+                    .is_some_and(|output| output.lines().count() > 20)
+            })
+            .map(|block| block.id)
+            .collect();
+        if collapsible.is_empty() {
+            self.push_toast(
+                "No long command output to collapse",
+                crate::state::ToastKind::Info,
+            );
+            return;
+        }
+        self.tab_mut().collapsed_blocks.extend(collapsible);
     }
 
     pub(crate) fn toggle_selected_block_collapse(&mut self) {

@@ -19,6 +19,7 @@ const TERMINAL_MENU_ITEMS: &[&str] = &[
     "Re-run Command",
     "Edit Command",
     "Collapse/Expand Block",
+    "Collapse All Command Blocks",
 ];
 const EDITOR_MENU_ITEMS: &[&str] = &["Undo", "Redo", "Copy", "Cut", "Paste", "Select All"];
 
@@ -92,7 +93,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
 
         if let Some(menu) = state.overlays.context_menu.as_mut() {
             let menu_w = context_menu_width_px(state.layout.cell_w, &menu.items);
-            let menu_item_h = state.layout.cell_h as f64 * 1.15;
+            let menu_item_h = state.layout.cell_h as f64 * 1.4;
             let menu_h = menu_item_h * menu.items.len() as f64;
             let mx = menu
                 .x_px
@@ -811,6 +812,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                             state.tab().selected_block.is_some(),
                             state.tab().selected_block.is_some(),
                             state.tab().selected_block.is_some(),
+                            !state.tab().app.execution_blocks().is_empty(),
                         ],
                     });
                 } else if state.cursor.cursor_y > term_bottom {
@@ -1061,6 +1063,7 @@ fn execute_terminal_context_menu_item(state: &mut GpuRuntimeState, item: usize) 
         5 => state.rerun_selected_block_command(),
         6 => state.edit_selected_block_command(),
         7 => state.toggle_selected_block_collapse(),
+        8 => state.collapse_all_command_blocks(),
         _ => {}
     }
 }
