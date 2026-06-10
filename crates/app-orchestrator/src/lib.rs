@@ -8,3 +8,5 @@ mod runtime;
 pub use app::App;
 pub use runtime::{AppEvent, AppRuntime, RuntimeConfig};
 pub use terminal_core::StyledChars;
+
+pub use terminal_core::{BlockId, ExecutionBlock, ExecutionPhase};

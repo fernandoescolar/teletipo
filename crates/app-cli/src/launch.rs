@@ -447,6 +447,8 @@ fn build_single_tab(
         unread_output: false,
         bell_pending: false,
         a11y_screen_version: 0,
+        selected_block: None,
+        collapsed_blocks: std::collections::HashSet::new(),
     })
 }
 

@@ -10,7 +10,16 @@ use std::time::Instant;
 use winit::event::{ElementState, MouseButton};
 
 const TAB_MENU_ITEMS: &[&str] = &["New Tab", "Close Tab", "Move Left", "Move Right"];
-const TERMINAL_MENU_ITEMS: &[&str] = &["Copy", "Paste", "Scroll to Bottom"];
+const TERMINAL_MENU_ITEMS: &[&str] = &[
+    "Copy",
+    "Paste",
+    "Scroll to Bottom",
+    "Copy Block Command",
+    "Copy Block Output",
+    "Re-run Command",
+    "Edit Command",
+    "Collapse/Expand Block",
+];
 const EDITOR_MENU_ITEMS: &[&str] = &["Undo", "Redo", "Copy", "Cut", "Paste", "Select All"];
 
 fn context_menu_width_px(cell_w: f32, items: &[String]) -> f64 {
@@ -761,7 +770,16 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                             .iter()
                             .map(|s| (*s).to_owned())
                             .collect(),
-                        enabled_items: vec![true; TERMINAL_MENU_ITEMS.len()],
+                        enabled_items: vec![
+                            true,
+                            true,
+                            true,
+                            state.tab().selected_block.is_some(),
+                            state.tab().selected_block.is_some(),
+                            state.tab().selected_block.is_some(),
+                            state.tab().selected_block.is_some(),
+                            state.tab().selected_block.is_some(),
+                        ],
                     });
                 } else if state.cursor.cursor_y > term_bottom {
                     let has_selection = state.tab().app.editor_selection().is_some();
@@ -1006,6 +1024,11 @@ fn execute_terminal_context_menu_item(state: &mut GpuRuntimeState, item: usize) 
         2 => {
             state.tab_mut().scroll_offset = 0;
         }
+        3 => state.copy_selected_block_command(),
+        4 => state.copy_selected_block_output(),
+        5 => state.rerun_selected_block_command(),
+        6 => state.edit_selected_block_command(),
+        7 => state.toggle_selected_block_collapse(),
         _ => {}
     }
 }

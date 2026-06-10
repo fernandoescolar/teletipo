@@ -195,6 +195,114 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         dirty: false,
     });
 
+    // Project structured command-block metadata into the terminal view without
+    // mutating the underlying terminal grid. Status is intentionally subtle:
+    // one tinted leading cell plus a compact duration in otherwise-empty cells.
+    let visible_count = terminal_rows.len();
+    let total_rows = state.tabs[active]
+        .app
+        .scrollback_len()
+        .saturating_add(state.tabs[active].term_row_count.max(1));
+    let window_start = total_rows
+        .saturating_sub(state.tabs[active].term_row_count.max(1))
+        .saturating_sub(scroll_offset.min(state.tabs[active].app.scrollback_len()));
+    for block in state.tabs[active].app.execution_blocks() {
+        let Some(view_row) = block.prompt_start_row.checked_sub(window_start) else {
+            continue;
+        };
+        let Some(row) = terminal_rows.get_mut(view_row) else {
+            continue;
+        };
+        let selected = state.tabs[active].selected_block == Some(block.id);
+        let status_color = if selected {
+            [0.18, 0.30, 0.48]
+        } else if block.exit_code == Some(0) {
+            [0.10, 0.28, 0.18]
+        } else if block.exit_code.is_some() {
+            [0.34, 0.12, 0.14]
+        } else {
+            [0.22, 0.22, 0.22]
+        };
+        if let Some(cell) = row.cells.first_mut() {
+            cell.bg = Some(status_color);
+        }
+        if let Some(duration) = block.duration {
+            let elapsed = if duration.as_secs_f64() >= 1.0 {
+                format!("{:.1}s", duration.as_secs_f64())
+            } else {
+                format!("{}ms", duration.as_millis())
+            };
+            let label = if block.exit_code == Some(0) {
+                format!("✓ {elapsed}")
+            } else {
+                format!("✕ {elapsed}")
+            };
+            let start = row.cells.len().saturating_sub(label.chars().count());
+            if row
+                .cells
+                .get(start..)
+                .is_some_and(|cells| cells.iter().all(|cell| cell.ch == ' '))
+            {
+                for (cell, ch) in row.cells[start..].iter_mut().zip(label.chars()) {
+                    cell.ch = ch;
+                    cell.fg = Some(if block.exit_code == Some(0) {
+                        [0.45, 0.78, 0.55]
+                    } else {
+                        [0.88, 0.48, 0.48]
+                    });
+                }
+            }
+        }
+    }
+
+    // Collapsing is a render-only projection. The original output remains in
+    // scrollback and is still available to copy or restore instantly.
+    let mut collapsed_ranges: Vec<(usize, usize, String)> = state.tabs[active]
+        .app
+        .execution_blocks()
+        .iter()
+        .filter(|block| state.tabs[active].collapsed_blocks.contains(&block.id))
+        .filter_map(|block| {
+            let start = block.output_start_row?.checked_sub(window_start)?;
+            let end = block
+                .output_end_row?
+                .checked_sub(window_start)?
+                .min(terminal_rows.len());
+            (end > start + 1).then(|| {
+                (
+                    start,
+                    end,
+                    format!("… {} output lines · expand", end - start),
+                )
+            })
+        })
+        .collect();
+    collapsed_ranges.sort_by_key(|range| std::cmp::Reverse(range.0));
+    for (start, end, label) in collapsed_ranges {
+        let cols = terminal_rows.get(start).map_or(0, |row| row.cells.len());
+        let mut cells = vec![
+            RenderCell {
+                ch: ' ',
+                fg: None,
+                bg: Some([0.12, 0.12, 0.12]),
+                style: 0
+            };
+            cols
+        ];
+        for (cell, ch) in cells.iter_mut().zip(label.chars()) {
+            cell.ch = ch;
+            cell.fg = Some([0.55, 0.55, 0.55]);
+        }
+        terminal_rows.splice(start..end, [RenderRow { cells, dirty: true }]);
+    }
+    while terminal_rows.len() < visible_count {
+        terminal_rows.push(RenderRow {
+            cells: Vec::new(),
+            dirty: true,
+        });
+    }
+    terminal_rows.truncate(visible_count);
+
     let (term_rows, term_cols) = if let Some(first) = terminal_rows.first() {
         (terminal_rows.len(), first.cells.len())
     } else {

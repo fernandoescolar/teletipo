@@ -7,6 +7,7 @@ mod session;
 
 pub use error::TerminalError;
 pub use session::{
-    CommandZone, GenericTerminalSession, TerminalDisplay, TerminalParser, TerminalSession,
+    BlockId, CommandZone, ExecutionBlock, ExecutionPhase, GenericTerminalSession, TerminalDisplay,
+    TerminalParser, TerminalSession,
 };
 pub use terminal_screen::{DamageRegion, StyledChars};

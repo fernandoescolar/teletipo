@@ -1,4 +1,4 @@
-use crate::action::Action;
+use crate::action::{Action, ShellIntegration};
 
 /// Returns the expected total byte length of a UTF-8 sequence given its lead byte.
 /// Returns 0 for invalid lead bytes.
@@ -219,6 +219,19 @@ impl Parser {
 /// Classify a raw OSC payload string into the most specific `Action` variant
 /// available. Falls through to the generic `Osc(payload)` for unknown codes.
 fn parse_osc_payload(payload: &str) -> Action {
+    let shell_event = match payload {
+        "133;A" => Some(ShellIntegration::PromptStart),
+        "133;B" => Some(ShellIntegration::CommandStart),
+        "133;C" => Some(ShellIntegration::OutputStart),
+        _ => payload
+            .strip_prefix("133;D;")
+            .and_then(|code| code.parse::<i32>().ok())
+            .map(ShellIntegration::CommandFinished),
+    };
+    if let Some(event) = shell_event {
+        return Action::ShellIntegration(event);
+    }
+
     // OSC 8 — hyperlink: `8;[params];[uri]`
     // The params field is optional application-specific metadata; we skip it.
     if let Some(rest) = payload.strip_prefix("8;") {
@@ -273,7 +286,7 @@ fn nth_or(params: &[u16], idx: usize, default: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, Parser};
+    use super::{Action, Parser, ShellIntegration};
 
     #[derive(Debug)]
     struct Fixture {
@@ -654,6 +667,31 @@ mod tests {
                 Action::DecPrivateModeSet(1006),
                 Action::DecPrivateModeSet(2004),
             ]
+        );
+    }
+
+    #[test]
+    fn parses_typed_osc_133_with_bel_and_st() {
+        let mut parser = Parser::new();
+        let actions =
+            parser.advance(b"\x1b]133;A\x07\x1b]133;B\x1b\\\x1b]133;C\x07\x1b]133;D;7\x1b\\");
+        assert_eq!(
+            actions,
+            vec![
+                Action::ShellIntegration(ShellIntegration::PromptStart),
+                Action::ShellIntegration(ShellIntegration::CommandStart),
+                Action::ShellIntegration(ShellIntegration::OutputStart),
+                Action::ShellIntegration(ShellIntegration::CommandFinished(7)),
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_osc_133_remains_generic() {
+        let mut parser = Parser::new();
+        assert_eq!(
+            parser.advance(b"\x1b]133;D;nope\x07"),
+            vec![Action::Osc("133;D;nope".to_owned())]
         );
     }
 }

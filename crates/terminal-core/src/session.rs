@@ -1,6 +1,7 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
-use terminal_ansi::{Action, Parser};
+use terminal_ansi::{Action, Parser, ShellIntegration};
 use terminal_screen::{DamageRegion, Screen, ScreenSnapshot, StyledChars};
 
 use crate::error::TerminalError;
@@ -252,19 +253,36 @@ impl TerminalDisplay for Screen {
 ///
 /// Row numbers are absolute (scrollback_len + grid_row at the time of the
 /// event) so they stay valid as lines are pushed into scrollback.
-#[derive(Debug, Clone)]
-pub struct CommandZone {
-    /// Absolute row where the prompt started (`OSC 133;A`).
-    pub prompt_start_row: usize,
-    /// Absolute row where the user finished typing and pressed Enter
-    /// (`OSC 133;B`).  `None` if the B marker has not been received yet.
-    pub command_start_row: Option<usize>,
-    /// Absolute row where command output began (`OSC 133;C`).
-    /// `None` if the C marker has not been received yet.
-    pub output_start_row: Option<usize>,
-    /// Exit code reported by the shell (`OSC 133;D;N`).
-    pub exit_code: Option<i32>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BlockId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionPhase {
+    Prompt,
+    Running,
+    Output,
+    Completed,
+    Interrupted,
 }
+
+#[derive(Debug, Clone)]
+pub struct ExecutionBlock {
+    pub id: BlockId,
+    pub phase: ExecutionPhase,
+    pub prompt_start_row: usize,
+    pub command_start_row: Option<usize>,
+    pub output_start_row: Option<usize>,
+    pub output_end_row: Option<usize>,
+    pub command: Option<String>,
+    pub exit_code: Option<i32>,
+    pub cwd: Option<std::path::PathBuf>,
+    pub started_at: Option<SystemTime>,
+    pub duration: Option<Duration>,
+    started_mono: Option<Instant>,
+}
+
+/// Backwards-compatible name for callers migrating from prompt zones.
+pub type CommandZone = ExecutionBlock;
 
 /// Owns the bytes-to-actions decoder and the screen model and threads parsed
 /// actions through to it. Instantiating with custom `P` / `D` parameters lets
@@ -285,7 +303,9 @@ pub struct GenericTerminalSession<P = Parser, D = Screen> {
     command_zones: Vec<CommandZone>,
     /// The in-progress zone opened by the most recent `OSC 133;A` and not yet
     /// closed by `OSC 133;D`.
-    current_zone: Option<CommandZone>,
+    current_zone: Option<ExecutionBlock>,
+    next_block_id: u64,
+    completed_block: Option<BlockId>,
     /// Working directory reported by the shell via OSC 7 (`file://host/path`).
     /// Falls back to OS-level CWD inspection when `None`.
     cwd: Option<std::path::PathBuf>,
@@ -314,6 +334,8 @@ impl GenericTerminalSession<Parser, Screen> {
             application_cursor_keys: false,
             command_zones: Vec::new(),
             current_zone: None,
+            next_block_id: 1,
+            completed_block: None,
             cwd: None,
         })
     }
@@ -338,6 +360,8 @@ where
             application_cursor_keys: false,
             command_zones: Vec::new(),
             current_zone: None,
+            next_block_id: 1,
+            completed_block: None,
             cwd: None,
         }
     }
@@ -349,53 +373,86 @@ where
     }
 
     /// Handle `OSC 133;A` — prompt start.
-    /// Opens a new [`CommandZone`], preserving any existing incomplete zone so
-    /// all prompt positions remain available for navigation.
     fn on_osc133_a(&mut self) {
         let abs_row = self.abs_cursor_row();
-        // If there is already an in-progress zone (e.g. user pressed Enter
-        // without running a command, or this is the very first prompt), push
-        // it into the finished list so its prompt row is preserved.
-        if let Some(zone) = self.current_zone.take() {
-            self.command_zones.push(zone);
-            if self.command_zones.len() > 500 {
-                self.command_zones.remove(0);
-            }
+        if let Some(mut zone) = self.current_zone.take()
+            && matches!(zone.phase, ExecutionPhase::Running | ExecutionPhase::Output)
+        {
+            zone.phase = ExecutionPhase::Interrupted;
+            zone.output_end_row = Some(abs_row);
+            zone.duration = zone.started_mono.take().map(|started| started.elapsed());
+            self.push_block(zone);
         }
-        self.current_zone = Some(CommandZone {
+        let id = BlockId(self.next_block_id);
+        self.next_block_id = self.next_block_id.saturating_add(1);
+        self.current_zone = Some(ExecutionBlock {
+            id,
+            phase: ExecutionPhase::Prompt,
             prompt_start_row: abs_row,
             command_start_row: None,
             output_start_row: None,
+            output_end_row: None,
+            command: None,
             exit_code: None,
+            cwd: None,
+            started_at: None,
+            duration: None,
+            started_mono: None,
         });
     }
 
-    /// Handle `OSC 133;B` — end of prompt / user pressed Enter.
+    fn push_block(&mut self, zone: ExecutionBlock) {
+        self.completed_block = Some(zone.id);
+        self.command_zones.push(zone);
+        if self.command_zones.len() > 500 {
+            self.command_zones.remove(0);
+        }
+    }
+
+    /// Attach exact text submitted through Teletipo's dedicated editor.
+    pub fn register_submitted_command(&mut self, command: String) {
+        if let Some(zone) = &mut self.current_zone {
+            zone.command = Some(command);
+        }
+    }
+
     fn on_osc133_b(&mut self) {
         let abs_row = self.abs_cursor_row();
-        if let Some(zone) = &mut self.current_zone {
+        if let Some(zone) = &mut self.current_zone
+            && zone.phase == ExecutionPhase::Prompt
+        {
+            zone.phase = ExecutionPhase::Running;
             zone.command_start_row = Some(abs_row);
+            zone.cwd = self.cwd.clone();
+            zone.started_at = Some(SystemTime::now());
+            zone.started_mono = Some(Instant::now());
         }
     }
 
-    /// Handle `OSC 133;C` — command output is about to start.
     fn on_osc133_c(&mut self) {
         let abs_row = self.abs_cursor_row();
-        if let Some(zone) = &mut self.current_zone {
-            zone.output_start_row = Some(abs_row);
+        if let Some(zone) = &mut self.current_zone
+            && matches!(zone.phase, ExecutionPhase::Running | ExecutionPhase::Output)
+        {
+            zone.phase = ExecutionPhase::Output;
+            zone.output_start_row.get_or_insert(abs_row);
         }
     }
 
-    /// Handle `OSC 133;D;N` — command finished with exit code `code`.
     fn on_osc133_d(&mut self, code: i32) {
         self.last_exit_code = Some(code);
+        let end_row = self.abs_cursor_row();
         if let Some(mut zone) = self.current_zone.take() {
-            zone.exit_code = Some(code);
-            self.command_zones.push(zone);
-            // Cap history to avoid unbounded growth in long-running sessions.
-            if self.command_zones.len() > 500 {
-                self.command_zones.remove(0);
+            if !matches!(zone.phase, ExecutionPhase::Running | ExecutionPhase::Output) {
+                self.current_zone = Some(zone);
+                return;
             }
+            zone.phase = ExecutionPhase::Completed;
+            zone.exit_code = Some(code);
+            zone.output_start_row = zone.output_start_row.or(zone.command_start_row);
+            zone.output_end_row = Some(end_row);
+            zone.duration = zone.started_mono.take().map(|started| started.elapsed());
+            self.push_block(zone);
         }
     }
 
@@ -448,20 +505,14 @@ where
                     2004 => self.bracketed_paste = false,
                     _ => {}
                 },
+                Action::ShellIntegration(event) => match event {
+                    ShellIntegration::PromptStart => self.on_osc133_a(),
+                    ShellIntegration::CommandStart => self.on_osc133_b(),
+                    ShellIntegration::OutputStart => self.on_osc133_c(),
+                    ShellIntegration::CommandFinished(code) => self.on_osc133_d(code),
+                },
                 Action::Osc(s) => {
-                    if s == "133;A" {
-                        self.on_osc133_a();
-                    } else if s == "133;B" {
-                        self.on_osc133_b();
-                    } else if s == "133;C" {
-                        self.on_osc133_c();
-                    } else if let Some(rest) = s.strip_prefix("133;D;")
-                        && let Ok(code) = rest.parse::<i32>()
-                    {
-                        self.on_osc133_d(code);
-                    } else if let Some(title) =
-                        s.strip_prefix("0;").or_else(|| s.strip_prefix("2;"))
-                    {
+                    if let Some(title) = s.strip_prefix("0;").or_else(|| s.strip_prefix("2;")) {
                         self.window_title = Some(title.to_owned());
                     } else if let Some(uri) = s.strip_prefix("7;") {
                         // OSC 7 — shell reports its working directory as
@@ -630,6 +681,43 @@ where
         self.current_zone.as_ref()
     }
 
+    /// Completed and interrupted execution blocks, oldest first.
+    pub fn execution_blocks(&self) -> &[ExecutionBlock] {
+        &self.command_zones
+    }
+
+    /// Look up an execution block by its stable session-local ID.
+    pub fn execution_block(&self, id: BlockId) -> Option<&ExecutionBlock> {
+        self.command_zones.iter().find(|block| block.id == id)
+    }
+
+    /// Consume the ID of the most recently completed/interrupted block.
+    pub fn take_completed_block(&mut self) -> Option<BlockId> {
+        self.completed_block.take()
+    }
+
+    /// Extract plain command output from retained screen rows.
+    pub fn block_output(&self, id: BlockId) -> Option<String> {
+        let block = self.execution_block(id)?;
+        let start = block.output_start_row?;
+        let end = block.output_end_row?;
+        let all = self.screen.dump_text_with_scrollback();
+        let lines: Vec<&str> = all.lines().collect();
+        if start > end || start >= lines.len() {
+            return None;
+        }
+        let end = end.min(lines.len());
+        Some(
+            lines[start..end]
+                .iter()
+                .map(|line| line.trim_end())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim_end_matches('\n')
+                .to_owned(),
+        )
+    }
+
     /// Working directory last reported by the shell via OSC 7.
     /// Returns `None` if the shell has not yet sent an OSC 7 sequence.
     pub fn osc7_cwd(&self) -> Option<&std::path::Path> {
@@ -676,11 +764,12 @@ fn percent_decode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-
     use terminal_ansi::Action;
     use terminal_screen::{DamageRegion, ScreenSnapshot, StyledChars};
 
-    use super::{GenericTerminalSession, TerminalDisplay, TerminalParser, TerminalSession};
+    use super::{
+        ExecutionPhase, GenericTerminalSession, TerminalDisplay, TerminalParser, TerminalSession,
+    };
 
     /// Construct a `TerminalSession` with the given dimensions for testing.
     /// Panics if construction fails (invalid size).
@@ -1007,5 +1096,37 @@ mod tests {
         session.feed(b"\x1b]133;A\x07");
 
         assert_eq!(session.prompt_marks(), &[0, 2]);
+    }
+
+    #[test]
+    fn osc_133_builds_structured_execution_block() {
+        let mut session = make_session(8, 40);
+        session.feed(b"\x1b]133;A\x07\x1b]7;file://localhost/tmp\x07");
+        session.register_submitted_command("printf hello".to_owned());
+        session
+            .feed(b"prompt$ printf hello\r\n\x1b]133;B\x07\x1b]133;C\x07hello\r\n\x1b]133;D;0\x07");
+
+        let block = session.execution_blocks().last().expect("completed block");
+        assert_eq!(block.phase, ExecutionPhase::Completed);
+        assert_eq!(block.command.as_deref(), Some("printf hello"));
+        assert_eq!(block.exit_code, Some(0));
+        assert_eq!(block.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
+        assert!(block.started_at.is_some());
+        assert!(block.duration.is_some());
+        assert_eq!(session.block_output(block.id).as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn next_prompt_interrupts_running_block_but_discards_prompt_only_candidate() {
+        let mut session = make_session(4, 20);
+        session.feed(b"\x1b]133;A\x07\x1b]133;A\x07");
+        assert!(session.execution_blocks().is_empty());
+        session.register_submitted_command("sleep 1".to_owned());
+        session.feed(b"\x1b]133;B\x07\x1b]133;A\x07");
+        assert_eq!(session.execution_blocks().len(), 1);
+        assert_eq!(
+            session.execution_blocks()[0].phase,
+            ExecutionPhase::Interrupted
+        );
     }
 }

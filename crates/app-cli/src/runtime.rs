@@ -404,56 +404,148 @@ impl GpuRuntimeState {
 
     fn jump_to_prompt(&mut self, forward: bool) {
         let tab = self.tab_mut();
-        let prompt_marks = tab.app.prompt_marks();
-        if prompt_marks.is_empty() {
-            self.push_toast("No prompt markers yet", crate::state::ToastKind::Info);
+        let blocks: Vec<(app_orchestrator::BlockId, usize)> = tab
+            .app
+            .execution_blocks()
+            .iter()
+            .map(|block| (block.id, block.prompt_start_row))
+            .collect();
+        if blocks.is_empty() {
+            self.push_toast("No command blocks yet", crate::state::ToastKind::Info);
             return;
         }
+
+        let target_idx = match tab
+            .selected_block
+            .and_then(|id| blocks.iter().position(|b| b.0 == id))
+        {
+            Some(idx) if forward => idx.checked_add(1).filter(|idx| *idx < blocks.len()),
+            Some(idx) => idx.checked_sub(1),
+            None if forward => Some(0),
+            None => Some(blocks.len() - 1),
+        };
+        let Some((target_id, target_row)) = target_idx.map(|idx| blocks[idx]) else {
+            self.push_toast(
+                if forward {
+                    "No later command block"
+                } else {
+                    "No earlier command block"
+                },
+                crate::state::ToastKind::Info,
+            );
+            return;
+        };
 
         let visible_rows = tab.term_row_count.max(1);
         let scrollback = tab.app.scrollback_len();
         let total_rows = scrollback.saturating_add(visible_rows);
-        let window_start = total_rows
-            .saturating_sub(visible_rows)
-            .saturating_sub(tab.scroll_offset.min(scrollback));
-        let pivot_row = if let Some((selected_row, _)) = tab.selection_anchor {
-            window_start.saturating_add(selected_row)
-        } else {
-            window_start.saturating_add(visible_rows / 2)
-        };
-
-        let target = if forward {
-            prompt_marks.iter().copied().find(|&row| row > pivot_row)
-        } else {
-            prompt_marks.iter().copied().rfind(|&row| row < pivot_row)
-        };
-
-        let Some(target_row) = target else {
-            let msg = if forward {
-                "No later prompt"
-            } else {
-                "No earlier prompt"
-            };
-            self.push_toast(msg, crate::state::ToastKind::Info);
-            return;
-        };
-
         let center_target = target_row.saturating_sub(visible_rows / 2);
         let max_start = total_rows.saturating_sub(visible_rows);
-        let clamped_start = center_target.min(max_start);
         tab.scroll_offset = total_rows
             .saturating_sub(visible_rows)
-            .saturating_sub(clamped_start)
+            .saturating_sub(center_target.min(max_start))
             .min(scrollback);
-        let new_window_start = total_rows
-            .saturating_sub(visible_rows)
-            .saturating_sub(tab.scroll_offset.min(scrollback));
-        let row_in_view = target_row.saturating_sub(new_window_start);
-        tab.selection_anchor = Some((row_in_view, 0));
-        tab.selection_anchor_scroll = tab.scroll_offset;
-        tab.selection_end = Some((row_in_view, 0));
-        tab.selection_end_scroll = tab.scroll_offset;
+        tab.selected_block = Some(target_id);
+        tab.selection_anchor = None;
+        tab.selection_end = None;
         tab.is_selecting = false;
+    }
+
+    fn selected_block_command(&self) -> Option<String> {
+        let tab = self.tab();
+        let id = tab.selected_block?;
+        tab.app.execution_block(id)?.command.clone()
+    }
+
+    pub(crate) fn copy_selected_block_command(&mut self) {
+        let Some(command) = self.selected_block_command() else {
+            self.push_toast(
+                "Select a command block first",
+                crate::state::ToastKind::Info,
+            );
+            return;
+        };
+        self.shell_services.clipboard_set(command);
+        self.push_toast("Command copied", crate::state::ToastKind::Success);
+    }
+
+    pub(crate) fn copy_selected_block_output(&mut self) {
+        let output = {
+            let tab = self.tab();
+            tab.selected_block.and_then(|id| tab.app.block_output(id))
+        };
+        let Some(output) = output else {
+            self.push_toast(
+                "Selected block output is unavailable",
+                crate::state::ToastKind::Info,
+            );
+            return;
+        };
+        self.shell_services.clipboard_set(output);
+        self.push_toast("Output copied", crate::state::ToastKind::Success);
+    }
+
+    pub(crate) fn edit_selected_block_command(&mut self) {
+        let Some(command) = self.selected_block_command() else {
+            self.push_toast(
+                "Select a command block first",
+                crate::state::ToastKind::Info,
+            );
+            return;
+        };
+        let tab = self.tab_mut();
+        tab.app.editor_clear();
+        tab.app.insert_editor_input(&command);
+        tab.editor_scroll_offset = 0;
+        tab.editor_horizontal_scroll_offset = 0;
+    }
+
+    pub(crate) fn rerun_selected_block_command(&mut self) {
+        if self.tab().command_running {
+            self.push_toast(
+                "Cannot re-run while a command is active",
+                crate::state::ToastKind::Warn,
+            );
+            return;
+        }
+        if !self.tab().app.editor_snapshot().is_empty() {
+            self.push_toast(
+                "Editor is not empty; use Edit Selected Command",
+                crate::state::ToastKind::Warn,
+            );
+            return;
+        }
+        self.edit_selected_block_command();
+        self.run_editor_command();
+    }
+
+    pub(crate) fn toggle_selected_block_collapse(&mut self) {
+        let (id, long_enough) = {
+            let tab = self.tab();
+            let Some(id) = tab.selected_block else {
+                self.push_toast(
+                    "Select a command block first",
+                    crate::state::ToastKind::Info,
+                );
+                return;
+            };
+            let long = tab
+                .app
+                .block_output(id)
+                .is_some_and(|output| output.lines().count() > 20);
+            (id, long)
+        };
+        if !long_enough {
+            self.push_toast(
+                "Only output longer than 20 lines can be collapsed",
+                crate::state::ToastKind::Info,
+            );
+            return;
+        }
+        let tab = self.tab_mut();
+        if !tab.collapsed_blocks.insert(id) {
+            tab.collapsed_blocks.remove(&id);
+        }
     }
 
     pub(crate) fn resize_tab(&mut self, idx: usize, rows: u16, cols: u16) {
@@ -556,6 +648,8 @@ impl GpuRuntimeState {
             unread_output: false,
             bell_pending: false,
             a11y_screen_version: 0,
+            selected_block: None,
+            collapsed_blocks: std::collections::HashSet::new(),
         });
         self.active_tab = self.tabs.len() - 1;
     }
@@ -678,26 +772,18 @@ fn build_accessibility_tree(tabs: &[TabState], active_tab: usize) -> Accessibili
         });
     }
 
-    // ── Completed command zones ───────────────────────────────────────────────
-    //
-    // Zones and history grow together: zone[i] was triggered by history[i].
-    // We zip them so each node carries the correct command text.  Zones whose
-    // history entry is missing (should not happen in practice) are skipped.
+    // ── Completed structured command blocks ────────────────────────────────
     {
-        let zones = tab.app.terminal.command_zones();
-        for (i, zone) in zones.iter().enumerate() {
-            let command_text = match tab.history.get(i) {
-                Some(cmd) if !cmd.is_empty() => cmd.clone(),
-                _ => continue, // skip prompt-only zones with no command
+        for block in tab.app.execution_blocks() {
+            let Some(command_text) = block.command.clone().filter(|command| !command.is_empty())
+            else {
+                continue;
             };
             nodes.push(AccessNode::CommandZone {
-                prompt_row: zone.prompt_start_row,
+                prompt_row: block.prompt_start_row,
                 command_text,
-                exit_code: zone.exit_code,
-                // Full output extraction would require walking the scrollback;
-                // leave empty for now — the AT can navigate to the prompt row
-                // itself for the full text.
-                output_text: String::new(),
+                exit_code: block.exit_code,
+                output_text: tab.app.block_output(block.id).unwrap_or_default(),
             });
         }
     }

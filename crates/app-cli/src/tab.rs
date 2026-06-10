@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use app_orchestrator::App;
 use terminal_pty::PortablePtySession;
 
@@ -83,6 +85,10 @@ pub(crate) struct TabState {
     /// Screen version seen at the last accessibility-tree push.
     /// Used to skip `update_accessibility_tree` when nothing changed.
     pub(crate) a11y_screen_version: u64,
+    /// Selected structured command block, if any.
+    pub(crate) selected_block: Option<app_orchestrator::BlockId>,
+    /// Command blocks whose long output is visually collapsed.
+    pub(crate) collapsed_blocks: HashSet<app_orchestrator::BlockId>,
 }
 
 /// Persistent state for a single tab.

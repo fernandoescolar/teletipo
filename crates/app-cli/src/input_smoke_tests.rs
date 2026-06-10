@@ -54,6 +54,8 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         unread_output: false,
         bell_pending: false,
         a11y_screen_version: 0,
+        selected_block: None,
+        collapsed_blocks: std::collections::HashSet::new(),
     };
     GpuRuntimeState {
         tabs: vec![tab],
@@ -181,7 +183,7 @@ fn jump_to_prev_prompt_scrolls_back() {
     state.tabs[0].term_row_count = 4;
     state.tabs[0]
         .app
-        .feed_terminal(b"\x1b]133;A\x07p1\nout1\n\x1b]133;A\x07p2\nout2\n\x1b]133;A\x07p3\nout3\n");
+        .feed_terminal(b"\x1b]133;A\x07p1\n\x1b]133;B\x07\x1b]133;C\x07out1\n\x1b]133;D;0\x07\x1b]133;A\x07p2\n\x1b]133;B\x07\x1b]133;C\x07out2\n\x1b]133;D;0\x07\x1b]133;A\x07p3\n\x1b]133;B\x07\x1b]133;C\x07out3\n\x1b]133;D;0\x07");
 
     state.jump_to_prev_prompt();
 
@@ -194,27 +196,19 @@ fn jump_to_next_prompt_scrolls_forward_after_backjump() {
     state.resize_tab(0, 4, 80);
     state.tabs[0].term_row_count = 4;
     state.tabs[0].app.feed_terminal(
-        b"\x1b]133;A\x07p1\nout1\n\x1b]133;A\x07p2\nout2\n\x1b]133;A\x07p3\nout3\n\x1b]133;A\x07p4\nout4\n\x1b]133;A\x07p5\nout5\n",
+        b"\x1b]133;A\x07p1\n\x1b]133;B\x07\x1b]133;C\x07out1\n\x1b]133;D;0\x07\x1b]133;A\x07p2\n\x1b]133;B\x07\x1b]133;C\x07out2\n\x1b]133;D;0\x07\x1b]133;A\x07p3\n\x1b]133;B\x07\x1b]133;C\x07out3\n\x1b]133;D;0\x07\x1b]133;A\x07p4\n\x1b]133;B\x07\x1b]133;C\x07out4\n\x1b]133;D;0\x07\x1b]133;A\x07p5\n\x1b]133;B\x07\x1b]133;C\x07out5\n\x1b]133;D;0\x07",
     );
 
     state.jump_to_prev_prompt();
     state.jump_to_prev_prompt();
-    let visible_rows = state.tabs[0].term_row_count.max(1);
-    let scrollback = state.tabs[0].app.scrollback_len();
-    let total_rows = scrollback.saturating_add(visible_rows);
-    let prev_window_start = total_rows
-        .saturating_sub(visible_rows)
-        .saturating_sub(state.tabs[0].scroll_offset.min(scrollback));
-    let prev_selected = prev_window_start + state.tabs[0].selection_anchor.unwrap().0;
+    let prev_selected = state.tabs[0]
+        .selected_block
+        .expect("selected previous block");
 
     state.jump_to_next_prompt();
 
-    let next_window_start = total_rows
-        .saturating_sub(visible_rows)
-        .saturating_sub(state.tabs[0].scroll_offset.min(scrollback));
-    let next_selected = next_window_start + state.tabs[0].selection_anchor.unwrap().0;
-
-    assert!(next_selected > prev_selected);
+    let next_selected = state.tabs[0].selected_block.expect("selected next block");
+    assert!(next_selected.0 > prev_selected.0);
 }
 
 #[test]
@@ -342,4 +336,43 @@ fn startup_snapshot_renders_command_output() {
     assert!(snapshot.terminal_text.contains("hello from teletipo"));
     assert_eq!(snapshot.active_tab, 0);
     assert_eq!(snapshot.scroll_offset, 0);
+}
+
+#[test]
+fn structured_block_actions_copy_edit_and_collapse() {
+    let mut state = build_test_state(Box::new(shell::NullShell::default()));
+    state.tabs[0].app.feed_terminal(b"\x1b]133;A\x07");
+    state.tabs[0]
+        .app
+        .terminal
+        .register_submitted_command("printf hello".to_owned());
+    let mut stream = b"prompt\r\n\x1b]133;B\x07\x1b]133;C\x07".to_vec();
+    for _ in 0..21 {
+        stream.extend_from_slice(b"hello\r\n");
+    }
+    stream.extend_from_slice(b"\x1b]133;D;0\x07");
+    state.tabs[0].app.feed_terminal(&stream);
+    let id = state.tabs[0].app.execution_blocks()[0].id;
+    state.tabs[0].selected_block = Some(id);
+
+    state.copy_selected_block_command();
+    assert_eq!(
+        state.shell_services.clipboard_get().as_deref(),
+        Some("printf hello")
+    );
+    state.copy_selected_block_output();
+    assert!(
+        state
+            .shell_services
+            .clipboard_get()
+            .is_some_and(|output| output.lines().count() >= 20)
+    );
+
+    state.edit_selected_block_command();
+    assert_eq!(state.tabs[0].app.editor_snapshot(), "printf hello");
+    state.toggle_selected_block_collapse();
+    assert!(state.tabs[0].collapsed_blocks.contains(&id));
+    let rendered = snapshot::build_snapshot(&mut state).terminal_text_from_rows();
+    assert!(rendered.contains("output lines · expand"));
+    assert!(rendered.contains("✓"));
 }

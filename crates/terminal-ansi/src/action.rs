@@ -1,3 +1,12 @@
+/// A typed shell-integration event decoded from OSC 133.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellIntegration {
+    PromptStart,
+    CommandStart,
+    OutputStart,
+    CommandFinished(i32),
+}
+
 /// A semantic event decoded by the ANSI parser.
 ///
 /// `Action` is the intermediate representation between raw PTY bytes and the
@@ -37,6 +46,8 @@ pub enum Action {
     SetGraphicsRendition(Vec<u16>),
     DecPrivateModeSet(u16),
     DecPrivateModeReset(u16),
+    /// Typed OSC 133 shell-integration event.
+    ShellIntegration(ShellIntegration),
     /// Raw OSC (Operating System Command) sequence payload, e.g. "133;D;0"
     /// for shell integration exit-code reporting.
     Osc(String),

@@ -239,15 +239,16 @@ impl PortablePtySession {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
+                        // Increment before publishing the chunk so a fast receiver cannot
+                        // decrement the depth before this reader accounts for it.
+                        let depth = queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                         if let Err(err) = tx.send(buf[..n].to_vec()) {
+                            queued_chunks_for_thread.fetch_sub(1, Ordering::Relaxed);
                             debug!(error = %err, "pty reader exiting: receiver dropped");
                             break;
-                        } else {
-                            let depth =
-                                queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
-                            metrics::gauge!("pty_channel_depth").set(depth as f64);
-                            metrics::counter!("pty_read_bytes").increment(n as u64);
                         }
+                        metrics::gauge!("pty_channel_depth").set(depth as f64);
+                        metrics::counter!("pty_read_bytes").increment(n as u64);
                     }
                     Err(err) => {
                         warn!(error = %err, "pty reader exiting on read error");
@@ -320,15 +321,16 @@ impl PortablePtySession {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
+                        // Increment before publishing the chunk so a fast receiver cannot
+                        // decrement the depth before this reader accounts for it.
+                        let depth = queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                         if let Err(err) = tx.send(buf[..n].to_vec()) {
+                            queued_chunks_for_thread.fetch_sub(1, Ordering::Relaxed);
                             debug!(error = %err, "pty reader exiting: receiver dropped");
                             break;
-                        } else {
-                            let depth =
-                                queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
-                            metrics::gauge!("pty_channel_depth").set(depth as f64);
-                            metrics::counter!("pty_read_bytes").increment(n as u64);
                         }
+                        metrics::gauge!("pty_channel_depth").set(depth as f64);
+                        metrics::counter!("pty_read_bytes").increment(n as u64);
                     }
                     Err(err) => {
                         warn!(error = %err, "pty reader exiting on read error");

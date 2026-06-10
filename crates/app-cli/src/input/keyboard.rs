@@ -71,6 +71,9 @@ fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &winit::event::Ke
     if handle_windows_shortcuts(state, key_event) {
         return true;
     }
+    if handle_command_block_shortcuts(state, key_event) {
+        return true;
+    }
 
     // Windows often intercepts Win+Shift+P, so keep Ctrl+Shift+P as a
     // reliable cross-platform way to open the command palette.
@@ -80,6 +83,53 @@ fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &winit::event::Ke
         && ch.as_str().eq_ignore_ascii_case("p")
     {
         open_command_palette(state);
+        return true;
+    }
+    false
+}
+
+fn handle_command_block_shortcuts(
+    state: &mut GpuRuntimeState,
+    key_event: &winit::event::KeyEvent,
+) -> bool {
+    if state.modifiers.shift_down && (state.modifiers.super_down || state.modifiers.ctrl_down) {
+        match key_event.logical_key {
+            Key::Named(NamedKey::ArrowUp) => {
+                state.jump_to_prev_prompt();
+                return true;
+            }
+            Key::Named(NamedKey::ArrowDown) => {
+                state.jump_to_next_prompt();
+                return true;
+            }
+            _ => {}
+        }
+    }
+    if state.modifiers.alt_down
+        && state.modifiers.shift_down
+        && let Key::Character(ch) = &key_event.logical_key
+    {
+        let command = match ch.as_str().to_ascii_lowercase().as_str() {
+            "c" => Some(crate::commands::CommandId::CopyBlockCommand),
+            "o" => Some(crate::commands::CommandId::CopyBlockOutput),
+            "r" => Some(crate::commands::CommandId::RerunBlockCommand),
+            "e" => Some(crate::commands::CommandId::EditBlockCommand),
+            " " => Some(crate::commands::CommandId::ToggleBlockCollapse),
+            _ => None,
+        };
+        if let Some(command) = command {
+            crate::commands::execute_ui_command(
+                state,
+                command,
+                crate::commands::CommandContext::default(),
+            );
+            return true;
+        }
+    }
+    if matches!(key_event.logical_key, Key::Named(NamedKey::Escape))
+        && state.tab().selected_block.is_some()
+    {
+        state.tab_mut().selected_block = None;
         return true;
     }
     false

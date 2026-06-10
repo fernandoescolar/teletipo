@@ -17,7 +17,7 @@ A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with 
 - Search scope includes both visible terminal rows and scrollback history
 - Code-editor-style command input
 - Command palette (`Cmd+Shift+P`) for common actions such as tab management, settings, config actions, and prompt navigation
-- Prompt-aware navigation using OSC 133 shell markers (`Jump to Previous Prompt` / `Jump to Next Prompt`)
+- Structured command execution blocks powered by OSC 133, with block navigation, command/output-only copy, re-run, edit, collapse/expand, status, and duration
 - **Shell integration** — automatic OSC 133 A/B/C/D and OSC 7 hooks injected into zsh and bash at startup; tracks prompt boundaries, command start/output start, exit codes, and current working directory without any manual shell config
 - **OSC 8 hyperlinks** — clickable links emitted by tools like `ls --hyperlink`, `bat`, `delta`, and others are rendered with an underline and opened with your OS default handler on click; `file://` URIs are resolved locally
 - **Screen reader support** — new command completions and their exit status are announced automatically; VoiceOver on macOS and Orca on Linux (via speech-dispatcher / espeak) are supported; announcements are suppressed when no screen reader is active
@@ -39,7 +39,7 @@ Teletipo injects OSC 133 and OSC 7 hooks into **zsh** and **bash** automatically
 | `OSC 133 ; D ; <code>` | Command end — reports the exit code of the last command |
 | `OSC 7 ; file://host/path` | Working directory — updates the tab's CWD label |
 
-These markers power prompt navigation (`Jump to Previous/Next Prompt`), the per-command exit-code badges, the tab CWD display, and the semantic accessibility tree entries for completed commands.
+These markers power structured command execution blocks, block navigation (`Jump to Previous/Next Prompt` remains as a command-palette alias), per-command status and duration, the tab CWD display, and semantic accessibility entries for completed commands.
 
 > If your shell is not zsh or bash, you can add the hooks manually. See the scripts injected in `crates/terminal-pty/src/session.rs` for the exact sequences.
 
@@ -254,6 +254,13 @@ Press `Tab` at the end of any line to open the suggestion popup, which shows his
 |---|---|
 | `Page Up` | Scroll up 5 lines |
 | `Page Down` | Scroll down 5 lines |
+| `Cmd + Shift + ↑ / ↓` / `Ctrl + Shift + ↑ / ↓` | Select previous / next command block |
+| `Alt + Shift + C` | Copy the selected block's command |
+| `Alt + Shift + O` | Copy the selected block's output |
+| `Alt + Shift + R` | Re-run the selected block's command |
+| `Alt + Shift + E` | Load the selected block's command into the editor |
+| `Alt + Shift + Space` | Collapse / expand long output in the selected block |
+| `Escape` | Clear command-block selection |
 
 ### Terminal search
 

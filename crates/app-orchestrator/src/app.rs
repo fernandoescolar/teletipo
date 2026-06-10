@@ -298,6 +298,29 @@ impl AppTerminal {
         self.session.command_zones()
     }
 
+    pub fn execution_blocks(&self) -> &[terminal_core::ExecutionBlock] {
+        self.session.execution_blocks()
+    }
+
+    pub fn execution_block(
+        &self,
+        id: terminal_core::BlockId,
+    ) -> Option<&terminal_core::ExecutionBlock> {
+        self.session.execution_block(id)
+    }
+
+    pub fn block_output(&self, id: terminal_core::BlockId) -> Option<String> {
+        self.session.block_output(id)
+    }
+
+    pub fn take_completed_block(&mut self) -> Option<terminal_core::BlockId> {
+        self.session.take_completed_block()
+    }
+
+    pub fn register_submitted_command(&mut self, command: String) {
+        self.session.register_submitted_command(command);
+    }
+
     /// Returns all OSC 8 hyperlink spans visible at the given scroll offset.
     /// See [`terminal_core::GenericTerminalSession::hyperlink_spans`].
     pub fn hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
@@ -430,6 +453,7 @@ impl App {
         prefer_selection: bool,
     ) -> io::Result<bool> {
         if let Some(payload) = self.editor.command_payload(prefer_selection) {
+            self.terminal.register_submitted_command(payload.clone());
             // Submit through bracketed paste when the shell requests it.  A command
             // can be hundreds of bytes long; sending it as one burst of ordinary
             // keypresses makes readline/ZLE repeatedly redraw and reposition the
@@ -505,6 +529,25 @@ impl App {
 
     pub fn prompt_marks(&self) -> Vec<usize> {
         self.terminal.prompt_marks()
+    }
+
+    pub fn execution_blocks(&self) -> &[terminal_core::ExecutionBlock] {
+        self.terminal.execution_blocks()
+    }
+
+    pub fn execution_block(
+        &self,
+        id: terminal_core::BlockId,
+    ) -> Option<&terminal_core::ExecutionBlock> {
+        self.terminal.execution_block(id)
+    }
+
+    pub fn block_output(&self, id: terminal_core::BlockId) -> Option<String> {
+        self.terminal.block_output(id)
+    }
+
+    pub fn take_completed_block(&mut self) -> Option<terminal_core::BlockId> {
+        self.terminal.take_completed_block()
     }
 
     pub fn terminal_ansi_snapshot(&self) -> std::sync::Arc<String> {

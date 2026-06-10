@@ -26,6 +26,11 @@ pub(crate) enum CommandId {
     MoveTabRight,
     JumpToPrevPrompt,
     JumpToNextPrompt,
+    CopyBlockCommand,
+    CopyBlockOutput,
+    RerunBlockCommand,
+    EditBlockCommand,
+    ToggleBlockCollapse,
     OpenSettings,
     OpenConfigInEditor,
     RevealConfigInFinder,
@@ -48,6 +53,11 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
         CommandId::MoveTabRight => state.move_tab_to(idx, idx + 2),
         CommandId::JumpToPrevPrompt => state.jump_to_prev_prompt(),
         CommandId::JumpToNextPrompt => state.jump_to_next_prompt(),
+        CommandId::CopyBlockCommand => state.copy_selected_block_command(),
+        CommandId::CopyBlockOutput => state.copy_selected_block_output(),
+        CommandId::RerunBlockCommand => state.rerun_selected_block_command(),
+        CommandId::EditBlockCommand => state.edit_selected_block_command(),
+        CommandId::ToggleBlockCollapse => state.toggle_selected_block_collapse(),
         CommandId::OpenSettings => state.open_settings_modal(),
         CommandId::OpenConfigInEditor => {
             if let Some(path) = crate::config::config_path() {
@@ -97,6 +107,26 @@ pub(crate) fn palette_commands(state: &GpuRuntimeState) -> Vec<(String, CommandI
         (
             "Jump to Next Prompt".to_owned(),
             CommandId::JumpToNextPrompt,
+        ),
+        (
+            "Copy Selected Block Command".to_owned(),
+            CommandId::CopyBlockCommand,
+        ),
+        (
+            "Copy Selected Block Output".to_owned(),
+            CommandId::CopyBlockOutput,
+        ),
+        (
+            "Re-run Selected Command".to_owned(),
+            CommandId::RerunBlockCommand,
+        ),
+        (
+            "Edit Selected Command".to_owned(),
+            CommandId::EditBlockCommand,
+        ),
+        (
+            "Collapse/Expand Selected Block".to_owned(),
+            CommandId::ToggleBlockCollapse,
         ),
         ("Open Settings".to_owned(), CommandId::OpenSettings),
         (
