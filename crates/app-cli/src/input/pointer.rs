@@ -22,6 +22,30 @@ const TERMINAL_MENU_ITEMS: &[&str] = &[
 ];
 const EDITOR_MENU_ITEMS: &[&str] = &["Undo", "Redo", "Copy", "Cut", "Paste", "Select All"];
 
+fn cursor_terminal_cell(state: &GpuRuntimeState) -> Option<(usize, usize)> {
+    cursor_to_terminal_cell(
+        state.cursor.cursor_x,
+        state.cursor.cursor_y,
+        state.layout.window_width,
+        state.layout.window_height,
+        state.tab().split_ratio,
+        state.layout.cell_w,
+        state.layout.cell_h,
+        state.tab().term_row_count,
+        state.tab_bar_h(),
+        state.user_config.padding.horizontal as f32,
+        state.user_config.padding.vertical as f32,
+    )
+}
+
+fn terminal_col_count(state: &GpuRuntimeState) -> usize {
+    ((state.layout.window_width as f32
+        - 2.0 * state.user_config.padding.horizontal as f32
+        - SCROLLBAR_W_PX)
+        / state.layout.cell_w)
+        .max(1.0) as usize
+}
+
 fn context_menu_width_px(cell_w: f32, items: &[String]) -> f64 {
     let max_chars = items.iter().map(|s| s.chars().count()).max().unwrap_or(8);
     cell_w as f64 * (max_chars.max(8) as f64 + 2.0)
@@ -279,6 +303,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             }
         }
         if *btn_state == ElementState::Pressed {
+            if let Some((row, col)) = cursor_terminal_cell(state)
+                && state.activate_block_quick_action(row, col, terminal_col_count(state))
+            {
+                return true;
+            }
             if matches!(
                 state.overlays.pending_update,
                 Some(crate::UpdateBanner::Available(_))
@@ -761,6 +790,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     tab_bar_h + available_h * state.tab().split_ratio as f64
                 };
                 if state.cursor.cursor_y >= tab_bar_h && state.cursor.cursor_y <= term_bottom {
+                    if let Some((row, _)) = cursor_terminal_cell(state) {
+                        state.select_block_at_view_row(row);
+                    }
                     state.overlays.context_menu = Some(crate::state::ContextMenuState {
                         kind: crate::state::ContextMenuKind::Terminal,
                         x_px: state.cursor.cursor_x,

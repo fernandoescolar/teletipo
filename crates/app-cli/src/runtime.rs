@@ -451,6 +451,66 @@ impl GpuRuntimeState {
         tab.is_selecting = false;
     }
 
+    /// Select the newest command block whose prompt begins at or before a
+    /// viewport row. This makes right-clicking anywhere in a block target it.
+    pub(crate) fn select_block_at_view_row(&mut self, view_row: usize) -> bool {
+        let tab = self.tab_mut();
+        let visible_rows = tab.term_row_count.max(1);
+        let scrollback = tab.app.scrollback_len();
+        let total_rows = scrollback.saturating_add(visible_rows);
+        let window_start = total_rows
+            .saturating_sub(visible_rows)
+            .saturating_sub(tab.scroll_offset.min(scrollback));
+        let absolute_row = window_start.saturating_add(view_row);
+        let selected = tab
+            .app
+            .execution_blocks()
+            .iter()
+            .chain(tab.app.current_execution_block())
+            .filter(|block| block.prompt_start_row <= absolute_row)
+            .max_by_key(|block| block.prompt_start_row)
+            .map(|block| block.id);
+        tab.selected_block = selected;
+        selected.is_some()
+    }
+
+    /// Dispatch a quick-action icon on the selected block header.
+    pub(crate) fn activate_block_quick_action(
+        &mut self,
+        view_row: usize,
+        col: usize,
+        cols: usize,
+    ) -> bool {
+        if cols < 11 || col < cols.saturating_sub(10) || !self.select_block_at_view_row(view_row) {
+            return false;
+        }
+        let tab = self.tab();
+        let visible_rows = tab.term_row_count.max(1);
+        let scrollback = tab.app.scrollback_len();
+        let absolute_row = scrollback
+            .saturating_add(visible_rows)
+            .saturating_sub(visible_rows)
+            .saturating_sub(tab.scroll_offset.min(scrollback))
+            .saturating_add(view_row);
+        if tab
+            .selected_block
+            .and_then(|id| tab.app.execution_block(id))
+            .map(|block| block.prompt_start_row)
+            != Some(absolute_row)
+        {
+            return false;
+        }
+        let offset = col.saturating_sub(cols - 10);
+        match offset {
+            0..=1 => self.toggle_selected_block_collapse(),
+            3..=4 => self.rerun_selected_block_command(),
+            6..=7 => self.edit_selected_block_command(),
+            9..=10 => self.copy_selected_block_command(),
+            _ => return false,
+        }
+        true
+    }
+
     fn selected_block_command(&self) -> Option<String> {
         let tab = self.tab();
         let id = tab.selected_block?;

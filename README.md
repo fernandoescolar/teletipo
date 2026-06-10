@@ -39,7 +39,7 @@ Teletipo injects OSC 133 and OSC 7 hooks into **zsh** and **bash** automatically
 | `OSC 133 ; D ; <code>` | Command end — reports the exit code of the last command |
 | `OSC 7 ; file://host/path` | Working directory — updates the tab's CWD label |
 
-These markers power structured command execution blocks, block navigation (`Jump to Previous/Next Prompt` remains as a command-palette alias), per-command status and duration, the tab CWD display, and semantic accessibility entries for completed commands.
+These markers power visible structured command execution blocks with tinted separators, live/completed status, right-aligned quick-action icons, block navigation (`Jump to Previous/Next Prompt` remains as a command-palette alias), per-command status and duration, the tab CWD display, and semantic accessibility entries for completed commands.
 
 > If your shell is not zsh or bash, you can add the hooks manually. See the scripts injected in `crates/terminal-pty/src/session.rs` for the exact sequences.
 

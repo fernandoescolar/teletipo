@@ -376,3 +376,57 @@ fn structured_block_actions_copy_edit_and_collapse() {
     assert!(rendered.contains("output lines · expand"));
     assert!(rendered.contains("✓"));
 }
+
+#[test]
+fn running_block_header_and_right_click_actions_are_visible_and_enabled() {
+    use winit::event::{ElementState, MouseButton};
+
+    let mut state = build_test_state(Box::new(shell::NullShell::default()));
+    state.tabs[0].app.feed_terminal(b"\x1b]133;A\x07");
+    state.tabs[0]
+        .app
+        .terminal
+        .register_submitted_command("sleep 1".to_owned());
+    state.tabs[0]
+        .app
+        .feed_terminal(b"prompt\x1b]133;B\x07\x1b]133;C\x07");
+
+    let rendered = snapshot::build_snapshot(&mut state).terminal_text_from_rows();
+    assert!(rendered.contains("●"), "running status should be visible");
+    assert!(
+        rendered.contains("▾  ↻  ✎  ⧉"),
+        "quick actions should be visible"
+    );
+
+    input::handle_event(&mut state, AppWindowEvent::CursorMoved { x: 20.0, y: 8.0 });
+    input::handle_event(
+        &mut state,
+        AppWindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Right,
+        },
+    );
+
+    assert!(state.tab().selected_block.is_some());
+    let menu = state.overlays.context_menu.as_ref().expect("terminal menu");
+    assert!(menu.enabled_items[3..].iter().all(|enabled| *enabled));
+}
+
+#[test]
+fn quick_action_copy_icon_targets_block_header() {
+    let mut state = build_test_state(Box::new(shell::NullShell::default()));
+    state.tabs[0].app.feed_terminal(b"\x1b]133;A\x07");
+    state.tabs[0]
+        .app
+        .terminal
+        .register_submitted_command("echo quick".to_owned());
+    state.tabs[0]
+        .app
+        .feed_terminal(b"prompt\x1b]133;B\x07\x1b]133;C\x07quick\r\n\x1b]133;D;0\x07");
+
+    assert!(state.activate_block_quick_action(0, 79, 80));
+    assert_eq!(
+        state.shell_services.clipboard_get().as_deref(),
+        Some("echo quick")
+    );
+}

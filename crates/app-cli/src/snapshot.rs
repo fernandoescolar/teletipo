@@ -206,7 +206,14 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let window_start = total_rows
         .saturating_sub(state.tabs[active].term_row_count.max(1))
         .saturating_sub(scroll_offset.min(state.tabs[active].app.scrollback_len()));
-    for block in state.tabs[active].app.execution_blocks() {
+    let execution_blocks: Vec<_> = state.tabs[active]
+        .app
+        .execution_blocks()
+        .iter()
+        .chain(state.tabs[active].app.current_execution_block())
+        .cloned()
+        .collect();
+    for block in &execution_blocks {
         let Some(view_row) = block.prompt_start_row.checked_sub(window_start) else {
             continue;
         };
@@ -217,49 +224,77 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         let status_color = if selected {
             [0.18, 0.30, 0.48]
         } else if block.exit_code == Some(0) {
-            [0.10, 0.28, 0.18]
+            [0.08, 0.22, 0.14]
         } else if block.exit_code.is_some() {
-            [0.34, 0.12, 0.14]
+            [0.27, 0.09, 0.11]
         } else {
-            [0.22, 0.22, 0.22]
+            [0.14, 0.18, 0.25]
         };
+        // The prompt row doubles as a non-destructive block separator/header.
+        // Tint empty cells across it and keep a visible rail at the left edge.
+        for cell in &mut row.cells {
+            if cell.ch == ' ' {
+                cell.bg = Some(status_color);
+            }
+        }
         if let Some(cell) = row.cells.first_mut() {
+            if cell.ch == ' ' {
+                cell.ch = '│';
+            }
+            cell.fg = Some(if block.exit_code == Some(0) {
+                [0.42, 0.80, 0.54]
+            } else if block.exit_code.is_some() {
+                [0.92, 0.42, 0.44]
+            } else {
+                [0.48, 0.66, 0.94]
+            });
             cell.bg = Some(status_color);
         }
-        if let Some(duration) = block.duration {
-            let elapsed = if duration.as_secs_f64() >= 1.0 {
-                format!("{:.1}s", duration.as_secs_f64())
-            } else {
-                format!("{}ms", duration.as_millis())
-            };
-            let label = if block.exit_code == Some(0) {
-                format!("✓ {elapsed}")
-            } else {
-                format!("✕ {elapsed}")
-            };
-            let start = row.cells.len().saturating_sub(label.chars().count());
-            if row
-                .cells
-                .get(start..)
-                .is_some_and(|cells| cells.iter().all(|cell| cell.ch == ' '))
-            {
-                for (cell, ch) in row.cells[start..].iter_mut().zip(label.chars()) {
-                    cell.ch = ch;
-                    cell.fg = Some(if block.exit_code == Some(0) {
-                        [0.45, 0.78, 0.55]
-                    } else {
-                        [0.88, 0.48, 0.48]
-                    });
+
+        let elapsed = block.elapsed().map_or_else(
+            || "ready".to_owned(),
+            |duration| {
+                if duration.as_secs_f64() >= 1.0 {
+                    format!("{:.1}s", duration.as_secs_f64())
+                } else {
+                    format!("{}ms", duration.as_millis())
                 }
+            },
+        );
+        let status = if block.exit_code == Some(0) {
+            format!("✓ {elapsed}")
+        } else if block.exit_code.is_some() {
+            format!("✕ {elapsed}")
+        } else if block.command.is_some() {
+            format!("● {elapsed}")
+        } else {
+            "○ ready".to_owned()
+        };
+        let controls = if state.tabs[active].collapsed_blocks.contains(&block.id) {
+            "▸  ↻  ✎  ⧉"
+        } else {
+            "▾  ↻  ✎  ⧉"
+        };
+        let label = format!("{status}  {controls}");
+        let start = row.cells.len().saturating_sub(label.chars().count());
+        if row.cells[start..].iter().all(|cell| cell.ch == ' ') {
+            for (cell, ch) in row.cells[start..].iter_mut().zip(label.chars()) {
+                cell.ch = ch;
+                cell.bg = Some(status_color);
+                cell.fg = Some(if block.exit_code == Some(0) {
+                    [0.52, 0.86, 0.62]
+                } else if block.exit_code.is_some() {
+                    [0.96, 0.57, 0.58]
+                } else {
+                    [0.62, 0.76, 1.0]
+                });
             }
         }
     }
 
     // Collapsing is a render-only projection. The original output remains in
     // scrollback and is still available to copy or restore instantly.
-    let mut collapsed_ranges: Vec<(usize, usize, String)> = state.tabs[active]
-        .app
-        .execution_blocks()
+    let mut collapsed_ranges: Vec<(usize, usize, String)> = execution_blocks
         .iter()
         .filter(|block| state.tabs[active].collapsed_blocks.contains(&block.id))
         .filter_map(|block| {

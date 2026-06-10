@@ -302,6 +302,10 @@ impl AppTerminal {
         self.session.execution_blocks()
     }
 
+    pub fn current_execution_block(&self) -> Option<&terminal_core::ExecutionBlock> {
+        self.session.current_execution_block()
+    }
+
     pub fn execution_block(
         &self,
         id: terminal_core::BlockId,
@@ -533,6 +537,10 @@ impl App {
 
     pub fn execution_blocks(&self) -> &[terminal_core::ExecutionBlock] {
         self.terminal.execution_blocks()
+    }
+
+    pub fn current_execution_block(&self) -> Option<&terminal_core::ExecutionBlock> {
+        self.terminal.current_execution_block()
     }
 
     pub fn execution_block(

@@ -281,6 +281,14 @@ pub struct ExecutionBlock {
     started_mono: Option<Instant>,
 }
 
+impl ExecutionBlock {
+    /// Elapsed execution time, including a live value while the command runs.
+    pub fn elapsed(&self) -> Option<Duration> {
+        self.duration
+            .or_else(|| self.started_mono.map(|started| started.elapsed()))
+    }
+}
+
 /// Backwards-compatible name for callers migrating from prompt zones.
 pub type CommandZone = ExecutionBlock;
 
@@ -681,6 +689,11 @@ where
         self.current_zone.as_ref()
     }
 
+    /// The currently visible prompt/running/output execution block.
+    pub fn current_execution_block(&self) -> Option<&ExecutionBlock> {
+        self.current_zone.as_ref()
+    }
+
     /// Completed and interrupted execution blocks, oldest first.
     pub fn execution_blocks(&self) -> &[ExecutionBlock] {
         &self.command_zones
@@ -688,7 +701,10 @@ where
 
     /// Look up an execution block by its stable session-local ID.
     pub fn execution_block(&self, id: BlockId) -> Option<&ExecutionBlock> {
-        self.command_zones.iter().find(|block| block.id == id)
+        self.command_zones
+            .iter()
+            .chain(self.current_zone.iter())
+            .find(|block| block.id == id)
     }
 
     /// Consume the ID of the most recently completed/interrupted block.
