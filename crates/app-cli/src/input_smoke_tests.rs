@@ -56,6 +56,12 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         a11y_screen_version: 0,
         selected_block: None,
         collapsed_blocks: std::collections::HashSet::new(),
+        virtual_scrollback_lines: 0,
+        collapsed_hidden_ranges: Vec::new(),
+            last_frame_v_start: 0,
+        pending_restore: None,
+        saved_blocks: Vec::new(),
+        captured_block_count: 0,
     };
     GpuRuntimeState {
         tabs: vec![tab],
@@ -304,6 +310,66 @@ fn editor_context_menu_executes_all_actions() {
 }
 
 #[test]
+fn restored_blocks_align_with_content_after_resize() {
+    // Build a source tab and run two commands with multi-line output, then
+    // capture them the way `pump_all_ptys` does on completion.
+    let mut src = build_test_state(Box::new(shell::NullShell::default()));
+    for (cmd, n) in [("echo one", 30usize), ("echo two", 5usize)] {
+        src.tabs[0].app.feed_terminal(b"\x1b]133;A\x07");
+        src.tabs[0].app.feed_terminal(b"user@host:~$ ");
+        src.tabs[0].app.terminal.register_submitted_command(cmd.to_owned());
+        src.tabs[0].app.feed_terminal(cmd.as_bytes());
+        src.tabs[0].app.feed_terminal(b"\x1b]133;B\x07\r\n\x1b]133;C\x07");
+        for i in 0..n {
+            src.tabs[0]
+                .app
+                .feed_terminal(format!("out {i}\r\n").as_bytes());
+        }
+        src.tabs[0].app.feed_terminal(b"\x1b]133;D;0\x07");
+    }
+    src.capture_completed_blocks(0);
+    let saved_blocks = src.tabs[0].saved_blocks.clone();
+    assert_eq!(saved_blocks.len(), 2, "both blocks should be captured");
+    let expected_commands = ["echo one", "echo two"];
+
+    // Restore into a tab that starts at the placeholder size, then resizes to
+    // a different real size — the path that previously misaligned separators.
+    let mut dst = build_test_state(Box::new(shell::NullShell::default()));
+    dst.tabs[0].pending_restore = Some(tab::PendingRestore {
+        terminal_output: String::new(),
+        blocks: saved_blocks,
+    });
+    dst.resize_tab(0, 50, 80);
+    dst.tabs[0].term_row_count = 50;
+
+    let lines: Vec<String> = dst
+        .tabs[0]
+        .app
+        .terminal_ansi_snapshot()
+        .lines()
+        .map(|l| l.trim_end().to_owned())
+        .collect();
+    let blocks = dst.tabs[0].app.execution_blocks();
+    assert_eq!(blocks.len(), 2, "both blocks should be restored");
+    for (block, cmd) in blocks.iter().zip(expected_commands) {
+        // The command echo sits on the row right after the prompt start.
+        let row = block.prompt_start_row;
+        let window = lines
+            .iter()
+            .skip(row)
+            .take(2)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            window.contains(cmd),
+            "block command {cmd:?} should sit at its prompt row {row}, found {window:?}",
+        );
+        assert_eq!(block.command.as_deref(), Some(cmd), "logical command preserved");
+    }
+}
+
+#[test]
 fn startup_snapshot_renders_command_output() {
     use std::sync::mpsc::channel;
     use std::time::{Duration, Instant};
@@ -373,7 +439,7 @@ fn structured_block_actions_copy_edit_and_collapse() {
     state.toggle_selected_block_collapse();
     assert!(state.tabs[0].collapsed_blocks.contains(&id));
     let rendered = snapshot::build_snapshot(&mut state).terminal_text_from_rows();
-    assert!(rendered.contains("output lines · expand"));
+    assert!(rendered.contains("output lines hidden · click to expand"));
     assert!(rendered.contains("✓"));
 }
 
@@ -394,7 +460,7 @@ fn running_block_header_and_right_click_actions_are_visible_and_enabled() {
     let rendered = snapshot::build_snapshot(&mut state).terminal_text_from_rows();
     assert!(rendered.contains("●"), "running status should be visible");
     assert!(
-        rendered.contains("▶  E  C  ↓"),
+        rendered.contains("▶ run  edit  copy  ↓ fold"),
         "quick actions should be visible"
     );
 
@@ -425,11 +491,45 @@ fn quick_action_copy_icon_targets_block_header() {
         .app
         .feed_terminal(b"prompt\x1b]133;B\x07\x1b]133;C\x07quick\r\n\x1b]133;D;0\x07");
 
-    assert!(state.activate_block_quick_action(0, 76, 80));
+    // cols=80, toolbar occupies cols 55..80; "copy" is at offsets 13..=16.
+    assert!(state.activate_block_quick_action(0, 69, 80));
     assert_eq!(
         state.shell_services.clipboard_get().as_deref(),
         Some("echo quick")
     );
+}
+
+#[test]
+fn block_clicks_select_fold_and_expand() {
+    let mut state = build_test_state(Box::new(shell::NullShell::default()));
+    state.tabs[0].app.feed_terminal(b"\x1b]133;A\x07");
+    state.tabs[0]
+        .app
+        .terminal
+        .register_submitted_command("printf hello".to_owned());
+    let mut stream = b"prompt\r\n\x1b]133;B\x07\x1b]133;C\x07".to_vec();
+    for _ in 0..21 {
+        stream.extend_from_slice(b"hello\r\n");
+    }
+    stream.extend_from_slice(b"\x1b]133;D;0\x07");
+    state.tabs[0].app.feed_terminal(&stream);
+    let id = state.tabs[0].app.execution_blocks()[0].id;
+    let _ = snapshot::build_snapshot(&mut state);
+
+    // Click the fold button (rightmost toolbar zone) on the header row.
+    let cols = 80;
+    assert!(state.activate_block_quick_action(0, cols - 1, cols));
+    assert!(state.tabs[0].collapsed_blocks.contains(&id));
+    let _ = snapshot::build_snapshot(&mut state);
+
+    // Clicking anywhere else on the header selects the block.
+    state.tabs[0].selected_block = None;
+    assert!(state.activate_block_quick_action(0, 2, cols));
+    assert_eq!(state.tabs[0].selected_block, Some(id));
+
+    // Clicking the collapsed placeholder row expands the block again.
+    assert!(state.activate_block_quick_action(1, 5, cols));
+    assert!(!state.tabs[0].collapsed_blocks.contains(&id));
 }
 
 #[test]

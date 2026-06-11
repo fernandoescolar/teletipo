@@ -145,12 +145,28 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
     let tab_sessions: Vec<TabSession> = state
         .tabs
         .iter()
-        .map(|tab| TabSession {
-            terminal_output: trim_output(tab.app.terminal_ansi_snapshot().as_str()),
-            history: tab.history.clone(),
-            split_ratio: tab.split_ratio,
-            cwd: tab.cwd.clone(),
-            history_entries: tab.history_entries.clone(),
+        .map(|tab| {
+            let blocks = if let Some(pending) = &tab.pending_restore {
+                pending.blocks.clone()
+            } else {
+                tab.saved_blocks.clone()
+            };
+            // When command blocks are present they are the authoritative source
+            // for session restore; the raw ANSI dump is redundant and causes
+            // alignment issues on reload, so we omit it.
+            let terminal_output = if blocks.is_empty() {
+                trim_output(tab.app.terminal_ansi_snapshot().as_str())
+            } else {
+                String::new()
+            };
+            TabSession {
+                terminal_output,
+                history: tab.history.clone(),
+                split_ratio: tab.split_ratio,
+                cwd: tab.cwd.clone(),
+                history_entries: tab.history_entries.clone(),
+                blocks,
+            }
         })
         .collect();
 
@@ -167,7 +183,11 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
         tabs: tab_sessions,
         split_ratio: active.split_ratio,
         history: active.history.clone(),
-        terminal_output: trim_output(active.app.terminal_ansi_snapshot().as_str()),
+        terminal_output: if active.saved_blocks.is_empty() && active.pending_restore.is_none() {
+            trim_output(active.app.terminal_ansi_snapshot().as_str())
+        } else {
+            String::new()
+        },
     };
     if let Ok(json) = serde_json::to_string_pretty(&session) {
         // PERF-2: hand the write to a detached worker so shutdown isn't blocked
@@ -230,6 +250,7 @@ pub(crate) fn build_initial_state(
             split_ratio: session.split_ratio,
             cwd: String::new(),
             history_entries: vec![],
+            blocks: vec![],
         }]
     };
 
@@ -364,11 +385,23 @@ fn build_single_tab(
 ) -> anyhow::Result<TabState> {
     let mut app = build_app(rows, cols)?;
 
-    // Feed terminal output
-    for line in saved.terminal_output.lines() {
-        app.feed_terminal(line.as_bytes());
-        app.feed_terminal(b"\r\n");
-    }
+    // Defer replaying the saved terminal output and command blocks until the
+    // terminal has been resized to its real on-screen dimensions.  Feeding now
+    // (at the startup placeholder size) and resizing afterwards would reflow
+    // the grid, shifting the absolute row numbers the blocks reference and
+    // leaving the separators misaligned.  See `flush_pending_restore`.
+    // When command blocks are present they are the sole source of truth for
+    // restore; ignore any stale terminal_output from old session files.
+    let effective_terminal_output = if saved.blocks.is_empty() {
+        saved.terminal_output.clone()
+    } else {
+        String::new()
+    };
+    let pending_restore = (!effective_terminal_output.is_empty() || !saved.blocks.is_empty())
+        .then(|| crate::tab::PendingRestore {
+            terminal_output: effective_terminal_output,
+            blocks: saved.blocks.clone(),
+        });
 
     // Determine current working directory
     let initial_cwd: String = if !saved.cwd.is_empty() {
@@ -449,6 +482,12 @@ fn build_single_tab(
         a11y_screen_version: 0,
         selected_block: None,
         collapsed_blocks: std::collections::HashSet::new(),
+        virtual_scrollback_lines: 0,
+        collapsed_hidden_ranges: Vec::new(),
+            last_frame_v_start: 0,
+        pending_restore,
+        saved_blocks: Vec::new(),
+        captured_block_count: 0,
     })
 }
 

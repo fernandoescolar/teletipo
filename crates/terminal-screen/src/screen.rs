@@ -829,6 +829,22 @@ impl Screen {
         out
     }
 
+    /// Returns the soft-wrap flag for every row in the same order as
+    /// `dump_ansi` / `dump_text_with_scrollback` (scrollback oldest-first,
+    /// then visible grid).  `true` means the row was soft-wrapped into the
+    /// next row (no hard newline); `false` means a hard newline follows.
+    pub fn dump_wrap_flags(&self) -> Vec<bool> {
+        let grid = &self.primary;
+        let mut flags = Vec::with_capacity(self.scrollback.len() + grid.rows);
+        for (_cells, wrapped) in &self.scrollback {
+            flags.push(*wrapped);
+        }
+        for row in 0..grid.rows {
+            flags.push(grid.line_wrapped.get(row).copied().unwrap_or(false));
+        }
+        flags
+    }
+
     /// Encodes the scrollback + visible grid as a string of ANSI SGR escape
     /// sequences so that fg/bg colors and text attributes are preserved when
     /// fed back through the terminal parser on next launch.

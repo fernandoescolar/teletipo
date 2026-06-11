@@ -12,6 +12,119 @@ use render_wgpu::{
     SearchPanel, SuggestionDropdown, TerminalLink, Toast, ToastKind,
 };
 
+/// Compute the rows hidden by collapsed blocks, in absolute row coordinates.
+/// Each entry is `(start_abs, len)`: the block's output rows after the first
+/// one (which stays visible as the "… N output lines" placeholder).
+/// Sorted ascending and non-overlapping.
+pub(crate) fn build_hidden_ranges(
+    execution_blocks: &[app_orchestrator::ExecutionBlock],
+    collapsed: &std::collections::HashSet<app_orchestrator::BlockId>,
+    total_rows: usize,
+) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = execution_blocks
+        .iter()
+        .filter(|b| collapsed.contains(&b.id))
+        .filter_map(|b| {
+            let s = b.output_start_row?;
+            let e = b.output_end_row?.min(total_rows);
+            let len = e.checked_sub(s + 1)?;
+            (len > 0).then_some((s + 1, len))
+        })
+        .collect();
+    ranges.sort_by_key(|&(start, _)| start);
+    ranges
+}
+
+/// Number of hidden rows strictly below absolute row `r`.
+fn hidden_before(r: usize, ranges: &[(usize, usize)]) -> usize {
+    ranges
+        .iter()
+        .map(|&(start, len)| {
+            if r <= start {
+                0
+            } else {
+                len.min(r - start)
+            }
+        })
+        .sum()
+}
+
+/// `true` when absolute row `r` is inside a collapsed block's hidden span.
+pub(crate) fn is_hidden_row(r: usize, ranges: &[(usize, usize)]) -> bool {
+    ranges
+        .iter()
+        .any(|&(start, len)| r >= start && r < start + len)
+}
+
+/// Virtual index of a visible absolute row: its position once hidden rows
+/// are skipped.
+pub(crate) fn virtual_index(r: usize, ranges: &[(usize, usize)]) -> usize {
+    r.saturating_sub(hidden_before(r, ranges))
+}
+
+/// Absolute row of virtual index `v` (inverse of [`virtual_index`]).
+pub(crate) fn abs_of_virtual(v: usize, ranges: &[(usize, usize)]) -> usize {
+    let mut r = v;
+    for &(start, len) in ranges {
+        if r >= start {
+            r += len;
+        } else {
+            break;
+        }
+    }
+    r
+}
+
+/// Convert a viewport row to an absolute terminal row, mirroring the
+/// collapse-aware geometry `build_snapshot` used for the last frame.
+pub(crate) fn tab_view_row_to_abs(tab: &crate::tab::TabState, view_row: usize) -> usize {
+    // Use the v_start cached by the last build_snapshot call so that click
+    // handlers use the exact same geometry that placed the pixels, even if
+    // the scrollback has grown since then.
+    abs_of_virtual(
+        tab.last_frame_v_start.saturating_add(view_row),
+        &tab.collapsed_hidden_ranges,
+    )
+}
+
+/// Virtual scroll offset that centers an absolute row in the viewport.
+pub(crate) fn tab_scroll_offset_to_center(tab: &crate::tab::TabState, target_row: usize) -> usize {
+    let visible = tab.term_row_count.max(1);
+    let total = tab.app.scrollback_len().saturating_add(visible);
+    let ranges = &tab.collapsed_hidden_ranges;
+    let total_hidden: usize = ranges.iter().map(|&(_, len)| len).sum();
+    let virtual_total = total.saturating_sub(total_hidden);
+    let virtual_scrollback = virtual_total.saturating_sub(visible);
+    let v_target = virtual_index(target_row, ranges);
+    let v_start = v_target.saturating_sub(visible / 2).min(virtual_scrollback);
+    virtual_scrollback.saturating_sub(v_start)
+}
+
+/// Flatten `terminal_rows` into parallel fg/bg/style vectors that the painter
+/// uses for per-character color lookups.  Must be called *after* any collapse
+/// splicing so the indices stay in sync with `terminal_text_from_rows`.
+#[allow(clippy::type_complexity)]
+fn flatten_rows_colors(
+    rows: &[RenderRow],
+) -> (Vec<Option<[f32; 3]>>, Vec<Option<[f32; 3]>>, Vec<u8>) {
+    let mut fg = Vec::new();
+    let mut bg = Vec::new();
+    let mut style = Vec::new();
+    for (row_idx, row) in rows.iter().enumerate() {
+        for cell in &row.cells {
+            fg.push(cell.fg);
+            bg.push(cell.bg);
+            style.push(cell.style);
+        }
+        if row_idx + 1 < rows.len() {
+            fg.push(None);
+            bg.push(None);
+            style.push(0);
+        }
+    }
+    (fg, bg, style)
+}
+
 /// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
 /// if the string is longer.  Used to keep dropdown entries and ghost text
 /// from overflowing the visible area.
@@ -131,6 +244,15 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     // shows the update banner for testing without needing to run the background thread or build an actual update:
     // state.overlays.pending_update.get_or_insert(crate::UpdateBanner::Available("TEST".to_owned()));
 
+    // Safety net: if a tab still has deferred restore content (e.g. no resize
+    // event fired before the first frame), replay it now — before pumping the
+    // PTY — so restored output stays above any live shell prompt.
+    for idx in 0..state.tabs.len() {
+        if state.tabs[idx].pending_restore.is_some() {
+            state.flush_pending_restore(idx);
+        }
+    }
+
     let had_data = state.pump_all_ptys();
     if had_data {
         let active = state.active_tab;
@@ -159,53 +281,41 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     }
 
     let active = state.active_tab;
-    let scroll_offset = state.tabs[active].scroll_offset;
+
+    let real_scrollback = state.tabs[active].app.scrollback_len();
     let active_palette: Option<[[f32; 3]; 16]> = state
         .themes_fonts
         .active_theme_idx
         .map(|i| theme::build_ansi_palette(&state.themes_fonts.available_themes[i]));
-    let styled = state.tabs[active]
-        .app
-        .terminal_styled_snapshot_at_offset_with_palette(scroll_offset, active_palette.as_ref());
-    let terminal_text: String = styled.iter().map(|(ch, _, _, _)| *ch).collect();
-    let terminal_fg_colors: Vec<Option<[f32; 3]>> =
-        styled.iter().map(|(_, fg, _, _)| *fg).collect();
-    let terminal_bg_colors: Vec<Option<[f32; 3]>> =
-        styled.iter().map(|(_, _, bg, _)| *bg).collect();
-    let terminal_styles: Vec<u8> = styled.iter().map(|(_, _, _, s)| *s).collect();
-    let mut terminal_rows: Vec<RenderRow> = Vec::new();
-    let mut current_row: Vec<RenderCell> = Vec::new();
-    for (ch, fg, bg, style) in &styled {
-        if *ch == '\n' {
-            terminal_rows.push(RenderRow {
-                cells: std::mem::take(&mut current_row),
-                dirty: false,
-            });
-            continue;
-        }
-        current_row.push(RenderCell {
-            ch: *ch,
-            fg: *fg,
-            bg: *bg,
-            style: *style,
-        });
-    }
-    terminal_rows.push(RenderRow {
-        cells: current_row,
-        dirty: false,
-    });
 
-    // Project structured command-block metadata into the terminal view without
-    // mutating the underlying terminal grid. Status is intentionally subtle:
-    // one tinted leading cell plus a compact duration in otherwise-empty cells.
-    let visible_count = terminal_rows.len();
-    let total_rows = state.tabs[active]
-        .app
-        .scrollback_len()
-        .saturating_add(state.tabs[active].term_row_count.max(1));
-    let window_start = total_rows
-        .saturating_sub(state.tabs[active].term_row_count.max(1))
-        .saturating_sub(scroll_offset.min(state.tabs[active].app.scrollback_len()));
+    // Fetch one real window of the terminal at a scrollback offset and parse
+    // it into render rows.
+    let fetch_rows = |app: &app_orchestrator::App, off: usize| -> Vec<RenderRow> {
+        let styled = app.terminal_styled_snapshot_at_offset_with_palette(off, active_palette.as_ref());
+        let mut rows: Vec<RenderRow> = Vec::new();
+        let mut current: Vec<RenderCell> = Vec::new();
+        for (ch, fg, bg, style) in &styled {
+            if *ch == '\n' {
+                rows.push(RenderRow {
+                    cells: std::mem::take(&mut current),
+                    dirty: false,
+                });
+                continue;
+            }
+            current.push(RenderCell {
+                ch: *ch,
+                fg: *fg,
+                bg: *bg,
+                style: *style,
+            });
+        }
+        rows.push(RenderRow {
+            cells: current,
+            dirty: false,
+        });
+        rows
+    };
+
     let execution_blocks: Vec<_> = state.tabs[active]
         .app
         .execution_blocks()
@@ -213,52 +323,110 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         .chain(state.tabs[active].app.current_execution_block())
         .cloned()
         .collect();
+
+    // Probe the live window to learn the viewport height, then compute the
+    // virtual (collapse-aware) content geometry.  `scroll_offset` is stored
+    // in VIRTUAL lines: collapsed rows simply do not exist in scroll space,
+    // so the scrollbar and the wheel both move through visible content only.
+    let bottom_rows = fetch_rows(&state.tabs[active].app, 0);
+    let visible_count = bottom_rows.len().max(1);
+    let total_rows = real_scrollback.saturating_add(visible_count);
+
+    let hidden_ranges = build_hidden_ranges(
+        &execution_blocks,
+        &state.tabs[active].collapsed_blocks,
+        total_rows,
+    );
+    let total_hidden: usize = hidden_ranges.iter().map(|&(_, len)| len).sum();
+    let virtual_total = total_rows.saturating_sub(total_hidden);
+    let virtual_scrollback = virtual_total.saturating_sub(visible_count);
+
+    // Auto-clamp: collapsing can shrink scroll space below the current offset.
+    if state.tabs[active].scroll_offset > virtual_scrollback {
+        state.tabs[active].scroll_offset = virtual_scrollback;
+    }
+    let scroll_offset = state.tabs[active].scroll_offset;
+    state.tabs[active].virtual_scrollback_lines = virtual_scrollback;
+    state.tabs[active].collapsed_hidden_ranges = hidden_ranges.clone();
+
+    // First virtual row shown in the viewport.
+    let v_start = virtual_total
+        .saturating_sub(visible_count)
+        .saturating_sub(scroll_offset);
+    state.tabs[active].last_frame_v_start = v_start;
+
+    // Assemble the viewport from visible rows only.  When collapsed blocks
+    // overlap the window this stitches rows from several real windows so the
+    // screen always fills with adjacent content.
+    let mut terminal_rows: Vec<RenderRow> = Vec::with_capacity(visible_count);
+    if hidden_ranges.is_empty() && scroll_offset == 0 {
+        terminal_rows = bottom_rows;
+    } else {
+        let mut windows: Vec<(usize, Vec<RenderRow>)> =
+            vec![(total_rows - visible_count, bottom_rows)];
+        for i in 0..visible_count {
+            let r = abs_of_virtual(v_start + i, &hidden_ranges);
+            let cached = windows
+                .iter()
+                .find(|(ws, rows)| r >= *ws && r < ws + rows.len())
+                .map(|(ws, rows)| rows[r - ws].clone());
+            let row = if let Some(row) = cached {
+                row
+            } else {
+                let off = total_rows
+                    .saturating_sub(visible_count)
+                    .saturating_sub(r)
+                    .min(real_scrollback);
+                let rows = fetch_rows(&state.tabs[active].app, off);
+                let ws = total_rows.saturating_sub(visible_count).saturating_sub(off);
+                let row = r
+                    .checked_sub(ws)
+                    .and_then(|idx| rows.get(idx).cloned())
+                    .unwrap_or(RenderRow {
+                        cells: Vec::new(),
+                        dirty: true,
+                    });
+                windows.push((ws, rows));
+                row
+            };
+            terminal_rows.push(row);
+        }
+    }
+
+    // block_header_rows: collected for the painter to draw border-to-border
+    // separator lines and overlay toolbar actions on each command-block header.
+    let mut block_header_rows: Vec<render_wgpu::BlockHeaderRow> = Vec::new();
+
     for block in &execution_blocks {
-        let Some(view_row) = block.prompt_start_row.checked_sub(window_start) else {
+        let Some(view_row) =
+            virtual_index(block.prompt_start_row, &hidden_ranges).checked_sub(v_start)
+        else {
             continue;
         };
         let Some(row) = terminal_rows.get_mut(view_row) else {
             continue;
         };
         let selected = state.tabs[active].selected_block == Some(block.id);
-        let status_color = if selected {
-            [0.18, 0.30, 0.48]
-        } else if block.exit_code == Some(0) {
-            [0.08, 0.22, 0.14]
-        } else if block.exit_code.is_some() {
-            [0.27, 0.09, 0.11]
-        } else {
-            [0.14, 0.18, 0.25]
-        };
-        // The prompt row doubles as a non-destructive block separator/header.
-        // Tint empty cells across it and keep a visible rail at the left edge.
-        for cell in &mut row.cells {
-            if cell.ch == ' ' {
-                cell.ch = '─';
-                cell.fg = Some([
-                    status_color[0] + 0.18,
-                    status_color[1] + 0.18,
-                    status_color[2] + 0.18,
-                ]);
-                cell.bg = Some(status_color);
-            }
-        }
-        if let Some(cell) = row.cells.first_mut() {
-            if cell.ch == ' ' {
-                cell.ch = '│';
-            }
-            cell.fg = Some(if block.exit_code == Some(0) {
-                [0.42, 0.80, 0.54]
-            } else if block.exit_code.is_some() {
-                [0.92, 0.42, 0.44]
-            } else {
-                [0.48, 0.66, 0.94]
-            });
-            cell.bg = Some(status_color);
+
+        block_header_rows.push(render_wgpu::BlockHeaderRow {
+            row: view_row,
+            selected,
+            exit_code: block.exit_code,
+        });
+
+        // Clear every cell so that the row shows only the toolbar text; the
+        // painter draws the tinted background and separator line as GPU rects.
+        for cell in row.cells.iter_mut() {
+            cell.ch = ' ';
+            cell.fg = None;
+            cell.bg = None;
         }
 
+        // Status/elapsed text and toolbar baked into the rightmost cells.
+        let collapsed = state.tabs[active].collapsed_blocks.contains(&block.id);
+        let toolbar = crate::runtime::block_toolbar_text(collapsed);
         let elapsed = block.elapsed().map_or_else(
-            || "ready".to_owned(),
+            || "—".to_owned(),
             |duration| {
                 if duration.as_secs_f64() >= 1.0 {
                     format!("{:.1}s", duration.as_secs_f64())
@@ -274,79 +442,115 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         } else if block.command.is_some() {
             format!("● {elapsed}")
         } else {
-            "○ ready".to_owned()
+            "○".to_owned()
         };
-        // Use glyphs already guaranteed by both renderers. Collapse is last/rightmost.
-        let controls = if state.tabs[active].collapsed_blocks.contains(&block.id) {
-            "▶  E  C  →"
+        // Status/timing fg colour reflects success/failure/running.
+        let status_fg = if block.exit_code == Some(0) {
+            [0.42, 0.80, 0.54]
+        } else if block.exit_code.is_some() {
+            [0.92, 0.42, 0.44]
         } else {
-            "▶  E  C  ↓"
+            [0.60, 0.72, 1.0]
         };
-        let label = format!("{status}  {controls}");
-        let start = row.cells.len().saturating_sub(label.chars().count());
-        if row.cells[start..]
-            .iter()
-            .all(|cell| matches!(cell.ch, ' ' | '─'))
+        // The toolbar must occupy the last BLOCK_TOOLBAR_WIDTH columns exactly:
+        // the pointer handler hit-tests it against the right edge.
+        let label = format!("{status}  {toolbar}");
+        let label_chars: Vec<char> = label.chars().collect();
+        let n_cells = row.cells.len();
+        let start = n_cells.saturating_sub(label_chars.len());
+        let toolbar_start = label_chars
+            .len()
+            .saturating_sub(crate::runtime::BLOCK_TOOLBAR_WIDTH);
+        let status_len = status.chars().count();
+        // Muted colour for the space between status and toolbar buttons.
+        let gap_fg: [f32; 3] = [0.35, 0.38, 0.44];
+        // Brighter colour for interactive action labels.
+        let action_fg: [f32; 3] = [0.78, 0.88, 1.0];
+        for (i, (cell, ch)) in row.cells[start..]
+            .iter_mut()
+            .zip(label_chars.iter())
+            .enumerate()
         {
-            for (cell, ch) in row.cells[start..].iter_mut().zip(label.chars()) {
-                cell.ch = ch;
-                cell.bg = Some(status_color);
-                cell.fg = Some(if block.exit_code == Some(0) {
-                    [0.52, 0.86, 0.62]
-                } else if block.exit_code.is_some() {
-                    [0.96, 0.57, 0.58]
-                } else {
-                    [0.62, 0.76, 1.0]
-                });
+            cell.ch = *ch;
+            if i < status_len {
+                cell.fg = Some(status_fg);
+            } else if i < toolbar_start {
+                cell.fg = Some(gap_fg);
+            } else if crate::runtime::block_toolbar_action(
+                i.saturating_sub(toolbar_start),
+            )
+            .is_some()
+            {
+                cell.fg = Some(action_fg);
+            } else {
+                cell.fg = Some(gap_fg);
             }
         }
     }
 
     // Collapsing is a render-only projection. The original output remains in
-    // scrollback and is still available to copy or restore instantly.
-    let mut collapsed_ranges: Vec<(usize, usize, String)> = execution_blocks
+    // scrollback and is still available to copy or restore instantly.  The
+    // hidden rows were already skipped during viewport assembly; here we only
+    // overwrite the surviving first output row with the placeholder label.
+    for block in execution_blocks
         .iter()
         .filter(|block| state.tabs[active].collapsed_blocks.contains(&block.id))
-        .filter_map(|block| {
-            let start = block.output_start_row?.checked_sub(window_start)?;
-            let end = block
-                .output_end_row?
-                .checked_sub(window_start)?
-                .min(terminal_rows.len());
-            (end > start + 1).then(|| {
-                (
-                    start,
-                    end,
-                    format!("… {} output lines · expand", end - start),
-                )
-            })
-        })
-        .collect();
-    collapsed_ranges.sort_by_key(|range| std::cmp::Reverse(range.0));
-    for (start, end, label) in collapsed_ranges {
-        let cols = terminal_rows.get(start).map_or(0, |row| row.cells.len());
-        let mut cells = vec![
-            RenderCell {
-                ch: ' ',
-                fg: None,
-                bg: Some([0.12, 0.12, 0.12]),
-                style: 0
-            };
-            cols
-        ];
-        for (cell, ch) in cells.iter_mut().zip(label.chars()) {
-            cell.ch = ch;
-            cell.fg = Some([0.55, 0.55, 0.55]);
+    {
+        let (Some(s), Some(e)) = (block.output_start_row, block.output_end_row) else {
+            continue;
+        };
+        if e <= s {
+            continue;
         }
-        terminal_rows.splice(start..end, [RenderRow { cells, dirty: true }]);
+        let Some(idx) = virtual_index(s, &hidden_ranges).checked_sub(v_start) else {
+            continue;
+        };
+        let Some(row) = terminal_rows.get_mut(idx) else {
+            continue;
+        };
+        let label = format!("… {} output lines hidden · click to expand", e - s);
+        let label_len = label.chars().count();
+        if row.cells.len() < label_len {
+            row.cells.resize(
+                label_len,
+                RenderCell {
+                    ch: ' ',
+                    fg: None,
+                    bg: None,
+                    style: 0,
+                },
+            );
+        }
+        for cell in &mut row.cells {
+            cell.ch = ' ';
+            cell.fg = None;
+            cell.bg = Some([0.12, 0.12, 0.12]);
+            cell.style = 0;
+        }
+        for (cell, ch) in row.cells.iter_mut().zip(label.chars()) {
+            cell.ch = ch;
+            // Bluish tint hints that the placeholder itself is clickable.
+            cell.fg = Some([0.58, 0.66, 0.82]);
+        }
+        row.dirty = true;
     }
-    while terminal_rows.len() < visible_count {
-        terminal_rows.push(RenderRow {
-            cells: Vec::new(),
-            dirty: true,
-        });
-    }
-    terminal_rows.truncate(visible_count);
+
+    // Rebuild the on-screen text from the final rows so copy, link detection
+    // and the painter's per-character lookups all agree with what is shown.
+    let terminal_text: String = {
+        let mut text = String::new();
+        for (i, row) in terminal_rows.iter().enumerate() {
+            if i > 0 {
+                text.push('\n');
+            }
+            for cell in &row.cells {
+                text.push(cell.ch);
+            }
+        }
+        text
+    };
+    let (terminal_fg_colors, terminal_bg_colors, terminal_styles) =
+        flatten_rows_colors(&terminal_rows);
 
     let (term_rows, term_cols) = if let Some(first) = terminal_rows.first() {
         (terminal_rows.len(), first.cells.len())
@@ -360,7 +564,9 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         dirty_cells: vec![false; term_rows.saturating_mul(term_cols)],
     };
     let screen_damage = state.tabs[active].app.terminal_take_damage();
-    damage.full_redraw = screen_damage.full_redraw;
+    // Collapse remaps viewport rows, so per-row damage tracking no longer
+    // lines up with screen rows — repaint everything while blocks are folded.
+    damage.full_redraw = screen_damage.full_redraw || !hidden_ranges.is_empty();
     damage.dirty_rows = screen_damage.dirty_rows.clone();
     for row in &screen_damage.dirty_rows {
         if let Some(render_row) = terminal_rows.get_mut(*row) {
@@ -375,7 +581,10 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     }
     let terminal_damage = Arc::new(damage);
     state.tabs[active].last_terminal_text = terminal_text.clone();
-    state.tabs[active].term_row_count = terminal_text.lines().count().max(1);
+    // Use the actual viewport row count: `lines().count()` drops a trailing
+    // empty row, which skews the view-row → absolute-row mapping used by
+    // block selection and the quick-action toolbar.
+    state.tabs[active].term_row_count = terminal_rows.len().max(1);
 
     if state.tabs[active].search.active {
         crate::search::refresh_search(&mut state.tabs[active]);
@@ -384,33 +593,28 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let (search_panel, search_highlights, search_current_highlight) =
         if state.tabs[active].search.active {
             let tab = &state.tabs[active];
-            let visible_rows = tab.term_row_count.max(1);
-            let total_rows = tab.search.total_rows.max(visible_rows);
-            let window_start = total_rows
-                .saturating_sub(visible_rows)
-                .saturating_sub(tab.scroll_offset.min(tab.app.scrollback_len()));
-            let window_end = window_start.saturating_add(visible_rows);
+            // Map an absolute match row to its viewport row through the
+            // collapse-aware virtual projection; hidden rows yield None.
+            let to_view = |abs_row: usize| -> Option<usize> {
+                if is_hidden_row(abs_row, &hidden_ranges) {
+                    return None;
+                }
+                let view = virtual_index(abs_row, &hidden_ranges).checked_sub(v_start)?;
+                (view < visible_count).then_some(view)
+            };
 
             let highlights: Vec<(usize, usize, usize)> = tab
                 .search
                 .matches
                 .iter()
-                .filter_map(|m| {
-                    if m.abs_row >= window_start && m.abs_row < window_end {
-                        Some((m.abs_row - window_start, m.col_start, m.col_end))
-                    } else {
-                        None
-                    }
-                })
+                .filter_map(|m| to_view(m.abs_row).map(|row| (row, m.col_start, m.col_end)))
                 .collect();
 
-            let current = tab.search.matches.get(tab.search.current).and_then(|m| {
-                if m.abs_row >= window_start && m.abs_row < window_end {
-                    Some((m.abs_row - window_start, m.col_start, m.col_end))
-                } else {
-                    None
-                }
-            });
+            let current = tab
+                .search
+                .matches
+                .get(tab.search.current)
+                .and_then(|m| to_view(m.abs_row).map(|row| (row, m.col_start, m.col_end)));
 
             let current_match = if tab.search.matches.is_empty() {
                 0
@@ -443,10 +647,16 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         // OSC 8 explicit hyperlinks from the terminal cell data.  These are
         // authoritative: if a cell range has an OSC 8 link ID we prefer it
         // over any pattern-detected link that overlaps the same cells.
+        // OSC 8 spans are addressed by real scrollback offset; use the real
+        // offset of the viewport top so links stay aligned when collapsed
+        // blocks sit above the window.
+        let real_link_offset = total_rows
+            .saturating_sub(visible_count)
+            .saturating_sub(abs_of_virtual(v_start, &hidden_ranges));
         let osc8 = state.tabs[active]
             .app
             .terminal
-            .hyperlink_spans(scroll_offset);
+            .hyperlink_spans(real_link_offset);
         if !osc8.is_empty() {
             for (row, cs, ce, id) in &osc8 {
                 if let Some(uri) = state.tabs[active].app.terminal.hyperlink_uri(*id) {
@@ -538,7 +748,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         String::new()
     };
 
-    let scrollback_lines = state.tabs[active].app.scrollback_len();
+    let scrollback_lines = virtual_scrollback;
     let editor_scroll_offset = state.tabs[active].editor_scroll_offset;
     let editor_selection = state.tabs[active].app.editor_selection();
     let split_ratio = state.tabs[active].split_ratio;
@@ -802,12 +1012,35 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 scroll_offset: cp.scroll_offset,
             }
         }),
+        block_header_rows,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{tab_button_label, tab_button_label_for_tab};
+    use super::{
+        abs_of_virtual, is_hidden_row, tab_button_label, tab_button_label_for_tab, virtual_index,
+    };
+
+    #[test]
+    fn virtual_mapping_skips_hidden_rows() {
+        // Hidden: rows 5..10 (len 5) and 20..22 (len 2).
+        let ranges = vec![(5, 5), (20, 2)];
+        assert_eq!(virtual_index(0, &ranges), 0);
+        assert_eq!(virtual_index(4, &ranges), 4);
+        // First visible row after the first gap.
+        assert_eq!(virtual_index(10, &ranges), 5);
+        assert_eq!(virtual_index(19, &ranges), 14);
+        assert_eq!(virtual_index(22, &ranges), 15);
+        assert!(is_hidden_row(5, &ranges));
+        assert!(is_hidden_row(9, &ranges));
+        assert!(!is_hidden_row(10, &ranges));
+        assert!(is_hidden_row(21, &ranges));
+        // Round trip over visible rows.
+        for r in (0..30).filter(|r| !is_hidden_row(*r, &ranges)) {
+            assert_eq!(abs_of_virtual(virtual_index(r, &ranges), &ranges), r);
+        }
+    }
 
     #[test]
     fn tab_button_label_uses_title_when_present() {

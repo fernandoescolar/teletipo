@@ -70,6 +70,8 @@ pub trait TerminalDisplay {
     /// Collect all hyperlink spans in the visible viewport at the given scroll
     /// offset. Returns `(vis_row, col_start, col_end_exclusive, id)` tuples.
     fn dump_hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)>;
+    /// Soft-wrap flag per row in the same order as `dump_ansi`.
+    fn dump_wrap_flags(&self) -> Vec<bool>;
 }
 
 impl TerminalDisplay for Screen {
@@ -243,6 +245,10 @@ impl TerminalDisplay for Screen {
 
     fn dump_hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
         Screen::dump_hyperlink_spans(self, scroll_offset)
+    }
+
+    fn dump_wrap_flags(&self) -> Vec<bool> {
+        Screen::dump_wrap_flags(self)
     }
 }
 
@@ -561,6 +567,12 @@ where
 
     pub fn snapshot_ansi(&self) -> Arc<String> {
         self.screen.dump_ansi()
+    }
+
+    /// Soft-wrap flag for every row in the same order as `snapshot_ansi`.
+    /// `true` means the row continues onto the next without a hard newline.
+    pub fn snapshot_wrap_flags(&self) -> Vec<bool> {
+        self.screen.dump_wrap_flags()
     }
 
     /// Returns per-character styled data for the visible grid.
@@ -942,6 +954,10 @@ mod tests {
         }
 
         fn dump_hyperlink_spans(&self, _scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
+            Vec::new()
+        }
+
+        fn dump_wrap_flags(&self) -> Vec<bool> {
             Vec::new()
         }
     }

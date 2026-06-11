@@ -124,6 +124,19 @@ pub struct RenderSnapshot {
     pub toast_stack: Vec<Toast>,
     /// When `Some`, the command palette (Cmd+Shift+P) overlay is open.
     pub command_palette: Option<CommandPalette>,
+    /// Rows that act as block-separator headers.
+    pub block_header_rows: Vec<BlockHeaderRow>,
+}
+
+/// Metadata for one command-block separator row sent to the painter.
+#[derive(Debug, Clone)]
+pub struct BlockHeaderRow {
+    /// Viewport row index (0 = top of terminal area).
+    pub row: usize,
+    /// Block is currently selected.
+    pub selected: bool,
+    /// `None` = running / never exited, `Some(0)` = success, `Some(_)` = failure.
+    pub exit_code: Option<i32>,
 }
 
 /// Visual state for the inline terminal search panel.

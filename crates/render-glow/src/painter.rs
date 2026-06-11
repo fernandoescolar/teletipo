@@ -465,6 +465,7 @@ impl GlPainter {
         self.draw_tab_bar(snapshot, &layout);
         self.draw_terminal_highlights(snapshot, &layout);
         self.draw_editor_selection(snapshot, &layout);
+        self.draw_block_headers(snapshot, &layout);
         self.draw_terminal_text(snapshot, &layout);
         self.draw_editor_text(snapshot, &layout);
         self.draw_editor_suggestion(snapshot, &layout);
@@ -602,6 +603,42 @@ impl GlPainter {
                 gl.disable(glow::BLEND);
             }
             self.color_atlas_vertices.clear();
+        }
+    }
+
+    /// Draw border-to-border separator lines and header-row backgrounds for
+    /// each command block.  Runs *before* `draw_terminal_text` so that the
+    /// tinted background sits beneath the toolbar labels.
+    fn draw_block_headers(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
+        let th = &snapshot.theme;
+        for header in &snapshot.block_header_rows {
+            let y = layout.terminal_text_top + header.row as f32 * layout.cell_h_px;
+            if y >= layout.terminal_text_bottom {
+                continue;
+            }
+
+            // Accent/separator colour based on block status and selection.
+            let accent = if header.selected {
+                th.separator_focused
+            } else if header.exit_code == Some(0) {
+                // success — subtle green accent
+                [0.25, 0.65, 0.42, 1.0]
+            } else if header.exit_code.is_some() {
+                // failure — subtle red accent
+                [0.75, 0.28, 0.30, 1.0]
+            } else {
+                // running / pending — use theme separator
+                th.separator
+            };
+
+            // Subtle full-row background tint (very low alpha so prompt content
+            // remains readable).
+            let row_bg = [accent[0], accent[1], accent[2], 0.10];
+            self.push_rect(0.0, y, layout.width - SCROLLBAR_W_PX as f32, y + layout.cell_h_px, row_bg);
+
+            // Bold separator line — border-to-border, at the TOP of the row.
+            let line_h = (layout.cell_h_px * 0.10).max(2.0);
+            self.push_rect(0.0, y, layout.width - SCROLLBAR_W_PX as f32, y + line_h, accent);
         }
     }
 

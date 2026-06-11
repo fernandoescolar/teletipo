@@ -659,7 +659,7 @@ fn handle_named_key_overlay_and_scroll(
             true
         }
         NamedKey::PageUp => {
-            let max_scroll = state.tab().app.scrollback_len();
+            let max_scroll = state.tab().virtual_scrollback_lines;
             let prev = state.tab().scroll_offset;
             state.tab_mut().scroll_offset = prev.saturating_add(5).min(max_scroll);
             state.push_accessibility_tree();

@@ -40,11 +40,23 @@ fn cursor_terminal_cell(state: &GpuRuntimeState) -> Option<(usize, usize)> {
 }
 
 fn terminal_col_count(state: &GpuRuntimeState) -> usize {
-    ((state.layout.window_width as f32
-        - 2.0 * state.user_config.padding.horizontal as f32
-        - SCROLLBAR_W_PX)
-        / state.layout.cell_w)
-        .max(1.0) as usize
+    // Prefer the actual grid width from the last rendered frame so toolbar
+    // hit-testing matches where the snapshot drew the buttons; fall back to
+    // pixel math before the first frame.
+    state
+        .tab()
+        .last_terminal_text
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .filter(|cols| *cols > 0)
+        .unwrap_or_else(|| {
+            ((state.layout.window_width as f32
+                - 2.0 * state.user_config.padding.horizontal as f32
+                - SCROLLBAR_W_PX)
+                / state.layout.cell_w)
+                .max(1.0) as usize
+        })
 }
 
 fn context_menu_width_px(cell_w: f32, items: &[String]) -> f64 {
@@ -138,7 +150,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
             if term_bottom > tab_bar_h {
                 let frac = ((*y - tab_bar_h) / (term_bottom - tab_bar_h)).clamp(0.0, 1.0);
-                let max_scroll = state.tab().app.scrollback_len();
+                let max_scroll = state.tab().virtual_scrollback_lines;
                 state.tab_mut().scroll_offset = ((1.0 - frac) * max_scroll as f64) as usize;
             }
         } else if state.drag.dragging_editor_horizontal_scrollbar {
@@ -482,7 +494,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 && state.cursor.cursor_y <= term_bottom
             {
                 let frac = (state.cursor.cursor_y - tab_bar_h) / (term_bottom - tab_bar_h);
-                let max_scroll = state.tab().app.scrollback_len();
+                let max_scroll = state.tab().virtual_scrollback_lines;
                 state.tab_mut().scroll_offset = ((1.0 - frac) * max_scroll as f64) as usize;
                 state.drag.dragging_terminal_scrollbar = true;
                 return true;
@@ -934,7 +946,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 }
             }
             if *delta_lines > 0.0 {
-                let max_scroll = state.tab().app.scrollback_len();
+                let max_scroll = state.tab().virtual_scrollback_lines;
                 state.tab_mut().scroll_offset = prev.saturating_add(lines).min(max_scroll);
             } else {
                 state.tab_mut().scroll_offset = prev.saturating_sub(lines);

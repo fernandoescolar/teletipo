@@ -220,6 +220,10 @@ impl AppTerminal {
         self.session.snapshot_ansi()
     }
 
+    pub fn snapshot_wrap_flags(&self) -> Vec<bool> {
+        self.session.snapshot_wrap_flags()
+    }
+
     pub fn snapshot_styled(&self) -> StyledChars {
         self.session.snapshot_styled()
     }
@@ -561,6 +565,12 @@ impl App {
     pub fn terminal_ansi_snapshot(&self) -> std::sync::Arc<String> {
         self.terminal.snapshot_ansi()
     }
+
+    /// Soft-wrap flags in the same row order as `terminal_ansi_snapshot`.
+    pub fn terminal_wrap_flags(&self) -> Vec<bool> {
+        self.terminal.snapshot_wrap_flags()
+    }
+
 
     pub fn terminal_styled_snapshot(&self) -> StyledChars {
         self.terminal.snapshot_styled()

@@ -188,6 +188,7 @@ mod tests {
             cursor_blink_on: true,
             toast_stack: vec![],
             command_palette: None,
+            block_header_rows: vec![],
         }
     }
 

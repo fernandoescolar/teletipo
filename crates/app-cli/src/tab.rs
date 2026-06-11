@@ -89,6 +89,76 @@ pub(crate) struct TabState {
     pub(crate) selected_block: Option<app_orchestrator::BlockId>,
     /// Command blocks whose long output is visually collapsed.
     pub(crate) collapsed_blocks: HashSet<app_orchestrator::BlockId>,
+    /// Effective scrollback line count after subtracting lines hidden by
+    /// collapsed blocks.  Updated every frame by `build_snapshot`.  Input
+    /// handlers use this instead of `app.scrollback_len()` so that scroll
+    /// bounds and the scrollbar drag scale respect the virtual content size.
+    pub(crate) virtual_scrollback_lines: usize,
+    /// Rows hidden by collapsed blocks, in absolute row coordinates: sorted,
+    /// non-overlapping `(start_abs, len)` entries.  Updated every frame by
+    /// `build_snapshot`; used to map viewport rows back to absolute rows
+    /// (block selection, quick actions) while blocks are folded.
+    pub(crate) collapsed_hidden_ranges: Vec<(usize, usize)>,
+    /// First virtual row shown in the viewport in the last rendered frame.
+    /// Cached so click handlers map view_row → abs_row using the exact same
+    /// geometry that placed the pixels, instead of recomputing with a
+    /// potentially-stale scrollback length.
+    pub(crate) last_frame_v_start: usize,
+    /// Restored session content not yet replayed into the terminal.  Held
+    /// until the terminal reaches its real on-screen size so the content is
+    /// laid out only once: feeding at the startup placeholder size and then
+    /// resizing would reflow the grid and invalidate the absolute row numbers
+    /// the restored command blocks point at.  Flushed by
+    /// [`crate::runtime::GpuRuntimeState::flush_pending_restore`].
+    pub(crate) pending_restore: Option<PendingRestore>,
+    /// Command blocks captured as text the moment they completed, in arrival
+    /// order.  Persisted to the session file and replayed on next launch.
+    pub(crate) saved_blocks: Vec<SavedBlock>,
+    /// Number of `execution_blocks()` already captured into `saved_blocks`,
+    /// so each completed block is captured exactly once.
+    pub(crate) captured_block_count: usize,
+}
+
+/// Saved command blocks awaiting replay into a freshly sized terminal.
+/// `terminal_output` is only used as a fallback when a tab has no captured
+/// blocks (e.g. plain scrollback).  See [`TabState::pending_restore`].
+pub(crate) struct PendingRestore {
+    pub(crate) terminal_output: String,
+    pub(crate) blocks: Vec<SavedBlock>,
+}
+
+/// A finished command block persisted across sessions.
+///
+/// Stored as the captured ANSI text of each region rather than absolute row
+/// numbers: rows drift whenever the window is resized mid-session (the grid
+/// reflows but block rows are not remapped), so on restore the blocks are
+/// replayed through a synthetic OSC 133 stream and their positions recomputed
+/// from scratch.  The text is captured the moment a block completes, while its
+/// rows are still valid.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+pub(crate) struct SavedBlock {
+    /// Prompt region (everything from the prompt start up to the command).
+    #[serde(default)]
+    pub(crate) prompt_ansi: String,
+    /// The echoed command line(s) shown between the prompt and the output.
+    #[serde(default)]
+    pub(crate) command_ansi: String,
+    /// Command output region.
+    #[serde(default)]
+    pub(crate) output_ansi: String,
+    /// Logical command text (drives copy / re-run / edit).
+    #[serde(default)]
+    pub(crate) command: Option<String>,
+    #[serde(default)]
+    pub(crate) exit_code: Option<i32>,
+    #[serde(default)]
+    pub(crate) duration_ms: Option<u64>,
+    /// Unix seconds (UTC) when the command started — `None` for blocks loaded
+    /// from older session files that did not record this field.
+    #[serde(default)]
+    pub(crate) started_at_secs: Option<u64>,
+    #[serde(default)]
+    pub(crate) cwd: Option<String>,
 }
 
 /// Persistent state for a single tab.
@@ -106,6 +176,9 @@ pub(crate) struct TabSession {
     /// Frecency data for history entries (empty in old session files — seeded on load).
     #[serde(default)]
     pub(crate) history_entries: Vec<HistoryEntry>,
+    /// Finished command blocks (empty in old session files).
+    #[serde(default)]
+    pub(crate) blocks: Vec<SavedBlock>,
 }
 
 /// Session data persisted to disk across program runs.

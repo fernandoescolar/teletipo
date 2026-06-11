@@ -216,6 +216,12 @@ impl GpuRuntimeState {
         for (idx, code) in exit_codes {
             self.finalize_pending_cmd(idx, code);
         }
+        // Capture any blocks that finished this pump while their row numbers are
+        // still valid (a later window resize would reflow and invalidate them).
+        let n = self.tabs.len();
+        for idx in 0..n {
+            self.capture_completed_blocks(idx);
+        }
         if !resize_tabs.is_empty() {
             self.apply_fullscreen_resize_tabs(resize_tabs);
         }
@@ -436,15 +442,7 @@ impl GpuRuntimeState {
             return;
         };
 
-        let visible_rows = tab.term_row_count.max(1);
-        let scrollback = tab.app.scrollback_len();
-        let total_rows = scrollback.saturating_add(visible_rows);
-        let center_target = target_row.saturating_sub(visible_rows / 2);
-        let max_start = total_rows.saturating_sub(visible_rows);
-        tab.scroll_offset = total_rows
-            .saturating_sub(visible_rows)
-            .saturating_sub(center_target.min(max_start))
-            .min(scrollback);
+        tab.scroll_offset = crate::snapshot::tab_scroll_offset_to_center(tab, target_row);
         tab.selected_block = Some(target_id);
         tab.selection_anchor = None;
         tab.selection_end = None;
@@ -455,13 +453,7 @@ impl GpuRuntimeState {
     /// viewport row. This makes right-clicking anywhere in a block target it.
     pub(crate) fn select_block_at_view_row(&mut self, view_row: usize) -> bool {
         let tab = self.tab_mut();
-        let visible_rows = tab.term_row_count.max(1);
-        let scrollback = tab.app.scrollback_len();
-        let total_rows = scrollback.saturating_add(visible_rows);
-        let window_start = total_rows
-            .saturating_sub(visible_rows)
-            .saturating_sub(tab.scroll_offset.min(scrollback));
-        let absolute_row = window_start.saturating_add(view_row);
+        let absolute_row = crate::snapshot::tab_view_row_to_abs(tab, view_row);
         let selected = tab
             .app
             .execution_blocks()
@@ -474,39 +466,59 @@ impl GpuRuntimeState {
         selected.is_some()
     }
 
-    /// Dispatch a quick-action icon on the selected block header.
+    /// Handle a left click on a command-block row.
+    ///
+    /// - Click on a collapsed placeholder row → expand the block.
+    /// - Click on a header row inside the toolbar → run the action.
+    /// - Click anywhere else on a header row → select the block.
+    ///
+    /// Returns `true` when the click was consumed.
     pub(crate) fn activate_block_quick_action(
         &mut self,
         view_row: usize,
         col: usize,
         cols: usize,
     ) -> bool {
-        if cols < 11 || col < cols.saturating_sub(10) || !self.select_block_at_view_row(view_row) {
-            return false;
-        }
+        let absolute_row = crate::snapshot::tab_view_row_to_abs(self.tab(), view_row);
         let tab = self.tab();
-        let visible_rows = tab.term_row_count.max(1);
-        let scrollback = tab.app.scrollback_len();
-        let absolute_row = scrollback
-            .saturating_add(visible_rows)
-            .saturating_sub(visible_rows)
-            .saturating_sub(tab.scroll_offset.min(scrollback))
-            .saturating_add(view_row);
-        if tab
-            .selected_block
-            .and_then(|id| tab.app.execution_block(id))
-            .map(|block| block.prompt_start_row)
-            != Some(absolute_row)
-        {
-            return false;
+        let placeholder_id = tab
+            .app
+            .execution_blocks()
+            .iter()
+            .chain(tab.app.current_execution_block())
+            .find(|block| {
+                tab.collapsed_blocks.contains(&block.id)
+                    && block.output_start_row == Some(absolute_row)
+            })
+            .map(|block| block.id);
+        if let Some(id) = placeholder_id {
+            let tab = self.tab_mut();
+            tab.selected_block = Some(id);
+            tab.collapsed_blocks.remove(&id);
+            return true;
         }
-        let offset = col.saturating_sub(cols - 10);
-        match offset {
-            0 => self.rerun_selected_block_command(),
-            3 => self.edit_selected_block_command(),
-            6 => self.copy_selected_block_command(),
-            9 => self.toggle_selected_block_collapse(),
-            _ => return false,
+
+        let header_id = tab
+            .app
+            .execution_blocks()
+            .iter()
+            .chain(tab.app.current_execution_block())
+            .find(|block| block.prompt_start_row == absolute_row)
+            .map(|block| block.id);
+        let Some(id) = header_id else {
+            return false;
+        };
+        self.tab_mut().selected_block = Some(id);
+
+        if cols >= BLOCK_TOOLBAR_WIDTH && col + BLOCK_TOOLBAR_WIDTH >= cols {
+            let offset = col - (cols - BLOCK_TOOLBAR_WIDTH);
+            match block_toolbar_action(offset) {
+                Some(BlockToolbarAction::Rerun) => self.rerun_selected_block_command(),
+                Some(BlockToolbarAction::Edit) => self.edit_selected_block_command(),
+                Some(BlockToolbarAction::Copy) => self.copy_selected_block_command(),
+                Some(BlockToolbarAction::ToggleFold) => self.toggle_selected_block_collapse(),
+                None => {}
+            }
         }
         true
     }
@@ -586,16 +598,13 @@ impl GpuRuntimeState {
             .execution_blocks()
             .iter()
             .filter(|block| {
-                self.tab()
-                    .app
-                    .block_output(block.id)
-                    .is_some_and(|output| output.lines().count() > 20)
+                block.output_start_row.is_some() && block.output_end_row.is_some()
             })
             .map(|block| block.id)
             .collect();
         if collapsible.is_empty() {
             self.push_toast(
-                "No long command output to collapse",
+                "No command blocks with output to collapse",
                 crate::state::ToastKind::Info,
             );
             return;
@@ -604,7 +613,7 @@ impl GpuRuntimeState {
     }
 
     pub(crate) fn toggle_selected_block_collapse(&mut self) {
-        let (id, long_enough) = {
+        let id = {
             let tab = self.tab();
             let Some(id) = tab.selected_block else {
                 self.push_toast(
@@ -613,19 +622,8 @@ impl GpuRuntimeState {
                 );
                 return;
             };
-            let long = tab
-                .app
-                .block_output(id)
-                .is_some_and(|output| output.lines().count() > 20);
-            (id, long)
+            id
         };
-        if !long_enough {
-            self.push_toast(
-                "Only output longer than 20 lines can be collapsed",
-                crate::state::ToastKind::Info,
-            );
-            return;
-        }
         let tab = self.tab_mut();
         if !tab.collapsed_blocks.insert(id) {
             tab.collapsed_blocks.remove(&id);
@@ -638,10 +636,126 @@ impl GpuRuntimeState {
             pty.resize(rows, cols);
         }
         tab.app.resize_terminal(rows as usize, cols as usize);
+        // The terminal now has its real size: replay any restored session
+        // content so its layout — and the command-block row numbers — match
+        // the live geometry instead of the startup placeholder size.
+        self.flush_pending_restore(idx);
+        let tab = &mut self.tabs[idx];
         let max_scroll = tab.app.scrollback_len();
         if tab.scroll_offset > max_scroll {
             tab.scroll_offset = max_scroll;
         }
+    }
+
+    /// Capture the text of any blocks that have completed since the last call,
+    /// storing it in `saved_blocks` for session persistence.  Done while the
+    /// block's rows are still valid (before any later resize reflows them).
+    pub(crate) fn capture_completed_blocks(&mut self, idx: usize) {
+        let tab = &self.tabs[idx];
+        // The in-progress block (if any) is not yet finished, so only the
+        // settled `execution_blocks()` are eligible for capture.
+        let total = tab.app.execution_blocks().len();
+        if total <= tab.captured_block_count {
+            return;
+        }
+        let dump = tab.app.terminal_ansi_snapshot();
+        let wrap_flags = tab.app.terminal_wrap_flags();
+        let lines: Vec<&str> = dump.lines().collect();
+        // Build logical lines: join consecutive soft-wrapped rows without a
+        // newline so the content reflows to the live column width on restore.
+        let slice = |start: usize, end: usize| -> String {
+            let end = end.min(lines.len());
+            if start >= end {
+                return String::new();
+            }
+            let mut out = String::new();
+            for i in start..end {
+                out.push_str(lines[i]);
+                let is_wrapped = wrap_flags.get(i).copied().unwrap_or(false);
+                if !is_wrapped && i + 1 < end {
+                    out.push('\n');
+                }
+            }
+            out
+        };
+        let mut captured = Vec::new();
+        for block in &tab.app.execution_blocks()[tab.captured_block_count..total] {
+            let prompt_start = block.prompt_start_row;
+            let command_start = block.command_start_row.unwrap_or(prompt_start);
+            let output_start = block.output_start_row.unwrap_or(command_start);
+            let output_end = block.output_end_row.unwrap_or(output_start);
+            captured.push(crate::tab::SavedBlock {
+                prompt_ansi: slice(prompt_start, command_start),
+                command_ansi: slice(command_start, output_start),
+                output_ansi: slice(output_start, output_end),
+                command: block.command.clone(),
+                exit_code: block.exit_code,
+                duration_ms: block.duration.map(|d| d.as_millis() as u64),
+                started_at_secs: block.started_at.and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+                }),
+                cwd: block.cwd.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            });
+        }
+        let tab = &mut self.tabs[idx];
+        tab.saved_blocks.extend(captured);
+        tab.captured_block_count = total;
+    }
+
+    /// Replay deferred restored content into a tab's terminal at its current
+    /// size.  Blocks are reconstructed through a synthetic OSC 133 stream so
+    /// their row numbers are recomputed from scratch at the live geometry.
+    /// No-op when the tab has nothing pending.  See [`crate::tab::PendingRestore`].
+    pub(crate) fn flush_pending_restore(&mut self, idx: usize) {
+        let Some(pending) = self.tabs[idx].pending_restore.take() else {
+            return;
+        };
+        let app = &mut self.tabs[idx].app;
+        // Home the cursor and clear the grid first: resizing the (empty)
+        // terminal to its real size can leave the cursor padded down from the
+        // top, which would otherwise offset every restored row.
+        app.feed_terminal(b"\x1b[H\x1b[2J");
+
+        let feed_region = |app: &mut app_orchestrator::App, region: &str| {
+            for line in region.split('\n') {
+                app.feed_terminal(line.as_bytes());
+                app.feed_terminal(b"\r\n");
+            }
+        };
+
+        if pending.blocks.is_empty() {
+            // No structured blocks — replay the plain scrollback blob.
+            for line in pending.terminal_output.lines() {
+                app.feed_terminal(line.as_bytes());
+                app.feed_terminal(b"\r\n");
+            }
+        } else {
+            for block in &pending.blocks {
+                app.feed_terminal(b"\x1b]133;A\x07");
+                if !block.prompt_ansi.is_empty() {
+                    feed_region(app, &block.prompt_ansi);
+                }
+                app.feed_terminal(b"\x1b]133;B\x07");
+                if let Some(cmd) = &block.command {
+                    app.terminal.register_submitted_command(cmd.clone());
+                }
+                if !block.command_ansi.is_empty() {
+                    feed_region(app, &block.command_ansi);
+                }
+                app.feed_terminal(b"\x1b]133;C\x07");
+                if !block.output_ansi.is_empty() {
+                    feed_region(app, &block.output_ansi);
+                }
+                let code = block.exit_code.unwrap_or(0);
+                app.feed_terminal(format!("\x1b]133;D;{code}\x07").as_bytes());
+            }
+        }
+
+        // Adopt the restored blocks as the capture baseline so they persist on
+        // the next save and newly run blocks append after them.
+        let tab = &mut self.tabs[idx];
+        tab.saved_blocks = pending.blocks;
+        tab.captured_block_count = tab.app.execution_blocks().len();
     }
 
     /// Resize every tab after a window resize. Each tab uses its own split_ratio.
@@ -734,6 +848,12 @@ impl GpuRuntimeState {
             a11y_screen_version: 0,
             selected_block: None,
             collapsed_blocks: std::collections::HashSet::new(),
+            virtual_scrollback_lines: 0,
+            collapsed_hidden_ranges: Vec::new(),
+            last_frame_v_start: 0,
+            pending_restore: None,
+            saved_blocks: Vec::new(),
+            captured_block_count: 0,
         });
         self.active_tab = self.tabs.len() - 1;
     }
@@ -809,6 +929,49 @@ impl GpuRuntimeState {
             kind,
             Duration::from_secs(4),
         ));
+    }
+}
+
+// ── Command-block quick-action toolbar ────────────────────────────────────────
+//
+// The toolbar is drawn right-aligned in every block header row and hit-tested
+// by column.  Layout (offsets within the toolbar, width 25):
+//
+//   ▶ run  edit  copy  ↓ fold
+//   0───4  7──10  13─16  19───24
+//
+// `block_toolbar_text` and `block_toolbar_action` must stay in sync: the
+// snapshot draws the text, the pointer handler maps clicks back to actions.
+
+/// Column width of the block header quick-action toolbar.
+pub(crate) const BLOCK_TOOLBAR_WIDTH: usize = 25;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum BlockToolbarAction {
+    Rerun,
+    Edit,
+    Copy,
+    ToggleFold,
+}
+
+/// Toolbar text for a block header (uses only glyphs guaranteed by both
+/// renderers).  Exactly [`BLOCK_TOOLBAR_WIDTH`] characters.
+pub(crate) fn block_toolbar_text(collapsed: bool) -> &'static str {
+    if collapsed {
+        "▶ run  edit  copy  → open"
+    } else {
+        "▶ run  edit  copy  ↓ fold"
+    }
+}
+
+/// Map a column offset inside the toolbar to the action under it.
+pub(crate) fn block_toolbar_action(offset: usize) -> Option<BlockToolbarAction> {
+    match offset {
+        0..=4 => Some(BlockToolbarAction::Rerun),
+        7..=10 => Some(BlockToolbarAction::Edit),
+        13..=16 => Some(BlockToolbarAction::Copy),
+        19..=24 => Some(BlockToolbarAction::ToggleFold),
+        _ => None,
     }
 }
 
