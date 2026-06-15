@@ -131,6 +131,18 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     // shows the update banner for testing without needing to run the background thread or build an actual update:
     // state.overlays.pending_update.get_or_insert(crate::UpdateBanner::Available("TEST".to_owned()));
 
+    // Apply deferred resize (visual + PTY) once window resizing has been
+    // idle for ≥ 150 ms. The grid is frozen during the resize gesture so the
+    // shell only ever receives a single SIGWINCH per resize operation.
+    if state
+        .overlays
+        .pending_pty_resize
+        .is_some_and(|t| t.elapsed().as_millis() >= 150)
+        && !state.drag.dragging_separator
+    {
+        state.apply_deferred_resize();
+    }
+
     let had_data = state.pump_all_ptys();
     if had_data {
         let active = state.active_tab;

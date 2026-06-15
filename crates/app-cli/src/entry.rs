@@ -5,7 +5,7 @@ use clap::Parser;
 use platform_abstraction::default_shell;
 use render_wgpu::{FontConfig, RenderConfig};
 
-use crate::launch::{build_initial_state, load_session, sanitize_terminal_size, save_session};
+use crate::launch::{build_initial_state, load_session, save_session};
 use crate::runtime::EventCtx;
 use crate::{commands, metrics, onboarding};
 
@@ -67,9 +67,8 @@ pub fn run(
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
     };
-    let (rows, cols) = sanitize_terminal_size(cli.rows, cli.cols);
     let state =
-        match build_initial_state(rows, cols, cli.exec.as_deref(), &shell, session, update_rx) {
+        match build_initial_state(cli.exec.as_deref(), &shell, session, update_rx) {
             Ok(state) => Rc::new(RefCell::new(state)),
             Err(err) => {
                 tracing::error!(error = %err, "failed to initialize runtime state");

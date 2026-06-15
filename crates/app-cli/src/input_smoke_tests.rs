@@ -54,6 +54,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         unread_output: false,
         bell_pending: false,
         a11y_screen_version: 0,
+        suppress_until: None,
     };
     GpuRuntimeState {
         tabs: vec![tab],
@@ -319,8 +320,6 @@ fn startup_snapshot_renders_command_output() {
 
     let session = tab::PersistentSession::default();
     let mut state = launch::build_initial_state(
-        24,
-        80,
         Some("printf 'hello from teletipo\n'"),
         "/bin/sh",
         session,

@@ -711,42 +711,55 @@ impl Screen {
         if new_rows == 0 || new_cols == 0 {
             return;
         }
-        let old_rows = self.primary.rows;
         let old_cols = self.primary.cols;
+        let old_rows = self.primary.rows;
 
         self.alternate.resize(new_rows, new_cols);
 
-        let mut reflow_rows: Vec<(Vec<Cell>, bool)> = if new_cols != old_cols {
-            reflow_grid(&self.primary, new_cols)
+        // When column width changes, reflow logical lines so that content
+        // wraps or un-wraps rather than being truncated. Cursor position is
+        // tracked through the reflow so it stays at the equivalent character.
+        // SIGWINCH suppression (TabState::suppress_until) prevents the shell's
+        // prompt-redraw from appearing on top of the reflowed content.
+        let (mut rows, reflow_cursor_row, reflow_cursor_col) = if new_cols != old_cols {
+            reflow_grid(
+                &self.primary,
+                new_cols,
+                self.primary.cursor_row,
+                self.primary.cursor_col,
+            )
         } else {
-            (0..old_rows)
+            let rows = (0..old_rows)
                 .map(|row| {
                     (
                         self.primary.row_cells(row),
                         self.primary.line_wrapped.get(row).copied().unwrap_or(false),
                     )
                 })
-                .collect()
+                .collect();
+            (rows, self.primary.cursor_row, self.primary.cursor_col)
         };
 
-        let reflow_len = reflow_rows.len();
+        let reflow_len = rows.len();
         let mut new_cells = vec![Cell::default(); new_rows * new_cols];
         let mut new_line_wrapped = vec![false; new_rows];
         let new_cursor_row;
+        let new_cursor_col;
 
         if reflow_len >= new_rows {
             let excess = reflow_len - new_rows;
-            for (cells, wrapped) in reflow_rows.drain(0..excess) {
+            for (cells, wrapped) in rows.drain(0..excess) {
                 self.push_scrollback(cells, wrapped);
             }
-            for (dst_row, (cells, wrapped)) in reflow_rows.into_iter().enumerate().take(new_rows) {
+            for (dst_row, (cells, wrapped)) in rows.into_iter().enumerate().take(new_rows) {
                 let dst = dst_row * new_cols;
                 for (col, cell) in cells.into_iter().enumerate().take(new_cols) {
                     new_cells[dst + col] = cell;
                 }
                 new_line_wrapped[dst_row] = wrapped;
             }
-            new_cursor_row = new_rows.saturating_sub(1);
+            new_cursor_row = reflow_cursor_row.saturating_sub(excess);
+            new_cursor_col = reflow_cursor_col;
         } else {
             let shortfall = new_rows - reflow_len;
             let to_pull = shortfall.min(self.scrollback.len());
@@ -764,7 +777,7 @@ impl Screen {
                 new_line_wrapped[dst_row] = sb_wrapped;
             }
 
-            for (vi, (cells, wrapped)) in reflow_rows.iter().enumerate() {
+            for (vi, (cells, wrapped)) in rows.iter().enumerate() {
                 let dst_row = vis_start + vi;
                 let dst = dst_row * new_cols;
                 for (col, &cell) in cells.iter().enumerate().take(new_cols) {
@@ -773,8 +786,9 @@ impl Screen {
                 new_line_wrapped[dst_row] = *wrapped;
             }
 
-            let approx = vis_start + self.primary.cursor_row.min(reflow_len.saturating_sub(1));
-            new_cursor_row = approx.min(new_rows.saturating_sub(1));
+            new_cursor_row =
+                (vis_start + reflow_cursor_row).min(new_rows.saturating_sub(1));
+            new_cursor_col = reflow_cursor_col;
         }
 
         self.primary.cells = new_cells;
@@ -782,7 +796,7 @@ impl Screen {
         self.primary.cols = new_cols;
         self.primary.line_wrapped = new_line_wrapped;
         self.primary.cursor_row = new_cursor_row;
-        self.primary.cursor_col = self.primary.cursor_col.min(new_cols.saturating_sub(1));
+        self.primary.cursor_col = new_cursor_col.min(new_cols.saturating_sub(1));
         self.primary.pending_wrap = false;
         self.scroll_region = None;
         self.dirty_rows = vec![true; new_rows];
@@ -849,18 +863,25 @@ impl Screen {
         let mut out = String::new();
         let mut cur = CellStyle::default();
 
-        // Scrollback rows (oldest first).
-        for (row_cells, _wrapped) in &self.scrollback {
+        // Scrollback rows (oldest first). Only emit \n at logical-line
+        // boundaries (when the row is NOT a soft-wrap continuation). This
+        // preserves the information that adjacent wrapped rows belong to the
+        // same logical line, so that restore at a different width can re-wrap
+        // them correctly.
+        for (row_cells, wrapped) in &self.scrollback {
             let len = row_cells.len().min(cols);
             encode_ansi_row(&mut out, &mut cur, &row_cells[..len]);
-            out.push('\n');
+            if !wrapped {
+                out.push('\n');
+            }
         }
 
-        // Visible grid rows.
+        // Visible grid rows — same logic.
         for row in 0..grid.rows {
             let start = row * cols;
             encode_ansi_row(&mut out, &mut cur, &grid.cells[start..start + cols]);
-            if row + 1 < grid.rows {
+            let is_wrapped = grid.line_wrapped.get(row).copied().unwrap_or(false);
+            if !is_wrapped && row + 1 < grid.rows {
                 out.push('\n');
             }
         }

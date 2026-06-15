@@ -83,6 +83,10 @@ pub(crate) struct TabState {
     /// Screen version seen at the last accessibility-tree push.
     /// Used to skip `update_accessibility_tree` when nothing changed.
     pub(crate) a11y_screen_version: u64,
+    /// While `Some`, PTY output is drained without being fed to the screen and
+    /// user input is dropped. Set after SIGWINCH so the shell's prompt-redraw
+    /// is invisible. Cleared once the instant elapses.
+    pub(crate) suppress_until: Option<std::time::Instant>,
 }
 
 /// Persistent state for a single tab.

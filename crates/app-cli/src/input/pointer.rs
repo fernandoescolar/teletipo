@@ -38,7 +38,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         state.layout.scale_factor = *scale_factor;
         state.layout.cell_w = *cell_w;
         state.layout.cell_h = *cell_h;
-        state.resize_all_tabs();
+        // Freeze the terminal grid during rapid OS window resize. Both the
+        // visual grid resize and SIGWINCH are deferred; the single
+        // apply_deferred_resize call fires once the gesture has settled.
         let tab_bar_h = state.tab_bar_h();
         let available_h = *height as f32 - tab_bar_h;
         let pad_h = state.user_config.padding.horizontal as f32;
@@ -47,7 +49,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         let active = state.active_tab;
         let term_h = (available_h * state.tabs[active].split_ratio - 2.0 * pad_v).max(*cell_h);
         let rows = (term_h / cell_h).max(1.0) as u16;
-        state.overlays.last_resize = Some((Instant::now(), cols, rows));
+        let now = Instant::now();
+        state.overlays.last_resize = Some((now, cols, rows));
+        state.overlays.pending_pty_resize = Some(now);
         return true;
     }
 
@@ -89,7 +93,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             }
             let available_h = state.layout.window_height as f64 - tab_bar_h;
             let new_ratio = (*y - tab_bar_h) / available_h;
-            state.tab_mut().split_ratio = (new_ratio as f32).clamp(0.2, 0.85);
+            let pad_v_f = state.user_config.padding.vertical as f32;
+            let max_ratio = (1.0
+                - (state.layout.cell_h + 2.0 * pad_v_f) / available_h as f32)
+                .max(0.2);
+            state.tab_mut().split_ratio = (new_ratio as f32).clamp(0.2, max_ratio);
             let active = state.active_tab;
             let sr = state.tabs[active].split_ratio;
             let pad_h = state.user_config.padding.horizontal as f32;
@@ -98,7 +106,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 .max(1.0) as u16;
             let term_h = (available_h as f32 * sr - 2.0 * pad_v).max(state.layout.cell_h);
             let rows = (term_h / state.layout.cell_h).max(1.0) as u16;
-            state.resize_tab(active, rows, cols);
+            // Visual-only resize during drag — defer SIGWINCH until release.
+            state.resize_tab_visual(active, rows, cols);
+            state.overlays.pending_pty_resize = Some(Instant::now());
         } else if state.drag.dragging_terminal_scrollbar {
             let available_h = state.layout.window_height as f64 - tab_bar_h;
             let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
@@ -235,6 +245,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     state.move_tab_to(drag_from, insert_before);
                 }
                 state.drag.tab_drag = None;
+            }
+            if state.drag.dragging_separator && state.overlays.pending_pty_resize.is_some() {
+                state.flush_pty_resize();
             }
             state.drag.dragging_separator = false;
             state.drag.dragging_terminal_scrollbar = false;

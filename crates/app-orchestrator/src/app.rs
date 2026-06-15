@@ -460,6 +460,14 @@ impl App {
         Ok(n)
     }
 
+    /// Read PTY output and discard it without feeding it to the terminal screen.
+    /// Used during the SIGWINCH suppress window to swallow the shell's
+    /// prompt-redraw so it never appears in the terminal view.
+    pub fn drain_pty_output<B: PtyBackend>(&mut self, pty: &mut B) -> io::Result<usize> {
+        let mut out = Vec::new();
+        pty.try_read_output(&mut out)
+    }
+
     pub fn pump_until_quiet<B: PtyBackend>(
         &mut self,
         pty: &mut B,

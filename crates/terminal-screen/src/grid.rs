@@ -149,9 +149,7 @@ impl Grid {
     }
 }
 
-/// Split a single logical line's cells into visual rows of `cols` cells and push
-/// them into `out`. Each row is paired with a `line_wrapped` flag.
-pub(crate) fn emit_logical_line(cells: &[Cell], cols: usize, out: &mut Vec<(Vec<Cell>, bool)>) {
+fn emit_logical_line(cells: &[Cell], cols: usize, out: &mut Vec<(Vec<Cell>, bool)>) {
     if cells.is_empty() {
         out.push((vec![Cell::default(); cols], false));
         return;
@@ -167,27 +165,58 @@ pub(crate) fn emit_logical_line(cells: &[Cell], cols: usize, out: &mut Vec<(Vec<
     }
 }
 
-/// Reflow the visible grid to `new_cols`.
-pub(crate) fn reflow_grid(grid: &Grid, new_cols: usize) -> Vec<(Vec<Cell>, bool)> {
+/// Reflow the visible grid to `new_cols`, also mapping `(cursor_row,
+/// cursor_col)` to the equivalent position in the reflowed output.
+///
+/// Returns `(rows, new_cursor_row, new_cursor_col)`.
+pub(crate) fn reflow_grid(
+    grid: &Grid,
+    new_cols: usize,
+    cursor_row: usize,
+    cursor_col: usize,
+) -> (Vec<(Vec<Cell>, bool)>, usize, usize) {
     let mut result: Vec<(Vec<Cell>, bool)> = Vec::new();
-    let mut current_logical: Vec<Cell> = Vec::new();
+    let mut new_cursor_row = 0usize;
+    let mut new_cursor_col = 0usize;
 
-    for row in 0..grid.rows {
-        let wrapped = grid.line_wrapped.get(row).copied().unwrap_or(false);
-        let row_cells = &grid.cells[row * grid.cols..(row + 1) * grid.cols];
-        let content_end = row_cells
-            .iter()
-            .rposition(|c| c.ch != ' ')
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        current_logical.extend_from_slice(&row_cells[..content_end]);
-        if !wrapped {
-            emit_logical_line(&current_logical, new_cols, &mut result);
-            current_logical.clear();
+    let mut row = 0;
+    while row < grid.rows {
+        let logical_result_start = result.len();
+        let mut logical_cells: Vec<Cell> = Vec::new();
+        let mut cursor_logical_offset: Option<usize> = None;
+
+        // Accumulate wrapped rows into one logical line.
+        loop {
+            let wrapped = grid.line_wrapped.get(row).copied().unwrap_or(false);
+            let row_cells = &grid.cells[row * grid.cols..(row + 1) * grid.cols];
+            let content_end = row_cells
+                .iter()
+                .rposition(|c| c.ch != ' ')
+                .map(|i| i + 1)
+                .unwrap_or(0);
+
+            if row == cursor_row {
+                // Cursor offset within this logical line = cells already
+                // accumulated + the cursor column (clamped to content).
+                cursor_logical_offset =
+                    Some(logical_cells.len() + cursor_col.min(content_end));
+            }
+
+            logical_cells.extend_from_slice(&row_cells[..content_end]);
+            row += 1;
+            if !wrapped || row >= grid.rows {
+                break;
+            }
+        }
+
+        emit_logical_line(&logical_cells, new_cols, &mut result);
+
+        if let Some(off) = cursor_logical_offset {
+            new_cursor_row = logical_result_start + off / new_cols.max(1);
+            new_cursor_col = off % new_cols.max(1);
         }
     }
-    if !current_logical.is_empty() {
-        emit_logical_line(&current_logical, new_cols, &mut result);
-    }
-    result
+
+    (result, new_cursor_row, new_cursor_col)
 }
+

@@ -195,14 +195,11 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
 }
 
 pub(crate) fn build_initial_state(
-    rows: usize,
-    cols: usize,
     exec: Option<&str>,
     shell: &str,
     session: PersistentSession,
     update_rx: std::sync::mpsc::Receiver<Result<Option<String>, String>>,
 ) -> anyhow::Result<GpuRuntimeState> {
-    let (rows, cols) = sanitize_terminal_size(rows, cols);
     let window_width = session.window_width;
     let window_height = session.window_height;
     let window_x = session.window_x.unwrap_or(0);
@@ -232,6 +229,28 @@ pub(crate) fn build_initial_state(
             history_entries: vec![],
         }]
     };
+
+    // Use the default cell metrics (same values used in GpuRuntimeState below)
+    // to compute a terminal size that matches the actual window. This avoids a
+    // SIGWINCH-triggered prompt redraw immediately after startup.
+    const DEFAULT_CELL_W: f32 = 8.4;
+    const DEFAULT_CELL_H: f32 = 16.8;
+    let pad_h = user_config.padding.horizontal as f32;
+    let pad_v = user_config.padding.vertical as f32;
+    let first_split_ratio = saved_tabs.first().map(|t| t.split_ratio).unwrap_or(0.7);
+    let lm = crate::layout::LayoutMetrics::new(
+        window_width,
+        window_height,
+        0.0, // no tab bar yet (single tab at startup)
+        DEFAULT_CELL_W,
+        DEFAULT_CELL_H,
+        pad_h,
+        pad_v,
+    );
+    let (rows, cols) = sanitize_terminal_size(
+        lm.term_rows(first_split_ratio) as usize,
+        lm.cols() as usize,
+    );
 
     let tabs = build_tabs(saved_tabs, rows, cols, &effective_shell, exec)?;
 
@@ -447,6 +466,7 @@ fn build_single_tab(
         unread_output: false,
         bell_pending: false,
         a11y_screen_version: 0,
+        suppress_until: None,
     })
 }
 

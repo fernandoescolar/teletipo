@@ -72,6 +72,10 @@ pub(crate) struct LayoutState {
 pub(crate) struct OverlayState {
     /// Time and dimensions of the last PTY resize, shown as an overlay for 1 s.
     pub(crate) last_resize: Option<(Instant, u16, u16)>,
+    /// Set when a visual-only resize has been applied but the PTY has not yet
+    /// received SIGWINCH. Flushed 100 ms after the last resize event (debounce)
+    /// or immediately on drag-release, so rapid resize doesn't spam the shell.
+    pub(crate) pending_pty_resize: Option<Instant>,
     /// Transient PTY/session status message shown in the resize overlay slot.
     pub(crate) pty_status: Option<(Instant, String)>,
     /// Open generic context menu state.
@@ -233,6 +237,7 @@ impl Default for OverlayState {
     fn default() -> Self {
         Self {
             last_resize: None,
+            pending_pty_resize: None,
             pty_status: None,
             context_menu: None,
             pending_update: None,

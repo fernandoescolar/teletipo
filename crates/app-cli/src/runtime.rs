@@ -1,3 +1,7 @@
+/// How long (ms) to suppress PTY output and user input after sending SIGWINCH.
+/// Covers the shell's prompt-redraw so it never appears in the terminal view.
+const SIGWINCH_SUPPRESS_MS: u64 = 300;
+
 use crate::config::UserConfig;
 use crate::input;
 use crate::launch::{build_app, spawn_pty};
@@ -146,19 +150,41 @@ impl GpuRuntimeState {
         let mut dead_tabs: Vec<usize> = Vec::new();
         let mut exit_codes: Vec<(usize, i32)> = Vec::new();
         let mut resize_tabs: Vec<usize> = Vec::new();
+        let tab_bar_h = self.tab_bar_h();
+        let available_h = self.layout.window_height as f32 - tab_bar_h;
+        let pad_v = self.user_config.padding.vertical as f32;
+        let cell_h = self.layout.cell_h;
+        let max_split_ratio = (1.0 - (cell_h + 2.0 * pad_v) / available_h.max(1.0)).max(0.2);
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             let Some(mut pty) = tab.pty.take() else {
                 continue;
             };
-            let had_data = tab
-                .app
-                .pump_pty_once(&mut pty)
-                .map(|n| n > 0)
-                .unwrap_or(false);
+
+            // Clear the suppress window once it has expired.
+            if tab.suppress_until.is_some_and(|t| Instant::now() >= t) {
+                tab.suppress_until = None;
+            }
+
+            let suppressing = tab.suppress_until.is_some();
+            let had_data = if suppressing {
+                // Drain PTY output without feeding it to the screen so the
+                // shell's SIGWINCH-triggered prompt redraw stays invisible.
+                tab.app
+                    .drain_pty_output(&mut pty)
+                    .map(|n| n > 0)
+                    .unwrap_or(false)
+            } else {
+                tab.app
+                    .pump_pty_once(&mut pty)
+                    .map(|n| n > 0)
+                    .unwrap_or(false)
+            };
             // Send any pending DSR responses (e.g. \x1b[row;colR) back to the PTY.
-            for response in tab.app.drain_pending_responses() {
-                if let Err(err) = tab.app.send_pty_input(&mut pty, response.as_bytes()) {
-                    warn!(error = %err, response = %response, "failed to send pending response to pty");
+            if !suppressing {
+                for response in tab.app.drain_pending_responses() {
+                    if let Err(err) = tab.app.send_pty_input(&mut pty, response.as_bytes()) {
+                        warn!(error = %err, response = %response, "failed to send pending response to pty");
+                    }
                 }
             }
             let is_dead = match pty.try_wait() {
@@ -169,10 +195,10 @@ impl GpuRuntimeState {
                 }
             };
             tab.pty = Some(pty);
-            if i == active && had_data {
+            if i == active && had_data && !suppressing {
                 active_had_data = true;
             }
-            if i != active && had_data {
+            if i != active && had_data && !suppressing {
                 tab.unread_output = true;
             }
             // Refresh the command-running flag via a cheap `tcgetpgrp` on
@@ -200,7 +226,7 @@ impl GpuRuntimeState {
                     tab.is_selecting = false;
                     tab.is_selecting_editor = false;
                 } else {
-                    tab.split_ratio = tab.pre_fullscreen_split_ratio.clamp(0.2, 0.85);
+                    tab.split_ratio = tab.pre_fullscreen_split_ratio.clamp(0.2, max_split_ratio);
                 }
                 resize_tabs.push(i);
             }
@@ -278,6 +304,9 @@ impl GpuRuntimeState {
     pub(crate) fn send_terminal_input(&mut self, bytes: &[u8]) {
         let active = self.active_tab;
         let tab = &mut self.tabs[active];
+        if tab.suppress_until.is_some() {
+            return;
+        }
         let Some(mut pty) = tab.pty.take() else {
             return;
         };
@@ -468,8 +497,20 @@ impl GpuRuntimeState {
         }
     }
 
-    /// Resize every tab after a window resize. Each tab uses its own split_ratio.
-    pub(crate) fn resize_all_tabs(&mut self) {
+    /// Update the terminal grid dimensions without sending SIGWINCH to the PTY.
+    /// Call `flush_pty_resize` when ready to notify the shell.
+    pub(crate) fn resize_tab_visual(&mut self, idx: usize, rows: u16, cols: u16) {
+        let tab = &mut self.tabs[idx];
+        tab.app.resize_terminal(rows as usize, cols as usize);
+        let max_scroll = tab.app.scrollback_len();
+        if tab.scroll_offset > max_scroll {
+            tab.scroll_offset = max_scroll;
+        }
+    }
+
+    /// Send SIGWINCH to every PTY using the current grid dimensions (visual
+    /// resize already applied). Used after separator-drag release.
+    pub(crate) fn flush_pty_resize(&mut self) {
         let lm = LayoutMetrics::new(
             self.layout.window_width,
             self.layout.window_height,
@@ -480,12 +521,44 @@ impl GpuRuntimeState {
             self.user_config.padding.vertical as f32,
         );
         let cols = lm.cols();
+        let suppress_until = std::time::Instant::now()
+            + std::time::Duration::from_millis(SIGWINCH_SUPPRESS_MS);
+        let n = self.tabs.len();
+        for i in 0..n {
+            let rows = lm.term_rows(self.tabs[i].split_ratio);
+            if let Some(pty) = self.tabs[i].pty.as_mut() {
+                pty.resize(rows, cols);
+                self.tabs[i].suppress_until = Some(suppress_until);
+            }
+        }
+        self.overlays.pending_pty_resize = None;
+    }
+
+    /// Apply visual + PTY resize together after a debounced window resize.
+    /// The grid has NOT been touched during the resize gesture, so this is the
+    /// single operation that brings grid, scrollback and PTY in sync.
+    pub(crate) fn apply_deferred_resize(&mut self) {
+        let lm = LayoutMetrics::new(
+            self.layout.window_width,
+            self.layout.window_height,
+            self.tab_bar_h(),
+            self.layout.cell_w,
+            self.layout.cell_h,
+            self.user_config.padding.horizontal as f32,
+            self.user_config.padding.vertical as f32,
+        );
+        let cols = lm.cols();
+        let suppress_until = std::time::Instant::now()
+            + std::time::Duration::from_millis(SIGWINCH_SUPPRESS_MS);
         let n = self.tabs.len();
         for i in 0..n {
             let rows = lm.term_rows(self.tabs[i].split_ratio);
             self.resize_tab(i, rows, cols);
+            self.tabs[i].suppress_until = Some(suppress_until);
         }
+        self.overlays.pending_pty_resize = None;
     }
+
 
     pub(crate) fn add_new_tab(&mut self) {
         self.add_new_tab_with_shell(None);
@@ -556,6 +629,7 @@ impl GpuRuntimeState {
             unread_output: false,
             bell_pending: false,
             a11y_screen_version: 0,
+            suppress_until: None,
         });
         self.active_tab = self.tabs.len() - 1;
     }
