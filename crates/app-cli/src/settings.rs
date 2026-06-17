@@ -463,7 +463,10 @@ pub(crate) fn handle_settings_key(
                 let raw = state.user_config.get_field(field.section, field.key);
                 let current = matches!(raw.to_lowercase().as_str(), "on" | "true" | "1");
                 let new_val = if current { "off" } else { "on" };
-                if state.user_config.set_field(field.section, field.key, new_val) {
+                if state
+                    .user_config
+                    .set_field(field.section, field.key, new_val)
+                {
                     state.settings.dirty = true;
                 }
             } else if let Some(step) = numeric_step(field.section, field.key) {

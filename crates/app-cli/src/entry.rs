@@ -67,14 +67,13 @@ pub fn run(
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
     };
-    let state =
-        match build_initial_state(cli.exec.as_deref(), &shell, session, update_rx) {
-            Ok(state) => Rc::new(RefCell::new(state)),
-            Err(err) => {
-                tracing::error!(error = %err, "failed to initialize runtime state");
-                return std::process::ExitCode::FAILURE;
-            }
-        };
+    let state = match build_initial_state(cli.exec.as_deref(), &shell, session, update_rx) {
+        Ok(state) => Rc::new(RefCell::new(state)),
+        Err(err) => {
+            tracing::error!(error = %err, "failed to initialize runtime state");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     let (initial_font_family, initial_font_size) = {
         let s = state.borrow();
         (s.user_config.font.family.clone(), s.user_config.font.size)

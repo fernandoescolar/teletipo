@@ -659,15 +659,20 @@ mod tests {
         let sent = app.run_editor_command(&mut pty, false).expect("run cmd");
 
         assert!(sent);
-        let expected = [b"echo run-buffer".as_ref(), LINE_ENDING].concat();
+        let expected = [
+            b"\x1b[200~".as_ref(),
+            b"echo run-buffer",
+            b"\x1b[201~",
+            LINE_ENDING,
+        ]
+        .concat();
         assert_eq!(pty.input_log(), expected.as_slice());
     }
 
     #[test]
-    fn wraps_editor_command_in_bracketed_paste_when_enabled() {
+    fn wraps_editor_command_in_bracketed_paste() {
         let mut app = make_app(4, 32);
         let mut pty = MockPty::default();
-        app.feed_terminal(b"\x1b[?2004h");
         app.insert_editor_input("openssl s_client -connect example.com:443 </dev/null");
 
         app.run_editor_command(&mut pty, false).expect("run");
@@ -716,7 +721,13 @@ mod tests {
             .expect("run selection");
 
         assert!(sent);
-        let expected = [b"selected".as_ref(), LINE_ENDING].concat();
+        let expected = [
+            b"\x1b[200~".as_ref(),
+            b"selected",
+            b"\x1b[201~",
+            LINE_ENDING,
+        ]
+        .concat();
         assert_eq!(pty.input_log(), expected.as_slice());
     }
 

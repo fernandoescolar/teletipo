@@ -220,7 +220,8 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     };
     let screen_damage = state.tabs[active].app.terminal_take_damage();
     let editor_disabled = state.tabs[active].command_running && !state.tabs[active].editor_unlocked;
-    damage.full_redraw = screen_damage.full_redraw || (editor_disabled != state.last_editor_disabled);
+    damage.full_redraw =
+        screen_damage.full_redraw || (editor_disabled != state.last_editor_disabled);
     state.last_editor_disabled = editor_disabled;
     damage.dirty_rows = screen_damage.dirty_rows.clone();
     for row in &screen_damage.dirty_rows {

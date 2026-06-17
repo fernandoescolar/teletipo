@@ -742,30 +742,6 @@ impl GlPainter {
         }
     }
 
-    fn draw_editor_watermark(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
-        if snapshot.terminal_fullscreen {
-            return;
-        }
-        let editor_h = (layout.height - layout.editor_top).max(0.0);
-        let half_h = (editor_h * 0.28).clamp(18.0, 72.0);
-        let left_x = layout.padding_h + half_h * 0.15;
-        let center_y = layout.editor_top + editor_h * 0.5;
-        let thickness = (half_h * 0.16).max(3.0);
-        let color = [
-            snapshot.theme.separator_focused[0],
-            snapshot.theme.separator_focused[1],
-            snapshot.theme.separator_focused[2],
-            0.08,
-        ];
-        for step in 0..half_h as usize {
-            let dy = step as f32;
-            let x = left_x + dy * 0.55;
-            for y in [center_y - half_h + dy, center_y + half_h - dy] {
-                self.push_rect(x, y, x + thickness, y + 2.0, color);
-            }
-        }
-    }
-
     fn draw_editor_text(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
         let dim = if snapshot.editor_disabled { 0.35 } else { 1.0 };
         let default_fg = [

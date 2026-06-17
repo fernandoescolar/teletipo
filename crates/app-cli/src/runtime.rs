@@ -146,7 +146,7 @@ impl GpuRuntimeState {
     }
 
     /// Pump PTY output for ALL tabs; returns `true` if the active tab received data.
-    #[allow(clippy::cognitive_complexity)] // sequential housekeeping over every tab
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // sequential housekeeping over every tab
     pub(crate) fn pump_all_ptys(&mut self) -> bool {
         let mut active_had_data = false;
         let active = self.active_tab;
@@ -534,8 +534,8 @@ impl GpuRuntimeState {
             self.user_config.padding.vertical as f32,
         );
         let cols = lm.cols();
-        let suppress_until = std::time::Instant::now()
-            + std::time::Duration::from_millis(SIGWINCH_SUPPRESS_MS);
+        let suppress_until =
+            std::time::Instant::now() + std::time::Duration::from_millis(SIGWINCH_SUPPRESS_MS);
         let n = self.tabs.len();
         for i in 0..n {
             let rows = lm.term_rows(self.tabs[i].split_ratio);
@@ -561,8 +561,8 @@ impl GpuRuntimeState {
             self.user_config.padding.vertical as f32,
         );
         let cols = lm.cols();
-        let suppress_until = std::time::Instant::now()
-            + std::time::Duration::from_millis(SIGWINCH_SUPPRESS_MS);
+        let suppress_until =
+            std::time::Instant::now() + std::time::Duration::from_millis(SIGWINCH_SUPPRESS_MS);
         let n = self.tabs.len();
         for i in 0..n {
             let rows = lm.term_rows(self.tabs[i].split_ratio);
@@ -571,7 +571,6 @@ impl GpuRuntimeState {
         }
         self.overlays.pending_pty_resize = None;
     }
-
 
     pub(crate) fn add_new_tab(&mut self) {
         self.add_new_tab_with_shell(None);

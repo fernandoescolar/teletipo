@@ -224,8 +224,7 @@ fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEv
     }
 
     // When the editor is unlocked, don't intercept input — let it flow to the editor.
-    let route_to_pty =
-        is_alternate || (command_running && !editor_unlocked);
+    let route_to_pty = is_alternate || (command_running && !editor_unlocked);
     if !route_to_pty || state.modifiers.super_down {
         return false;
     }

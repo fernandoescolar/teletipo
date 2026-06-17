@@ -786,8 +786,7 @@ impl Screen {
                 new_line_wrapped[dst_row] = *wrapped;
             }
 
-            new_cursor_row =
-                (vis_start + reflow_cursor_row).min(new_rows.saturating_sub(1));
+            new_cursor_row = (vis_start + reflow_cursor_row).min(new_rows.saturating_sub(1));
             new_cursor_col = reflow_cursor_col;
         }
 

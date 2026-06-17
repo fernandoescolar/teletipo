@@ -194,6 +194,7 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn build_initial_state(
     exec: Option<&str>,
     shell: &str,
@@ -265,10 +266,8 @@ pub(crate) fn build_initial_state(
         pad_h,
         pad_v,
     );
-    let (rows, cols) = sanitize_terminal_size(
-        lm.term_rows(first_split_ratio) as usize,
-        lm.cols() as usize,
-    );
+    let (rows, cols) =
+        sanitize_terminal_size(lm.term_rows(first_split_ratio) as usize, lm.cols() as usize);
 
     let tabs = build_tabs(saved_tabs, rows, cols, &effective_shell, exec)?;
 

@@ -106,9 +106,8 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             let available_h = state.layout.window_height as f64 - tab_bar_h;
             let new_ratio = (*y - tab_bar_h) / available_h;
             let pad_v_f = state.user_config.padding.vertical as f32;
-            let max_ratio = (1.0
-                - (state.layout.cell_h + 2.0 * pad_v_f) / available_h as f32)
-                .max(0.2);
+            let max_ratio =
+                (1.0 - (state.layout.cell_h + 2.0 * pad_v_f) / available_h as f32).max(0.2);
             state.tab_mut().split_ratio = (new_ratio as f32).clamp(0.2, max_ratio);
             let active = state.active_tab;
             let sr = state.tabs[active].split_ratio;

@@ -198,8 +198,7 @@ pub(crate) fn reflow_grid(
             if row == cursor_row {
                 // Cursor offset within this logical line = cells already
                 // accumulated + the cursor column (clamped to content).
-                cursor_logical_offset =
-                    Some(logical_cells.len() + cursor_col.min(content_end));
+                cursor_logical_offset = Some(logical_cells.len() + cursor_col.min(content_end));
             }
 
             logical_cells.extend_from_slice(&row_cells[..content_end]);
@@ -219,4 +218,3 @@ pub(crate) fn reflow_grid(
 
     (result, new_cursor_row, new_cursor_col)
 }
-
