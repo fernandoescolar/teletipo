@@ -262,7 +262,9 @@ impl GpuRuntimeState {
         }
 
         // Push a fresh accessibility tree whenever the active tab's screen
-        // content has changed.
+        // content has changed.  Re-read active_tab: process_dead_tabs may have
+        // closed the previously-active tab and adjusted self.active_tab.
+        let active = self.active_tab;
         if active_had_data {
             let version = self.tabs[active].app.terminal_screen_version();
             if version != self.tabs[active].a11y_screen_version {
