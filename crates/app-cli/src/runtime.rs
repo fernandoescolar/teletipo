@@ -76,6 +76,9 @@ pub(crate) struct GpuRuntimeState {
     pub(crate) command_palette: Option<crate::state::CommandPaletteState>,
     /// Set to `true` when the last shell session ends so the window closes.
     pub(crate) should_exit: bool,
+    /// Tracks the editor_disabled state from the previous frame to detect
+    /// transitions and force a full redraw when it changes.
+    pub(crate) last_editor_disabled: bool,
     /// Abstraction over host-OS capabilities (clipboard today). Boxed so tests
     /// can swap in a [`shell::NullShell`].
     pub(crate) shell_services: Box<dyn shell::AppShell>,
@@ -205,9 +208,17 @@ impl GpuRuntimeState {
             // the PTY master.  True when the shell has spawned a foreground
             // child (vim, sudo, a script, …) and is waiting for it to exit.
             if let Some(ref pty_ref) = tab.pty {
+                let was_running = tab.command_running;
                 tab.command_running = pty_ref.foreground_child_running();
+                if was_running && !tab.command_running {
+                    if tab.editor_unlocked {
+                        tab.app.editor_clear();
+                    }
+                    tab.editor_unlocked = false;
+                }
             } else {
                 tab.command_running = false;
+                tab.editor_unlocked = false;
             }
             if tab.app.take_bell() && self.user_config.terminal.bell {
                 self.overlays.bell_flash_until =
@@ -626,6 +637,7 @@ impl GpuRuntimeState {
             shell_integration: integration,
             search: crate::search::SearchState::default(),
             command_running: false,
+            editor_unlocked: false,
             unread_output: false,
             bell_pending: false,
             a11y_screen_version: 0,

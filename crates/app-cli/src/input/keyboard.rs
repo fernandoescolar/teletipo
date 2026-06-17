@@ -18,7 +18,9 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             && text != "\r"
             && text != "\n"
         {
-            if state.tab().app.is_alternate_screen() || state.tab().command_running {
+            let route_to_pty = state.tab().app.is_alternate_screen()
+                || (state.tab().command_running && !state.tab().editor_unlocked);
+            if route_to_pty {
                 state.send_terminal_input(text.as_bytes());
             } else {
                 state.tab_mut().app.insert_editor_input(text.as_str());
@@ -204,7 +206,26 @@ fn send_ctrl_character_to_terminal(state: &mut GpuRuntimeState, ch: &str) -> boo
 }
 
 fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) -> bool {
-    let route_to_pty = state.tab().app.is_alternate_screen() || state.tab().command_running;
+    let is_alternate = state.tab().app.is_alternate_screen();
+    let command_running = state.tab().command_running;
+    let editor_unlocked = state.tab().editor_unlocked;
+
+    // Ctrl+N while a foreground command is running (but not in alternate screen)
+    // toggles the editor unlocked state so the user can prepare the next command.
+    if command_running
+        && !is_alternate
+        && state.modifiers.ctrl_down
+        && !state.modifiers.super_down
+        && matches!(&key_event.logical_key, Key::Character(ch) if ch.as_str() == "n")
+    {
+        let active = state.active_tab;
+        state.tabs[active].editor_unlocked = !editor_unlocked;
+        return true;
+    }
+
+    // When the editor is unlocked, don't intercept input — let it flow to the editor.
+    let route_to_pty =
+        is_alternate || (command_running && !editor_unlocked);
     if !route_to_pty || state.modifiers.super_down {
         return false;
     }
@@ -432,7 +453,9 @@ fn handle_paste_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
     if let Some(text) = state.shell_services.clipboard_get() {
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
         if !normalized.is_empty() {
-            if state.tab().app.is_alternate_screen() || state.tab().command_running {
+            let route_to_pty = state.tab().app.is_alternate_screen()
+                || (state.tab().command_running && !state.tab().editor_unlocked);
+            if route_to_pty {
                 if state.tab().app.bracketed_paste() {
                     let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
                     state.send_terminal_input(bracketed.as_bytes());
@@ -596,7 +619,9 @@ fn handle_named_key_overlay_and_scroll(
 ) -> bool {
     match named {
         NamedKey::Escape => {
-            if cycling {
+            if state.overlays.pending_update.is_some() {
+                state.overlays.pending_update = None;
+            } else if cycling {
                 state.tabs[state.active_tab].suggestion_prefix = None;
                 state.tabs[state.active_tab].suggestion_index = None;
             } else {

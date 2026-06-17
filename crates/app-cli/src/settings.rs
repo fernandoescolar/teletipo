@@ -32,6 +32,13 @@ fn numeric_step(section: &str, key: &str) -> Option<f32> {
     }
 }
 
+fn is_bool_field(section: &str, key: &str) -> bool {
+    matches!(
+        (section, key),
+        ("terminal", "bell") | ("terminal", "restore_session")
+    )
+}
+
 #[derive(Clone)]
 pub(crate) struct ShellOption {
     pub(crate) label: String,
@@ -194,7 +201,9 @@ fn build_field_items(state: &GpuRuntimeState) -> Vec<SettingsItem> {
         let is_searchable = (field.section == "font" && field.key == "family")
             || field.key == "theme"
             || (field.section == "terminal" && field.key == "shell");
-        let is_selectable = is_searchable || numeric_step(field.section, field.key).is_some();
+        let is_selectable = is_searchable
+            || numeric_step(field.section, field.key).is_some()
+            || is_bool_field(field.section, field.key);
         let value = if field.section == "font" && field.key == "family" {
             state
                 .themes_fonts
@@ -450,6 +459,13 @@ pub(crate) fn handle_settings_key(
                     };
                     apply_shell_choice(state, options[next].command.as_deref());
                 }
+            } else if is_bool_field(field.section, field.key) {
+                let raw = state.user_config.get_field(field.section, field.key);
+                let current = matches!(raw.to_lowercase().as_str(), "on" | "true" | "1");
+                let new_val = if current { "off" } else { "on" };
+                if state.user_config.set_field(field.section, field.key, new_val) {
+                    state.settings.dirty = true;
+                }
             } else if let Some(step) = numeric_step(field.section, field.key) {
                 // Numeric field: increment / decrement by step.
                 let raw = state.user_config.get_field(field.section, field.key);
@@ -528,7 +544,8 @@ pub(crate) fn handle_settings_key(
                 let is_selectable = field.key == "theme"
                     || (field.section == "font" && field.key == "family")
                     || (field.section == "terminal" && field.key == "shell")
-                    || numeric_step(field.section, field.key).is_some();
+                    || numeric_step(field.section, field.key).is_some()
+                    || is_bool_field(field.section, field.key);
                 if !is_selectable && !state.user_config.set_field(field.section, field.key, &buf) {
                     tracing::warn!(
                         section = field.section,

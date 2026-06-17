@@ -51,6 +51,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         shell_integration: false,
         search: search::SearchState::default(),
         command_running: false,
+        editor_unlocked: false,
         unread_output: false,
         bell_pending: false,
         a11y_screen_version: 0,
@@ -81,6 +82,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         settings: SettingsUiState::default(),
         command_palette: None,
         should_exit: false,
+        last_editor_disabled: false,
         shell_services,
     }
 }

@@ -54,6 +54,9 @@ pub struct RenderSnapshot {
     pub scroll_offset: usize,
     pub scrollback_lines: usize,
     pub editor_focused: bool,
+    /// `true` when a command is running and the user has not unlocked the
+    /// editor with Ctrl+N.  The editor is shown dimmed and does not accept input.
+    pub editor_disabled: bool,
     pub split_ratio: f32,
     pub resize_overlay: Option<String>,
     pub editor_line_count: usize,

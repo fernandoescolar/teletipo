@@ -163,6 +163,16 @@ pub(crate) fn build_panel_vertices(
         theme.separator
     };
 
+    // When a command is running and the editor is not unlocked, dim its
+    // background to signal it is inactive.
+    let editor_bg = if snapshot.editor_disabled {
+        let [r, g, b, a] = theme.editor_bg;
+        // Darken the editor background noticeably to signal it is inactive.
+        [r * 0.55, g * 0.55, b * 0.55, a]
+    } else {
+        theme.editor_bg
+    };
+
     let mut verts = Vec::new();
     verts.extend_from_slice(&quad_verts(
         -1.0,
@@ -176,7 +186,7 @@ pub(crate) fn build_panel_vertices(
         edit_bottom,
         1.0,
         split_y - sep_half,
-        theme.editor_bg,
+        editor_bg,
     ));
 
     // A subtle, oversized chevron identifies the command editor without
@@ -834,7 +844,8 @@ pub(crate) fn build_panel_vertices(
 
     // Editor caret — blinks in non-fullscreen mode (same phase as the terminal
     // cursor, so only one cursor is ever visible at a time).
-    if snapshot.cursor_blink_on {
+    // Hidden when the editor is disabled (command running, not unlocked).
+    if snapshot.cursor_blink_on && !snapshot.editor_disabled {
         verts.extend_from_slice(&editor_caret_verts(
             &snapshot.editor_text,
             snapshot.editor_cursor_offset,

@@ -154,6 +154,7 @@ mod tests {
             scroll_offset: 0,
             scrollback_lines: 0,
             editor_focused: false,
+            editor_disabled: false,
             split_ratio: 0.7,
             resize_overlay: None,
             editor_line_count: 1,

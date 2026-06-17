@@ -430,17 +430,14 @@ impl App {
         prefer_selection: bool,
     ) -> io::Result<bool> {
         if let Some(payload) = self.editor.command_payload(prefer_selection) {
-            // Submit through bracketed paste when the shell requests it.  A command
-            // can be hundreds of bytes long; sending it as one burst of ordinary
-            // keypresses makes readline/ZLE repeatedly redraw and reposition the
-            // prompt, which is both wasteful and prone to corrupting long lines.
-            if self.terminal.bracketed_paste() {
-                pty.write_input(b"\x1b[200~")?;
-                pty.write_input(payload.as_bytes())?;
-                pty.write_input(b"\x1b[201~")?;
-            } else {
-                pty.write_input(payload.as_bytes())?;
-            }
+            // Always submit through bracketed paste.  Modern shells (zsh, bash,
+            // fish) all support it.  Sending as raw keypresses makes readline/ZLE
+            // repeatedly redraw and reposition the prompt (wasteful and prone to
+            // corrupting long lines), and causes visual inconsistency on the first
+            // command if the shell hasn't yet emitted \e[?2004h when Enter is pressed.
+            pty.write_input(b"\x1b[200~")?;
+            pty.write_input(payload.as_bytes())?;
+            pty.write_input(b"\x1b[201~")?;
             // PTYs expect Enter as CR; sending CRLF can be interpreted as two
             // submits by some shells (notably WSL/Git Bash via ConPTY).
             pty.write_input(b"\r")?;

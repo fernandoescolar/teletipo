@@ -578,11 +578,26 @@ impl<'a> GpuState<'a> {
             }
             format!("{}{}", snapshot.editor_text, snapshot.editor_suggestion)
         };
+        let editor_text_color = if snapshot.editor_disabled {
+            let [r, g, b, a] = self.theme.text;
+            [r * 0.35, g * 0.35, b * 0.35, a]
+        } else {
+            self.theme.text
+        };
+        // When disabled, dim all per-character highlight colors so syntax
+        // highlighting doesn't override the disabled appearance.
+        if snapshot.editor_disabled {
+            for slot in &mut padded_hl {
+                if let Some([r, g, b]) = slot {
+                    *slot = Some([*r * 0.35, *g * 0.35, *b * 0.35]);
+                }
+            }
+        }
         add_text_verts(
             &padded_editor,
             edit_top_px + pad_v,
             pad_h - snapshot.editor_horizontal_scroll_offset as f32 * self.cell_w_px,
-            self.theme.text,
+            editor_text_color,
             &padded_hl,
             &[],
             &self.glyph_cache,

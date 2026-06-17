@@ -51,7 +51,19 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         let rows = (term_h / cell_h).max(1.0) as u16;
         let now = Instant::now();
         state.overlays.last_resize = Some((now, cols, rows));
-        state.overlays.pending_pty_resize = Some(now);
+        if !state.overlays.initial_resize_done {
+            // First resize corrects the hardcoded startup cell metrics. Apply
+            // immediately so the PTY is sized correctly before the shell draws
+            // its initial prompt. Skip the suppress window: nothing has been
+            // output yet so there is no prompt-redraw noise to hide.
+            state.overlays.initial_resize_done = true;
+            state.apply_deferred_resize();
+            for tab in state.tabs.iter_mut() {
+                tab.suppress_until = None;
+            }
+        } else {
+            state.overlays.pending_pty_resize = Some(now);
+        }
         return true;
     }
 
@@ -545,7 +557,14 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     pad_v,
                 ) {
                     let last_text = state.tab().last_terminal_text.clone();
-                    let links = detect_terminal_links(&last_text);
+                    let term_cols = if state.layout.cell_w > 0.0 {
+                        let pad_h = state.user_config.padding.horizontal as f32;
+                        ((state.layout.window_width as f32 - 2.0 * pad_h) / state.layout.cell_w)
+                            .floor() as usize
+                    } else {
+                        0
+                    };
+                    let links = detect_terminal_links(&last_text, term_cols);
                     if let Some((_, _, _, target)) = links
                         .iter()
                         .find(|(r, cs, ce, _)| *r == row && col >= *cs && col < *ce)
@@ -1002,7 +1021,9 @@ fn execute_terminal_context_menu_item(state: &mut GpuRuntimeState, item: usize) 
             if let Some(text) = state.shell_services.clipboard_get() {
                 let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
                 if !normalized.is_empty() {
-                    if state.tab().app.is_alternate_screen() || state.tab().command_running {
+                    let route_to_pty = state.tab().app.is_alternate_screen()
+                        || (state.tab().command_running && !state.tab().editor_unlocked);
+                    if route_to_pty {
                         if state.tab().app.bracketed_paste() {
                             let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
                             state.send_terminal_input(bracketed.as_bytes());

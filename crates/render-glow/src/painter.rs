@@ -432,14 +432,19 @@ impl GlPainter {
             layout.terminal_h,
             snapshot.theme.terminal_bg,
         );
+        let editor_bg = if snapshot.editor_disabled {
+            let [r, g, b, a] = snapshot.theme.editor_bg;
+            [r * 0.55, g * 0.55, b * 0.55, a]
+        } else {
+            snapshot.theme.editor_bg
+        };
         self.push_rect(
             0.0,
             layout.editor_top,
             layout.width,
             layout.height,
-            snapshot.theme.editor_bg,
+            editor_bg,
         );
-        self.draw_editor_watermark(snapshot, &layout);
         self.push_rect(
             0.0,
             layout.terminal_h,
@@ -762,10 +767,11 @@ impl GlPainter {
     }
 
     fn draw_editor_text(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
+        let dim = if snapshot.editor_disabled { 0.35 } else { 1.0 };
         let default_fg = [
-            snapshot.theme.text[0],
-            snapshot.theme.text[1],
-            snapshot.theme.text[2],
+            snapshot.theme.text[0] * dim,
+            snapshot.theme.text[1] * dim,
+            snapshot.theme.text[2] * dim,
             1.0,
         ];
         let max_x = layout.width - layout.padding_h;
@@ -796,7 +802,7 @@ impl GlPainter {
                 let fg = hl
                     .get(char_idx)
                     .and_then(|c| *c)
-                    .map(|c| [c[0], c[1], c[2], 1.0])
+                    .map(|c| [c[0] * dim, c[1] * dim, c[2] * dim, 1.0])
                     .unwrap_or(default_fg);
                 // Wide chars (emoji, CJK) occupy 2 columns: pass their full
                 // physical width so push_color_emoji centres correctly.
@@ -1862,15 +1868,14 @@ impl GlPainter {
         }
         let color = snapshot.theme.cursor;
 
-        if snapshot.editor_focused && !snapshot.terminal_fullscreen {
+        if snapshot.editor_focused && !snapshot.terminal_fullscreen && !snapshot.editor_disabled {
             let (row, col) =
                 editor_offset_to_row_col(&snapshot.editor_text, snapshot.editor_cursor_offset);
             let visible_row = row.saturating_sub(snapshot.editor_scroll_offset);
             let x = layout.padding_h
                 + (col as f32 - snapshot.editor_horizontal_scroll_offset as f32) * layout.cell_w_px;
             let y = layout.editor_top + layout.padding_v + visible_row as f32 * layout.cell_h_px;
-            let w = (layout.cell_w_px * 0.12).max(2.0);
-            self.push_rect(x, y, x + w, y + layout.cell_h_px, color);
+            self.push_rect(x, y, x + layout.cell_w_px, y + layout.cell_h_px, color);
             return;
         }
 

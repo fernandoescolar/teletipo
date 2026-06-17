@@ -219,7 +219,9 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         dirty_cells: vec![false; term_rows.saturating_mul(term_cols)],
     };
     let screen_damage = state.tabs[active].app.terminal_take_damage();
-    damage.full_redraw = screen_damage.full_redraw;
+    let editor_disabled = state.tabs[active].command_running && !state.tabs[active].editor_unlocked;
+    damage.full_redraw = screen_damage.full_redraw || (editor_disabled != state.last_editor_disabled);
+    state.last_editor_disabled = editor_disabled;
     damage.dirty_rows = screen_damage.dirty_rows.clone();
     for row in &screen_damage.dirty_rows {
         if let Some(render_row) = terminal_rows.get_mut(*row) {
@@ -297,7 +299,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     // Underline only the link the cursor is currently hovering over.
     let terminal_links: Vec<TerminalLink> = {
         // Pattern-detected links (URLs, file paths) from the rendered text.
-        let mut all_links = detect_terminal_links(&terminal_text);
+        let mut all_links = detect_terminal_links(&terminal_text, term_cols);
 
         // OSC 8 explicit hyperlinks from the terminal cell data.  These are
         // authoritative: if a cell range has an OSC 8 link ID we prefer it
@@ -337,16 +339,26 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 pad_h,
                 pad_v,
             ) {
-                all_links
-                    .into_iter()
-                    .filter(|(r, cs, ce, _)| *r == hover_row && hover_col >= *cs && hover_col < *ce)
-                    .map(|(row, col_start, col_end, target)| TerminalLink {
-                        row,
-                        col_start,
-                        col_end,
-                        target,
-                    })
-                    .collect()
+                // Find which URL the cursor is hovering over.
+                let hovered_url = all_links
+                    .iter()
+                    .find(|(r, cs, ce, _)| *r == hover_row && hover_col >= *cs && hover_col < *ce)
+                    .map(|(_, _, _, url)| url.clone());
+                if let Some(url) = hovered_url {
+                    // Return ALL segments that belong to the same URL (multi-line).
+                    all_links
+                        .into_iter()
+                        .filter(|(_, _, _, u)| *u == url)
+                        .map(|(row, col_start, col_end, target)| TerminalLink {
+                            row,
+                            col_start,
+                            col_end,
+                            target,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
             } else {
                 Vec::new()
             }
@@ -555,6 +567,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         scroll_offset,
         scrollback_lines,
         editor_focused: true,
+        editor_disabled,
         split_ratio,
         resize_overlay,
         editor_line_count,

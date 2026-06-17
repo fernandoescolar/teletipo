@@ -51,6 +51,9 @@ pub struct TerminalCfg {
     pub scrollback_lines: u32,
     /// Show a visual bell flash on BEL (0x07).  Default: `true`.
     pub bell: bool,
+    /// Restore tabs and terminal content from the previous session on launch.
+    /// Default: `true`.
+    pub restore_session: bool,
 }
 
 impl Default for TerminalCfg {
@@ -59,6 +62,7 @@ impl Default for TerminalCfg {
             shell: None,
             scrollback_lines: 0,
             bell: true,
+            restore_session: true,
         }
     }
 }
@@ -110,6 +114,10 @@ pub const SETTINGS_FIELDS: &[SettingsDef] = &[
         section: "terminal",
         key: "bell",
     },
+    SettingsDef {
+        section: "terminal",
+        key: "restore_session",
+    },
 ];
 
 pub struct SettingsDef {
@@ -149,6 +157,13 @@ impl UserConfig {
             }
             ("terminal", "bell") => {
                 if self.terminal.bell {
+                    "on".to_owned()
+                } else {
+                    "off".to_owned()
+                }
+            }
+            ("terminal", "restore_session") => {
+                if self.terminal.restore_session {
                     "on".to_owned()
                 } else {
                     "off".to_owned()
@@ -287,6 +302,17 @@ impl UserConfig {
                 }
                 "off" | "false" | "0" => {
                     self.terminal.bell = false;
+                    true
+                }
+                _ => false,
+            },
+            ("terminal", "restore_session") => match value.to_lowercase().as_str() {
+                "on" | "true" | "1" => {
+                    self.terminal.restore_session = true;
+                    true
+                }
+                "off" | "false" | "0" => {
+                    self.terminal.restore_session = false;
                     true
                 }
                 _ => false,

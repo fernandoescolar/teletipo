@@ -76,6 +76,9 @@ pub(crate) struct OverlayState {
     /// received SIGWINCH. Flushed 100 ms after the last resize event (debounce)
     /// or immediately on drag-release, so rapid resize doesn't spam the shell.
     pub(crate) pending_pty_resize: Option<Instant>,
+    /// `false` until the very first Resized event has been applied (startup
+    /// correction of the hardcoded initial cell metrics).
+    pub(crate) initial_resize_done: bool,
     /// Transient PTY/session status message shown in the resize overlay slot.
     pub(crate) pty_status: Option<(Instant, String)>,
     /// Open generic context menu state.
@@ -238,6 +241,7 @@ impl Default for OverlayState {
         Self {
             last_resize: None,
             pending_pty_resize: None,
+            initial_resize_done: false,
             pty_status: None,
             context_menu: None,
             pending_update: None,

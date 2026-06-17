@@ -303,11 +303,61 @@ pub(crate) fn cursor_at_line_end(text: &str, cursor: usize) -> bool {
 ///
 /// Detected patterns: `https://`, `http://`, `ftp://` URLs; `~/…` tilde paths;
 /// `./…` and `../…` relative paths; `/absolute/…` paths at a word boundary.
-pub(crate) fn detect_terminal_links(text: &str) -> Vec<(usize, usize, usize, String)> {
+pub(crate) fn detect_terminal_links(
+    text: &str,
+    term_cols: usize,
+) -> Vec<(usize, usize, usize, String)> {
+    let lines: Vec<&str> = text.split('\n').collect();
     let mut result = Vec::new();
-    for (row, line) in text.split('\n').enumerate() {
+
+    // First pass: detect links within each line independently (original behavior).
+    for (row, line) in lines.iter().enumerate() {
         scan_links_in_line(line, row, &mut result);
     }
+
+    // Second pass: stitch links that were cut at a line boundary due to terminal
+    // wrapping. The terminal grid pads every row to exactly `term_cols` cells with
+    // spaces, so a URL that fills the row to its last non-space character may
+    // continue on the next row starting at column 0. URLs can wrap across more
+    // than two rows, so we follow the chain until the continuation stops.
+    if term_cols == 0 {
+        return result;
+    }
+    let mut extra: Vec<(usize, usize, usize, String)> = Vec::new();
+    for entry in result.iter_mut() {
+        let (row, _start, end, url) = entry;
+        let mut cur_row = *row;
+        let mut cur_end = *end;
+        let mut accumulated = url.clone();
+        // Collect continuation segments before we know the final URL.
+        let mut segments: Vec<(usize, usize, usize)> = Vec::new();
+
+        loop {
+            let trimmed_len = lines[cur_row].trim_end().chars().count();
+            if cur_end < trimmed_len || cur_row + 1 >= lines.len() {
+                break;
+            }
+            let next_chars: Vec<char> = lines[cur_row + 1].chars().collect();
+            let cont_end = scan_url_end(&next_chars, 0);
+            if cont_end == 0 {
+                break;
+            }
+            let suffix: String = next_chars[..cont_end].iter().collect();
+            accumulated.push_str(&suffix);
+            segments.push((cur_row + 1, 0, cont_end));
+            cur_row += 1;
+            cur_end = cont_end;
+        }
+
+        if !segments.is_empty() {
+            // Now that we know the full URL, stamp it on all segments uniformly.
+            *url = accumulated.clone();
+            for (r, cs, ce) in segments {
+                extra.push((r, cs, ce, accumulated.clone()));
+            }
+        }
+    }
+    result.extend(extra);
     result
 }
 
@@ -761,7 +811,7 @@ mod tests {
 
     #[test]
     fn detects_https_link() {
-        let links = detect_terminal_links("visit https://example.com today");
+        let links = detect_terminal_links("visit https://example.com today", 0);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].3, "https://example.com");
     }
@@ -769,7 +819,7 @@ mod tests {
     #[test]
     fn detects_multiple_link_schemes() {
         let text = "http://a.org\nftp://b.org";
-        let links = detect_terminal_links(text);
+        let links = detect_terminal_links(text, 0);
         assert_eq!(links.len(), 2);
         assert_eq!(links[0].0, 0); // row 0
         assert_eq!(links[1].0, 1); // row 1
@@ -777,7 +827,7 @@ mod tests {
 
     #[test]
     fn ignores_non_url_tokens() {
-        let links = detect_terminal_links("plain text here");
+        let links = detect_terminal_links("plain text here", 0);
         assert!(links.is_empty());
     }
 }

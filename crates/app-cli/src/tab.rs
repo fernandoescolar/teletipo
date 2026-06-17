@@ -74,6 +74,10 @@ pub(crate) struct TabState {
     /// the UI bypasses the command editor and routes keystrokes directly to
     /// the PTY, so the running program sees them verbatim.
     pub(crate) command_running: bool,
+    /// `true` when the user has pressed Ctrl+N while a command is running,
+    /// unlocking the editor to prepare the next command.  Automatically
+    /// reset to `false` when `command_running` transitions to `false`.
+    pub(crate) editor_unlocked: bool,
     /// `true` while the tab is in the background and has received new PTY
     /// output that the user has not yet seen.  Cleared when the tab becomes active.
     pub(crate) unread_output: bool,
