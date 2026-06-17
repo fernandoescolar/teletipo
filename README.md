@@ -15,17 +15,18 @@ A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with 
 - Primary and alternate screen buffers
 - Inline terminal search panel (`Cmd+F` / `Ctrl+F`) with match highlights and next/previous navigation
 - Search scope includes both visible terminal rows and scrollback history
-- Code-editor-style command input
+- Code-editor-style command input with block cursor, syntax highlighting, undo/redo, and multi-line support
+- **Editor disabled state** — while a command is running the editor dims and hides the cursor; press `Ctrl+N` to unlock it early and prepare the next command while the current one finishes
 - Command palette (`Cmd+Shift+P`) for common actions such as tab management, settings, config actions, and prompt navigation
 - Prompt-aware navigation using OSC 133 shell markers (`Jump to Previous Prompt` / `Jump to Next Prompt`)
 - **Shell integration** — automatic OSC 133 A/B/C/D and OSC 7 hooks injected into zsh and bash at startup; tracks prompt boundaries, command start/output start, exit codes, and current working directory without any manual shell config
-- **OSC 8 hyperlinks** — clickable links emitted by tools like `ls --hyperlink`, `bat`, `delta`, and others are rendered with an underline and opened with your OS default handler on click; `file://` URIs are resolved locally
+- **OSC 8 hyperlinks** — clickable links emitted by tools like `ls --hyperlink`, `bat`, `delta`, and others are rendered with an underline and opened with your OS default handler on click; `file://` URIs are resolved locally; multi-line URLs that wrap across terminal rows are detected and highlighted as a single link
 - **Screen reader support** — new command completions and their exit status are announced automatically; VoiceOver on macOS and Orca on Linux (via speech-dispatcher / espeak) are supported; announcements are suppressed when no screen reader is active
 - Right-click context menus for tabs, the terminal pane, and editor undo/redo
 - Drag-and-drop support for applying YAML themes or pasting file paths into the command editor
 - Scrollback activity indicator with quick jump back to bottom
 - Themeable (YAML theme files, ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night)
-- Automatic silent self-update from GitHub Releases
+- Automatic silent self-update from GitHub Releases; update and error notifications can be dismissed with `Escape`
 
 ## Shell Integration
 
@@ -217,6 +218,7 @@ On Windows, the palette also includes shell-specific tab entries: `New Tab (Powe
 |---|---|
 | `Enter` | Submit command |
 | `Shift + Enter` | Insert newline (multi-line input) |
+| `Ctrl + N` | Unlock the editor while a command is running (to prepare the next command) |
 | `Cmd + Z` / `Ctrl + Z` | Undo the last editor change |
 | `Cmd + Shift + Z` / `Ctrl + Shift + Z` / `Ctrl + Y` | Redo the last undone editor change |
 | `↑` / `↓` | Navigate command history (when cursor is on first/last line) |
@@ -310,7 +312,7 @@ The settings panel also includes quick actions to open the active `config.toml` 
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move focus between settings fields |
-| `←` / `→` | Cycle through selectable values (theme, font family) or increment/decrement numeric fields |
+| `←` / `→` | Cycle through selectable values (theme, font family, on/off toggles) or increment/decrement numeric fields |
 | `Enter` | Open search mode for searchable fields (theme, font family); open direct-edit mode for all other fields |
 | `Escape` | Close panel and save; or cancel the current edit / search without saving |
 | `Cmd + S` | Save the current field edit immediately |
@@ -326,6 +328,8 @@ The settings panel also includes quick actions to open the active `config.toml` 
 | `padding › vertical` | Numeric (±1 px) | `8` | Vertical padding in pixels. Use `←`/`→` or press `Enter` to type directly. |
 | `terminal › shell` | Text | *(auto)* | Path to the shell executable (e.g. `/bin/zsh`). Leave empty to use the system default (`$SHELL`). Press `Enter` to edit, `Enter` again to confirm, `Escape` to cancel. |
 | `terminal › scrollback_lines` | Numeric (±500 lines) | `10000` | Number of lines to keep in the scrollback buffer. Use `←`/`→` to adjust in steps of 500, or press `Enter` to type a value directly. Set to `0` for the compiled-in default. |
+| `terminal › bell` | Toggle | `on` | Enable or disable the visual bell flash. Use `←`/`→` to toggle. |
+| `terminal › restore_session` | Toggle | `on` | When `on`, Teletipo restores all tabs and their terminal output from the previous session on launch. When `off`, only command history is restored — the terminal starts fresh each time. Use `←`/`→` to toggle. |
 
 ### Config file
 
@@ -341,8 +345,10 @@ horizontal = 8
 vertical   = 8
 
 [terminal]
-shell           = ""          # empty = $SHELL default
+shell            = ""         # empty = $SHELL default
 scrollback_lines = 10000
+bell             = true
+restore_session  = true       # false = start fresh each launch (history still restored)
 
 active_theme = "tokyo-night"
 ```
