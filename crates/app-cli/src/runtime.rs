@@ -2,6 +2,19 @@
 /// Covers the shell's prompt-redraw so it never appears in the terminal view.
 const SIGWINCH_SUPPRESS_MS: u64 = 300;
 
+fn format_cmd_duration(ms: u64, success: bool) -> String {
+    let dur = if ms < 60_000 {
+        format!("{:.1}s", ms as f32 / 1000.0)
+    } else {
+        format!("{}m {}s", ms / 60_000, (ms % 60_000) / 1000)
+    };
+    if success {
+        format!("{dur} [ok]")
+    } else {
+        format!("{dur} [!!]")
+    }
+}
+
 use crate::config::UserConfig;
 use crate::input;
 use crate::launch::{build_app, spawn_pty};
@@ -74,6 +87,8 @@ pub(crate) struct GpuRuntimeState {
     pub(crate) settings: SettingsUiState,
     /// Command palette overlay (Cmd+Shift+P). `None` when the palette is closed.
     pub(crate) command_palette: Option<crate::state::CommandPaletteState>,
+    /// SSH hosts loaded from `~/.ssh/config` at startup.
+    pub(crate) ssh_hosts: Vec<crate::ssh::SshHost>,
     /// Set to `true` when the last shell session ends so the window closes.
     pub(crate) should_exit: bool,
     /// Tracks the editor_disabled state from the previous frame to detect
@@ -357,12 +372,20 @@ impl GpuRuntimeState {
 
     /// Commit `pending_cmd` (if any) for `tab_idx` to shared history.
     /// Called when the shell reports an exit code via OSC 133.
-    pub(crate) fn finalize_pending_cmd(&mut self, tab_idx: usize, _exit_code: i32) {
+    pub(crate) fn finalize_pending_cmd(&mut self, tab_idx: usize, exit_code: i32) {
         let Some(text) = self.tabs[tab_idx].pending_cmd.take() else {
             return;
         };
         if !text.is_empty() {
             self.record_history_command(text);
+        }
+        // Show execution duration overlay for commands that took ≥ 1 second.
+        if let Some(start) = self.tabs[tab_idx].command_start_time.take() {
+            let ms = start.elapsed().as_millis() as u64;
+            if ms >= 1_000 {
+                let label = format_cmd_duration(ms, exit_code == 0);
+                self.overlays.last_cmd_duration = Some((Instant::now(), label));
+            }
         }
     }
 
@@ -382,6 +405,7 @@ impl GpuRuntimeState {
         tab.saved_input = String::new();
         tab.suggestion_prefix = None;
         tab.suggestion_index = None;
+        tab.command_start_time = Some(Instant::now());
         let Some(mut pty) = tab.pty.take() else {
             return;
         };
@@ -639,6 +663,71 @@ impl GpuRuntimeState {
             search: crate::search::SearchState::default(),
             command_running: false,
             editor_unlocked: false,
+            command_start_time: None,
+            unread_output: false,
+            bell_pending: false,
+            a11y_screen_version: 0,
+            suppress_until: None,
+        });
+        self.active_tab = self.tabs.len() - 1;
+    }
+
+    /// Open a new tab that runs `command` via `sh -c` instead of an interactive shell.
+    pub(crate) fn add_new_tab_with_exec(&mut self, command: &str) {
+        let split_ratio = self.tab().split_ratio;
+        let lm = LayoutMetrics::new(
+            self.layout.window_width,
+            self.layout.window_height,
+            self.layout.cell_h,
+            self.layout.cell_w,
+            self.layout.cell_h,
+            self.user_config.padding.horizontal as f32,
+            self.user_config.padding.vertical as f32,
+        );
+        let cols = lm.cols();
+        let rows = lm.term_rows(split_ratio);
+        let app = match build_app(rows as usize, cols as usize) {
+            Ok(app) => app,
+            Err(err) => {
+                tracing::error!(error = %err, rows, cols, "failed to add exec tab");
+                return;
+            }
+        };
+        let active_cwd = self.tab().cwd.clone();
+        let (pty, integration) =
+            spawn_pty(&self.shell, rows, cols, Some(command), Some(&active_cwd))
+                .map(|(p, i)| (Some(p), i))
+                .unwrap_or((None, false));
+        self.tabs.push(TabState {
+            app,
+            pty,
+            scroll_offset: 0,
+            editor_scroll_offset: 0,
+            editor_horizontal_scroll_offset: 0,
+            history: self.tab().history.clone(),
+            history_index: None,
+            saved_input: String::new(),
+            split_ratio,
+            was_terminal_fullscreen: false,
+            pre_fullscreen_split_ratio: split_ratio,
+            selection_anchor: None,
+            selection_anchor_scroll: 0,
+            selection_end: None,
+            selection_end_scroll: 0,
+            is_selecting: false,
+            is_selecting_editor: false,
+            last_terminal_text: String::new(),
+            term_row_count: rows as usize,
+            cwd: active_cwd,
+            suggestion_prefix: None,
+            suggestion_index: None,
+            history_entries: self.tab().history_entries.clone(),
+            pending_cmd: None,
+            shell_integration: integration,
+            search: crate::search::SearchState::default(),
+            command_running: false,
+            editor_unlocked: false,
+            command_start_time: None,
             unread_output: false,
             bell_pending: false,
             a11y_screen_version: 0,

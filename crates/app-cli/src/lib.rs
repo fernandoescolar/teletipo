@@ -18,6 +18,7 @@ mod search;
 mod settings;
 mod shell;
 mod snapshot;
+mod ssh;
 mod state;
 mod tab;
 mod theme;

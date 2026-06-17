@@ -1601,11 +1601,60 @@ impl GlPainter {
         let palette_w = layout.cell_w_px * 50.0;
         let header_h = layout.cell_h_px * 2.2;
         let item_h = layout.cell_h_px * 1.4;
-        let palette_h = header_h + item_h * visible as f32;
         let cx = layout.width * 0.5;
         let x0 = (cx - palette_w * 0.5).max(0.0);
         let x1 = (cx + palette_w * 0.5).min(layout.width);
         let y0 = layout.tab_bar_h + layout.height * 0.08;
+
+        if let Some(ref label) = cp.sub_prompt_label {
+            // Sub-prompt mode: show a two-row box (label + input), no item list.
+            let label_h = layout.cell_h_px * 1.4;
+            let input_h = layout.cell_h_px * 1.8;
+            let total_h = label_h + input_h;
+            let y1 = (y0 + total_h).min(layout.height);
+            self.push_rect(
+                x0 - 2.0,
+                y0 - 2.0,
+                x1 + 2.0,
+                y1 + 2.0,
+                [0.35, 0.55, 0.90, 1.0],
+            );
+            self.push_rect(x0, y0, x1, y1, [0.09, 0.11, 0.18, 0.97]);
+            // Label row
+            for (ci, ch) in label.chars().take(48).enumerate() {
+                self.push_glyph(
+                    ch,
+                    x0 + layout.cell_w_px * 0.8 + ci as f32 * layout.cell_w_px,
+                    y0 + (label_h - layout.cell_h_px) * 0.5,
+                    layout.cell_w_px,
+                    layout.cell_h_px,
+                    [0.65, 0.75, 0.95, 1.0],
+                );
+            }
+            // Divider
+            self.push_rect(
+                x0,
+                y0 + label_h - 1.0,
+                x1,
+                y0 + label_h,
+                [0.30, 0.45, 0.70, 0.80],
+            );
+            // Input row
+            let input_text = format!("> {}", cp.query);
+            for (ci, ch) in input_text.chars().take(48).enumerate() {
+                self.push_glyph(
+                    ch,
+                    x0 + layout.cell_w_px * 0.8 + ci as f32 * layout.cell_w_px,
+                    y0 + label_h + (input_h - layout.cell_h_px) * 0.5,
+                    layout.cell_w_px,
+                    layout.cell_h_px,
+                    [0.92, 0.94, 0.98, 1.0],
+                );
+            }
+            return;
+        }
+
+        let palette_h = header_h + item_h * visible as f32;
         let y1 = (y0 + palette_h).min(layout.height);
         self.push_rect(
             x0 - 2.0,

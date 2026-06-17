@@ -189,6 +189,7 @@ mod tests {
             cursor_blink_on: true,
             toast_stack: vec![],
             command_palette: None,
+            font_size: 14.0,
         }
     }
 

@@ -127,6 +127,9 @@ pub struct RenderSnapshot {
     pub toast_stack: Vec<Toast>,
     /// When `Some`, the command palette (Cmd+Shift+P) overlay is open.
     pub command_palette: Option<CommandPalette>,
+    /// Current logical font size in points (unscaled). When this changes the
+    /// renderer should rebuild font metrics and reflow the terminal.
+    pub font_size: f32,
 }
 
 /// Visual state for the inline terminal search panel.
@@ -219,6 +222,9 @@ pub struct CommandPalette {
     pub selected: usize,
     /// Index of the first visible item.
     pub scroll_offset: usize,
+    /// When `Some`, the palette is in sub-prompt mode: no item list is shown and
+    /// this string is the label displayed above the text input.
+    pub sub_prompt_label: Option<String>,
 }
 
 /// State passed to the renderer to draw a floating context menu.

@@ -78,6 +78,9 @@ pub(crate) struct TabState {
     /// unlocking the editor to prepare the next command.  Automatically
     /// reset to `false` when `command_running` transitions to `false`.
     pub(crate) editor_unlocked: bool,
+    /// Wall-clock time when the current (or last) command was submitted.
+    /// Used to compute execution duration shown in the status overlay.
+    pub(crate) command_start_time: Option<std::time::Instant>,
     /// `true` while the tab is in the background and has received new PTY
     /// output that the user has not yet seen.  Cleared when the tab becomes active.
     pub(crate) unread_output: bool,

@@ -27,6 +27,10 @@ A modern terminal emulator written in Rust — GPU-accelerated, multi-tab, with 
 - Scrollback activity indicator with quick jump back to bottom
 - Themeable (YAML theme files, ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night)
 - Automatic silent self-update from GitHub Releases; update and error notifications can be dismissed with `Escape`
+- **Execution time indicator** — after any command that takes ≥ 1 second, a brief overlay shows the elapsed time and exit status (e.g. `3.0s [ok]` / `12s [!!]`) for 4 seconds
+- **Font zoom** — `Cmd++` / `Cmd+-` resize the terminal font on the fly; `Cmd+0` resets to the default size; the terminal reflows immediately
+- **File path click-to-open** — `Cmd+click` on any path detected in the terminal output (including `:line` and `:line:col` suffixes) opens the file in `$EDITOR` at the correct line, or falls back to the OS default handler
+- **SSH quick-connect** — SSH hosts from `~/.ssh/config` appear automatically in the command palette (`Cmd+Shift+P`) as `SSH → hostname` entries; selecting one opens a new tab running `ssh hostname`
 
 ## Shell Integration
 
@@ -199,6 +203,14 @@ Runtime logs are written automatically to daily-rotated files under the platform
 | `Cmd + [` / `Ctrl + PageUp` | Previous tab (`Cmd` on macOS, `Ctrl` on Windows) |
 | `Cmd + ]` / `Ctrl + PageDown` | Next tab (`Cmd` on macOS, `Ctrl` on Windows) |
 | `Cmd + 1 – 9` / `Ctrl + 1 – 9` | Jump to tab N (`Cmd` on macOS, `Ctrl` on Windows) |
+
+### Font zoom
+
+| Shortcut | Action |
+|---|---|
+| `Cmd + +` / `Cmd + =` | Increase font size by 1 pt |
+| `Cmd + -` | Decrease font size by 1 pt |
+| `Cmd + 0` | Reset font size to default (14 pt) |
 
 ### Command palette
 

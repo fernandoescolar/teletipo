@@ -441,6 +441,13 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             state.overlays.last_resize = None;
             None
         }
+    } else if let Some((ref t, ref label)) = state.overlays.last_cmd_duration {
+        if t.elapsed().as_secs_f32() < 4.0 {
+            Some(label.clone())
+        } else {
+            state.overlays.last_cmd_duration = None;
+            None
+        }
     } else {
         None
     };
@@ -658,12 +665,19 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 None
             }
         },
+        font_size: state.user_config.font.size,
         command_palette: state.command_palette.as_ref().map(|cp| {
-            let items: Vec<String> = cp
-                .filtered
-                .iter()
-                .map(|&i| cp.all_items[i].label.clone())
-                .collect();
+            let sub_prompt_label = cp.sub_prompt.as_ref().map(|sp| match sp {
+                crate::state::SubPrompt::Ssh => "SSH → New connection (user@host):".to_owned(),
+            });
+            let items: Vec<String> = if sub_prompt_label.is_some() {
+                vec![]
+            } else {
+                cp.filtered
+                    .iter()
+                    .map(|&i| cp.all_items[i].label.clone())
+                    .collect()
+            };
             let cursor_char = cp.query[..cp.cursor_byte.min(cp.query.len())]
                 .chars()
                 .count();
@@ -673,6 +687,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 items,
                 selected: cp.selected,
                 scroll_offset: cp.scroll_offset,
+                sub_prompt_label,
             }
         }),
     }

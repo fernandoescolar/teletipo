@@ -536,6 +536,21 @@ fn handle_super_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
                 state.push_accessibility_tree();
             }
         }
+        "=" | "+" => {
+            let new_size = (state.user_config.font.size + 1.0).min(crate::config::FONT_SIZE_MAX);
+            state
+                .user_config
+                .set_field("font", "size", &format!("{new_size:.1}"));
+        }
+        "-" => {
+            let new_size = (state.user_config.font.size - 1.0).max(crate::config::FONT_SIZE_MIN);
+            state
+                .user_config
+                .set_field("font", "size", &format!("{new_size:.1}"));
+        }
+        "0" => {
+            state.user_config.set_field("font", "size", "14.0");
+        }
         _ => {}
     }
     true
@@ -1008,6 +1023,18 @@ fn open_command_palette(state: &mut GpuRuntimeState) {
         }
     }
 
+    for host in &state.ssh_hosts {
+        items.push(PaletteItem {
+            label: format!("SSH → {}", host.name),
+            action: PaletteAction::NewSshTab(host.ssh_command()),
+        });
+    }
+
+    items.push(PaletteItem {
+        label: "SSH → New connection…".to_owned(),
+        action: PaletteAction::OpenSshPrompt,
+    });
+
     items.sort_by_key(|item| item.label.to_lowercase());
 
     let n = items.len();
@@ -1019,11 +1046,51 @@ fn open_command_palette(state: &mut GpuRuntimeState) {
         filtered,
         selected: 0,
         scroll_offset: 0,
+        sub_prompt: None,
     });
 }
 
 /// Handle keyboard input while the command palette is open.
 fn handle_palette_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+    // Sub-prompt mode: all navigation is disabled; only text input, Enter, and Escape work.
+    if state
+        .command_palette
+        .as_ref()
+        .is_some_and(|cp| cp.sub_prompt.is_some())
+    {
+        match &key_event.logical_key {
+            Key::Named(NamedKey::Escape) => {
+                // Go back to the normal palette instead of closing entirely.
+                open_command_palette(state);
+            }
+            Key::Named(NamedKey::Enter) => {
+                execute_palette_action(state);
+            }
+            Key::Named(NamedKey::Backspace) => {
+                if let Some(cp) = state.command_palette.as_mut()
+                    && let Some((byte_start, _)) =
+                        cp.query[..cp.cursor_byte].char_indices().next_back()
+                {
+                    cp.query.remove(byte_start);
+                    cp.cursor_byte = byte_start;
+                }
+            }
+            Key::Character(ch) if !state.modifiers.super_down && !state.modifiers.ctrl_down => {
+                let text = ch.as_str();
+                if !text.is_empty()
+                    && !text.contains('\r')
+                    && !text.contains('\n')
+                    && let Some(cp) = state.command_palette.as_mut()
+                {
+                    cp.query.insert_str(cp.cursor_byte, text);
+                    cp.cursor_byte += text.len();
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match &key_event.logical_key {
         Key::Named(NamedKey::Escape) => {
             state.close_active_modal();
@@ -1077,6 +1144,26 @@ fn execute_palette_action(state: &mut GpuRuntimeState) {
     let Some(cp) = state.command_palette.take() else {
         return;
     };
+
+    // Sub-prompt mode: Enter confirms the typed destination and opens a new SSH tab.
+    if let Some(ref kind) = cp.sub_prompt {
+        use crate::state::SubPrompt;
+        match kind {
+            SubPrompt::Ssh => {
+                let dest = cp.query.trim().to_owned();
+                if !dest.is_empty() {
+                    let cmd = format!("ssh {dest}");
+                    state.add_new_tab_with_exec(&cmd);
+                }
+            }
+        }
+        // Always close the palette after confirming (modal was already taken).
+        if state.overlays.active_modal == Some(crate::state::ModalOverlay::CommandPalette) {
+            state.overlays.active_modal = None;
+        }
+        return;
+    }
+
     let Some(&item_idx) = cp.filtered.get(cp.selected) else {
         return;
     };
@@ -1113,6 +1200,21 @@ fn execute_palette_action(state: &mut GpuRuntimeState) {
         }
         PaletteAction::NewTabWithShell(shell) => {
             state.add_new_tab_with_shell(Some(shell.as_str()));
+        }
+        PaletteAction::NewSshTab(cmd) => {
+            state.add_new_tab_with_exec(&cmd);
+        }
+        PaletteAction::OpenSshPrompt => {
+            state.open_command_palette_modal(crate::state::CommandPaletteState {
+                query: String::new(),
+                cursor_byte: 0,
+                all_items: cp.all_items,
+                filtered: cp.filtered,
+                selected: cp.selected,
+                scroll_offset: cp.scroll_offset,
+                sub_prompt: Some(crate::state::SubPrompt::Ssh),
+            });
+            // Palette is now open in sub-prompt mode — do not close.
         }
     }
 }

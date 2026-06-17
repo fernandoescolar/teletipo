@@ -1131,6 +1131,24 @@ fn open_link(shell: &mut dyn crate::shell::AppShell, raw_target: &str, cwd: &str
         return;
     }
 
+    // Extract line number suffix from the original target (e.g. "foo.rs:42" → 42).
+    let line_number = extract_line_number(effective_target);
+
+    // Prefer $EDITOR / $VISUAL when set and the target is a file (not a dir).
+    if !path.is_dir() {
+        let editor = std::env::var("EDITOR")
+            .or_else(|_| std::env::var("VISUAL"))
+            .unwrap_or_default();
+        if !editor.is_empty()
+            && let Some(cmd) = build_editor_command(&editor, &path, line_number)
+        {
+            if let Err(err) = std::process::Command::new("sh").arg("-c").arg(&cmd).spawn() {
+                tracing::warn!(cmd = %cmd, error = %err, "failed to open file with $EDITOR");
+            }
+            return;
+        }
+    }
+
     #[cfg(target_os = "macos")]
     if let Err(err) = std::process::Command::new("open").arg(&path).spawn() {
         tracing::warn!(path = %path.display(), error = %err, "failed to open link target");
@@ -1139,6 +1157,91 @@ fn open_link(shell: &mut dyn crate::shell::AppShell, raw_target: &str, cwd: &str
     if let Err(err) = std::process::Command::new("xdg-open").arg(&path).spawn() {
         tracing::warn!(path = %path.display(), error = %err, "failed to open link target");
     }
+}
+
+/// Extract the first `:N` line number from a path like `src/main.rs:42` or `src/main.rs:42:5`.
+fn extract_line_number(path: &str) -> Option<u32> {
+    // Walk backwards from the end, skip optional `:col`, then read `:line`.
+    let bytes = path.as_bytes();
+    let mut end = bytes.len();
+    for _ in 0..2 {
+        let mut i = end;
+        while i > 0 && bytes[i - 1].is_ascii_digit() {
+            i -= 1;
+        }
+        if i < end && i > 0 && bytes[i - 1] == b':' {
+            let num_str = &path[i..end];
+            if let Ok(n) = num_str.parse::<u32>()
+                && n > 0
+            {
+                return Some(n);
+            }
+            end = i - 1;
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+/// Build a shell command that opens `path` at `line` using the given editor binary.
+/// Returns `None` when the editor name is not recognised (caller falls back to OS default).
+fn build_editor_command(editor: &str, path: &std::path::Path, line: Option<u32>) -> Option<String> {
+    let path_s = path.to_string_lossy();
+    // Extract just the binary name for matching (editor may be a full path).
+    let bin = std::path::Path::new(editor)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| editor.to_owned());
+    let bin_lc = bin.to_lowercase();
+
+    let line_arg = line.map(|n| n.to_string());
+
+    let cmd = match bin_lc.as_str() {
+        // vim / neovim: `vim +42 /path`
+        "vim" | "nvim" | "vi" | "gvim" | "mvim" => {
+            if let Some(ref l) = line_arg {
+                format!("{editor} +{l} {path_s:?}")
+            } else {
+                format!("{editor} {path_s:?}")
+            }
+        }
+        // emacs: `emacs +42 /path`
+        "emacs" | "emacsclient" => {
+            if let Some(ref l) = line_arg {
+                format!("{editor} +{l} {path_s:?}")
+            } else {
+                format!("{editor} {path_s:?}")
+            }
+        }
+        // helix: `hx /path:42`
+        "hx" | "helix" => {
+            if let Some(ref l) = line_arg {
+                format!("{editor} {path_s:?}:{l}")
+            } else {
+                format!("{editor} {path_s:?}")
+            }
+        }
+        // nano / micro: `nano +42 /path`
+        "nano" | "micro" => {
+            if let Some(ref l) = line_arg {
+                format!("{editor} +{l} {path_s:?}")
+            } else {
+                format!("{editor} {path_s:?}")
+            }
+        }
+        // kate / kwrite: `kate -l 42 /path`
+        "kate" | "kwrite" => {
+            if let Some(ref l) = line_arg {
+                format!("{editor} -l {l} {path_s:?}")
+            } else {
+                format!("{editor} {path_s:?}")
+            }
+        }
+        // Unknown terminal editor: open the file without line number.
+        _ => format!("{editor} {path_s:?}"),
+    };
+    Some(cmd)
 }
 
 /// Show a modal alert dialog (macOS) or print to stderr (other platforms).

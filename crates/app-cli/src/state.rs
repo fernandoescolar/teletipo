@@ -81,6 +81,9 @@ pub(crate) struct OverlayState {
     pub(crate) initial_resize_done: bool,
     /// Transient PTY/session status message shown in the resize overlay slot.
     pub(crate) pty_status: Option<(Instant, String)>,
+    /// Duration of the last completed command, shown as overlay for 4 s.
+    /// Only set when the command took ≥ 1 s.  Format: "3.0s ✓" / "12s ✗".
+    pub(crate) last_cmd_duration: Option<(Instant, String)>,
     /// Open generic context menu state.
     pub(crate) context_menu: Option<ContextMenuState>,
     /// Status banner for the last background update check.
@@ -166,6 +169,10 @@ pub(crate) enum PaletteAction {
     SetTheme(usize),
     SetFont(usize),
     NewTabWithShell(String),
+    /// Open a new tab running the given SSH command (e.g. `ssh user@host`).
+    NewSshTab(String),
+    /// Switch the palette to SSH sub-prompt mode so the user can type a destination.
+    OpenSshPrompt,
 }
 
 /// A single item in the command palette list.
@@ -189,6 +196,16 @@ pub(crate) struct CommandPaletteState {
     pub(crate) selected: usize,
     /// Index of the first visible item in the scroll window.
     pub(crate) scroll_offset: usize,
+    /// When `Some`, the palette is in sub-prompt mode: the items list is hidden
+    /// and this string is used as a label above the text input. Enter executes
+    /// the action associated with the prompt (e.g. opening an SSH connection).
+    pub(crate) sub_prompt: Option<SubPrompt>,
+}
+
+/// Which action to run when the user confirms a sub-prompt.
+#[derive(Clone, Debug)]
+pub(crate) enum SubPrompt {
+    Ssh,
 }
 
 const PALETTE_MAX_VISIBLE: usize = 10;
@@ -243,6 +260,7 @@ impl Default for OverlayState {
             pending_pty_resize: None,
             initial_resize_done: false,
             pty_status: None,
+            last_cmd_duration: None,
             context_menu: None,
             pending_update: None,
             bell_flash_until: None,

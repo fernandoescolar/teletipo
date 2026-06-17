@@ -235,6 +235,7 @@ where
     let scaled_font_size = base_font_size * window.scale_factor() as f32;
     let mut painter = GlPainter::new(&gl, config.font.font_family.clone(), scaled_font_size)?;
     let (mut cell_w_px, mut cell_h_px) = painter.cell_metrics();
+    let mut last_font_size = base_font_size;
     let mut last_title: String = format_window_title(&initial.title_cwd);
     #[cfg(target_os = "macos")]
     let mut last_titlebar_bg = initial.theme.terminal_bg;
@@ -336,6 +337,21 @@ where
                             if snapshot.request_exit {
                                 target.exit();
                                 return;
+                            }
+                            if snapshot.font_size != last_font_size {
+                                last_font_size = snapshot.font_size;
+                                let sf = window.scale_factor() as f32;
+                                painter.set_font_size(snapshot.font_size * sf);
+                                painter.clear_atlas_textures(&gl);
+                                (cell_w_px, cell_h_px) = painter.cell_metrics();
+                                let sz = window.inner_size();
+                                on_event(AppWindowEvent::Resized {
+                                    width: sz.width,
+                                    height: sz.height,
+                                    scale_factor: window.scale_factor(),
+                                    cell_w: cell_w_px,
+                                    cell_h: cell_h_px,
+                                });
                             }
                             #[cfg(target_os = "macos")]
                             if snapshot.theme.terminal_bg != last_titlebar_bg {
