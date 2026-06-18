@@ -591,7 +591,11 @@ impl GpuRuntimeState {
         for i in 0..n {
             let rows = lm.term_rows(self.tabs[i].split_ratio);
             self.resize_tab(i, rows, cols);
-            self.tabs[i].suppress_until = Some(suppress_until);
+            // Skip the suppress window for tabs that haven't drawn anything yet.
+            // Suppressing before the first prompt arrives would swallow it entirely.
+            if self.tabs[i].app.terminal_screen_version() > 0 {
+                self.tabs[i].suppress_until = Some(suppress_until);
+            }
         }
         self.overlays.pending_pty_resize = None;
     }
