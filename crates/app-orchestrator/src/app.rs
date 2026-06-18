@@ -257,6 +257,10 @@ impl AppTerminal {
         self.session.bracketed_paste()
     }
 
+    pub fn kitty_keyboard_flags(&self) -> u32 {
+        self.session.kitty_keyboard_flags()
+    }
+
     pub fn drain_pending_responses(&mut self) -> Vec<String> {
         self.session.drain_pending_responses()
     }
@@ -557,6 +561,11 @@ impl App {
     /// Whether bracketed paste mode (DEC 2004) is active.
     pub fn bracketed_paste(&self) -> bool {
         self.terminal.bracketed_paste()
+    }
+
+    /// Current kitty keyboard protocol flags (top of stack, 0 = disabled).
+    pub fn kitty_keyboard_flags(&self) -> u32 {
+        self.terminal.kitty_keyboard_flags()
     }
 
     /// Drains pending PTY response strings (e.g. cursor-position reports).

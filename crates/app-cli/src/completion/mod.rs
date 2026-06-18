@@ -1,3 +1,4 @@
+mod dynamic;
 mod manpage;
 mod paths;
 mod tiered;
@@ -83,12 +84,13 @@ fn cd_tier1_matches(history: &[String], prefix: &str) -> Vec<String> {
 fn build_pool_ordered(
     t1: Vec<String>,
     t2: Vec<String>,
+    tdyn: Vec<String>,
     t0b: Vec<String>,
     t4: Vec<String>,
 ) -> Vec<String> {
     let mut pool: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for item in t1.into_iter().chain(t2).chain(t0b).chain(t4) {
+    for item in t1.into_iter().chain(t2).chain(tdyn).chain(t0b).chain(t4) {
         if seen.insert(item.to_lowercase()) {
             pool.push(item);
         }
@@ -144,6 +146,7 @@ pub(crate) fn suggestion_matches_frecency(
     entries: &[tab::HistoryEntry],
     prefix: &str,
     cwd: &str,
+    shell: &str,
 ) -> Vec<String> {
     let is_cd = prefix == "cd" || prefix.starts_with("cd ");
 
@@ -165,6 +168,13 @@ pub(crate) fn suggestion_matches_frecency(
         (a, b)
     };
 
+    // Tier 3: shell-native dynamic completions (git branches, SSH hosts, …).
+    let tdyn = if !is_cd {
+        dynamic::dynamic_completions(prefix, cwd, shell)
+    } else {
+        Vec::new()
+    };
+
     // Tier 4: man-page command names — single-word only, capped at 20.
     let t4: Vec<String> = if !is_cd && !prefix.contains(' ') && !prefix.is_empty() {
         let lower = prefix.to_lowercase();
@@ -173,6 +183,7 @@ pub(crate) fn suggestion_matches_frecency(
             .chain(t0b.iter())
             .chain(t1.iter())
             .chain(t2.iter())
+            .chain(tdyn.iter())
             .map(|s| s.to_lowercase())
             .collect();
         man_commands()
@@ -188,7 +199,7 @@ pub(crate) fn suggestion_matches_frecency(
         Vec::new()
     };
 
-    let mut pool = build_pool_ordered(t1, t2, t0b, t4);
+    let mut pool = build_pool_ordered(t1, t2, tdyn, t0b, t4);
     if entries.is_empty() {
         let mut out = t0;
         out.extend(pool);

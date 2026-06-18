@@ -289,6 +289,9 @@ pub struct GenericTerminalSession<P = Parser, D = Screen> {
     /// Working directory reported by the shell via OSC 7 (`file://host/path`).
     /// Falls back to OS-level CWD inspection when `None`.
     cwd: Option<std::path::PathBuf>,
+    /// Kitty keyboard protocol flags stack. Top of stack (last element) is the
+    /// active flags word. Each `\x1b[=<flags>u` pushes; `\x1b[<n>u` pops n.
+    kitty_keyboard_flags: Vec<u32>,
 }
 
 /// Default `GenericTerminalSession` specialised with the production parser
@@ -315,6 +318,7 @@ impl GenericTerminalSession<Parser, Screen> {
             command_zones: Vec::new(),
             current_zone: None,
             cwd: None,
+            kitty_keyboard_flags: Vec::new(),
         })
     }
 }
@@ -339,6 +343,7 @@ where
             command_zones: Vec::new(),
             current_zone: None,
             cwd: None,
+            kitty_keyboard_flags: Vec::new(),
         }
     }
 
@@ -488,6 +493,18 @@ where
                     self.pending_responses.push(format!("\x1b[{row};{col}R"));
                 }
                 Action::SetCursorShape(n) => self.cursor_shape = n,
+                Action::KittyKeyboardPush(flags) => {
+                    self.kitty_keyboard_flags.push(flags);
+                }
+                Action::KittyKeyboardPop(n) => {
+                    let len = self.kitty_keyboard_flags.len();
+                    self.kitty_keyboard_flags
+                        .truncate(len.saturating_sub(n as usize));
+                }
+                Action::KittyKeyboardQuery => {
+                    let flags = self.kitty_keyboard_flags.last().copied().unwrap_or(0);
+                    self.pending_responses.push(format!("\x1b[?{flags}u"));
+                }
             }
         }
     }
@@ -567,6 +584,11 @@ where
     /// Whether bracketed paste mode (DEC 2004) is currently active.
     pub fn bracketed_paste(&self) -> bool {
         self.bracketed_paste
+    }
+
+    /// Current kitty keyboard protocol flags (top of stack, 0 = disabled).
+    pub fn kitty_keyboard_flags(&self) -> u32 {
+        self.kitty_keyboard_flags.last().copied().unwrap_or(0)
     }
 
     /// Drains and returns any pending responses (e.g. cursor-position reports)

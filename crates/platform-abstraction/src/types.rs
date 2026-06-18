@@ -46,6 +46,8 @@ pub enum AppWindowEvent {
     ImeCommit(String),
     /// A file was dropped onto the window.
     DroppedFile(std::path::PathBuf),
+    /// The window gained or lost focus.
+    WindowFocused(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

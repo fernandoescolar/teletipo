@@ -148,8 +148,10 @@ impl Parser {
     }
 
     fn handle_csi_final(&self, final_byte: u8, actions: &mut Vec<Action>) {
-        let has_private_prefix = self.csi_buf.first() == Some(&b'?');
-        let param_slice = if has_private_prefix {
+        let first = self.csi_buf.first().copied();
+        let has_private_prefix = first == Some(b'?');
+        let has_equal_prefix = first == Some(b'=');
+        let param_slice = if has_private_prefix || has_equal_prefix {
             &self.csi_buf[1..]
         } else {
             self.csi_buf.as_slice()
@@ -172,7 +174,21 @@ impl Parser {
                 actions.push(Action::CursorPosition { row, col });
             }
             b's' => actions.push(Action::SaveCursor),
-            b'u' => actions.push(Action::RestoreCursor),
+            b'u' => {
+                if has_private_prefix {
+                    // \x1b[?u — query current kitty keyboard flags
+                    actions.push(Action::KittyKeyboardQuery);
+                } else if has_equal_prefix {
+                    // \x1b[=<flags>u — push flags onto kitty stack
+                    actions.push(Action::KittyKeyboardPush(u32::from(first_or(&params, 0))));
+                } else if !params.is_empty() && params[0] > 0 {
+                    // \x1b[<n>u — pop n entries from kitty stack
+                    actions.push(Action::KittyKeyboardPop(u32::from(params[0])));
+                } else {
+                    // \x1b[u (plain) — VT220 restore cursor
+                    actions.push(Action::RestoreCursor);
+                }
+            }
             b'r' => actions.push(Action::SetScrollRegion {
                 top: first_or(&params, 1),
                 bottom: nth_or(&params, 1, 0),

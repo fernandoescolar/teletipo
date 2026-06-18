@@ -119,6 +119,15 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         }
     }
 
+    // Autosave session every 5 minutes when session restore is enabled.
+    const AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+    if state.user_config.terminal.restore_session
+        && state.last_session_save.elapsed() >= AUTOSAVE_INTERVAL
+    {
+        crate::launch::save_session(state);
+        state.last_session_save = std::time::Instant::now();
+    }
+
     // Re-arm the update check once per day while the app stays open.
     const UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
     if state.update_rx.is_none()
@@ -385,6 +394,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             &state.tabs[active].history_entries,
             prefix,
             &state.tabs[active].cwd,
+            &state.shell,
         );
         matches
             .get(idx)
@@ -400,6 +410,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 &state.tabs[active].history_entries,
                 prefix,
                 &state.tabs[active].cwd,
+                &state.shell,
             )
             .into_iter()
             .next()
@@ -640,6 +651,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                     &state.tabs[active].history_entries,
                     prefix,
                     &state.tabs[active].cwd,
+                    &state.shell,
                 );
                 if items.len() >= 2 {
                     let display: Vec<String> = items

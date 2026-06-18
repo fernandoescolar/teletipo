@@ -62,4 +62,6 @@ pub trait WindowControl {
     /// `https://`, `file://`, `mailto:` and `ftp://` schemes are accepted;
     /// other inputs are silently ignored to avoid arbitrary command execution.
     fn open_url(&self, url: &str);
+    /// Send an OS-level notification. Default: no-op (silently ignored).
+    fn notify(&self, _title: &str, _body: &str) {}
 }

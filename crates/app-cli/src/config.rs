@@ -54,6 +54,10 @@ pub struct TerminalCfg {
     /// Restore tabs and terminal content from the previous session on launch.
     /// Default: `true`.
     pub restore_session: bool,
+
+    /// Minimum command duration (seconds) before an OS notification is sent
+    /// when the window is not focused. 0 = disabled (default).
+    pub notify_on_command_secs: u32,
 }
 
 impl Default for TerminalCfg {
@@ -63,8 +67,26 @@ impl Default for TerminalCfg {
             scrollback_lines: 0,
             bell: true,
             restore_session: true,
+            notify_on_command_secs: 0,
         }
     }
+}
+
+/// A user-defined key binding that maps a key + modifier combination to an
+/// action name. Stored under `[[keybindings]]` in `config.toml`.
+///
+/// Key names (case-insensitive): single printable chars (`"t"`, `"w"`, …),
+/// `"Return"`, `"Escape"`, `"Tab"`, `"BackSpace"`, `"Space"`, `"F1"`–`"F12"`.
+/// Modifier names: `"Cmd"` (or `"Super"`), `"Ctrl"`, `"Shift"`, `"Alt"`.
+/// Action names: `"new_tab"`, `"close_tab"`, `"move_tab_left"`,
+/// `"move_tab_right"`, `"open_settings"`, `"open_command_palette"`, `"copy"`,
+/// `"paste"`, `"clear"`, `"zoom_in"`, `"zoom_out"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyBinding {
+    pub key: String,
+    #[serde(default)]
+    pub modifiers: Vec<String>,
+    pub action: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -75,6 +97,8 @@ pub struct UserConfig {
     pub terminal: TerminalCfg,
     /// Name of the active preset theme file (`None` = default colors).
     pub active_theme: Option<String>,
+    /// User-defined keybindings, each mapping a key combo to an action.
+    pub keybindings: Vec<KeyBinding>,
 }
 
 // ── Settings field descriptors (drives the in-app settings overlay) ─────────

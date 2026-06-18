@@ -35,6 +35,9 @@ pub(crate) trait AppShell {
     #[allow(dead_code)] // plumbing in place; no caller yet (see T9).
     fn open_url(&mut self, _url: &str) {}
 
+    /// Send an OS notification with a title and body. Default: no-op.
+    fn notify(&mut self, _title: &str, _body: &str) {}
+
     /// Install a [`WindowControl`] implementation so the shell can forward
     /// redraw/title/open-url calls to the real window. Called once during
     /// startup by the GPU backend before the event loop pumps any events.
@@ -96,6 +99,12 @@ impl AppShell for SystemShell {
     fn open_url(&mut self, url: &str) {
         if let Some(w) = self.window.as_ref() {
             w.open_url(url);
+        }
+    }
+
+    fn notify(&mut self, title: &str, body: &str) {
+        if let Some(w) = self.window.as_ref() {
+            w.notify(title, body);
         }
     }
 

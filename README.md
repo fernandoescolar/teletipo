@@ -116,6 +116,15 @@ Teletipo automatically injects OSC 133 and OSC 7 hooks into **zsh** and **bash**
 
 For other shells, you can add the hooks manually — see `crates/terminal-pty/src/session.rs` for the exact sequences.
 
+### Completions
+
+The suggestion dropdown combines multiple sources, ranked by frecency:
+
+- **History** — full prefix matches and last-token matches against your command history
+- **Shell-native completions** — live context-aware completions: `git` branches, tags, and remotes; `ssh` hosts from `~/.ssh/config` and `known_hosts`; `docker`/`podman` container and image names; when using **fish**, all fish completions are available (kubectl, cargo, npm, etc.)
+- **Filesystem paths** — triggered by `/`, `./`, `../`, `~`, or any `cd` argument
+- **Man-page flags & subcommands** — fetched asynchronously from `man` and `--help` output
+
 ### Other
 
 - **Command palette** (`Cmd+Shift+P`) — tab management, theme/font switching, settings, prompt navigation, SSH connections, and more; filterable by typing
@@ -123,7 +132,10 @@ For other shells, you can add the hooks manually — see `crates/terminal-pty/sr
 - **Drag and drop** — drop a `*.yaml` file to apply a theme; drop any other file to paste its path into the editor
 - **Screen reader support** — VoiceOver (macOS) and Orca (Linux via speech-dispatcher/espeak); announcements fire on each completed command
 - **Auto-update** — checks GitHub Releases on launch, downloads and replaces the binary silently; shows an overlay when ready; `teletipo update rollback` reverts to the previous binary
-- **Session restore** — tabs, terminal output, and command history are restored on next launch (configurable)
+- **Session restore** — tabs, terminal output, and command history are restored on next launch; session is also autosaved every 5 minutes while the app is open (configurable)
+- **Kitty keyboard protocol** — when an app requests it (e.g. Neovim, Helix), keys are encoded in kitty CSI u format so modifiers and key-up events are fully disambiguated
+- **Command finish notifications** — OS notification when a long-running command completes while the window is unfocused (opt-in via `notify_on_command_secs` in config)
+- **Custom keybindings** — remap any action to a key combo in `config.toml`
 
 ---
 
@@ -249,7 +261,8 @@ Open the settings panel with `Cmd+,` (or `Ctrl+,`). Changes are saved automatica
 | `terminal › shell` | *(auto)* | Shell executable path. Empty = use `$SHELL`. |
 | `terminal › scrollback_lines` | `10000` | Scrollback buffer size. `←`/`→` in steps of 500. |
 | `terminal › bell` | `on` | Enable/disable the visual bell flash. `←`/`→` to toggle. |
-| `terminal › restore_session` | `on` | Restore tabs and output from the previous session on launch. `←`/`→` to toggle. |
+| `terminal › restore_session` | `on` | Restore tabs and output from the previous session on launch; autosaves every 5 min. `←`/`→` to toggle. |
+| `terminal › notify_on_command_secs` | `0` | Send an OS notification when a command runs longer than this many seconds and the window is not focused. `0` = disabled. |
 
 ### Config file
 
@@ -265,12 +278,29 @@ horizontal = 8
 vertical   = 8
 
 [terminal]
-shell            = ""       # empty = $SHELL default
-scrollback_lines = 10000
-bell             = true
-restore_session  = true
+shell                  = ""     # empty = $SHELL default
+scrollback_lines       = 10000
+bell                   = true
+restore_session        = true
+notify_on_command_secs = 10     # 0 = disabled
 
 active_theme = "tokyo-night"
+
+# Custom keybindings — add as many [[keybindings]] blocks as you like.
+# Modifier names: "Cmd" (macOS) / "Ctrl" / "Shift" / "Alt"
+# Action names: new_tab, close_tab, move_tab_left, move_tab_right,
+#   open_settings, open_command_palette, copy, paste, clear,
+#   zoom_in, zoom_out, jump_to_prev_prompt, jump_to_next_prompt
+#
+# [[keybindings]]
+# key       = "t"
+# modifiers = ["Cmd"]
+# action    = "new_tab"
+#
+# [[keybindings]]
+# key       = "k"
+# modifiers = ["Cmd"]
+# action    = "clear"
 ```
 
 ---

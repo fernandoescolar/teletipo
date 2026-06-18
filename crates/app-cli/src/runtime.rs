@@ -90,6 +90,8 @@ pub(crate) struct GpuRuntimeState {
     /// SSH hosts loaded from `~/.ssh/config` at startup.
     pub(crate) ssh_hosts: Vec<crate::ssh::SshHost>,
     /// Set to `true` when the last shell session ends so the window closes.
+    pub(crate) window_focused: bool,
+    pub(crate) last_session_save: std::time::Instant,
     pub(crate) should_exit: bool,
     /// Tracks the editor_disabled state from the previous frame to detect
     /// transitions and force a full redraw when it changes.
@@ -384,7 +386,22 @@ impl GpuRuntimeState {
             let ms = start.elapsed().as_millis() as u64;
             if ms >= 1_000 {
                 let label = format_cmd_duration(ms, exit_code == 0);
-                self.overlays.last_cmd_duration = Some((Instant::now(), label));
+                self.overlays.last_cmd_duration = Some((Instant::now(), label.clone()));
+
+                // OS notification when the window is not focused and the command
+                // exceeded the user-configured threshold (0 = disabled).
+                let threshold_secs = self.user_config.terminal.notify_on_command_secs;
+                if threshold_secs > 0
+                    && ms >= (threshold_secs as u64) * 1_000
+                    && (tab_idx != self.active_tab || !self.window_focused)
+                {
+                    let title = if exit_code == 0 {
+                        "Command finished"
+                    } else {
+                        "Command failed"
+                    };
+                    self.shell_services.notify(title, &label);
+                }
             }
         }
     }

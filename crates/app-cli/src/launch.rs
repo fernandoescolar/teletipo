@@ -304,6 +304,8 @@ pub(crate) fn build_initial_state(
         settings: crate::SettingsUiState::default(),
         command_palette: None,
         ssh_hosts: crate::ssh::load_ssh_hosts(),
+        window_focused: true,
+        last_session_save: std::time::Instant::now(),
         should_exit: false,
         last_editor_disabled: false,
         shell_services: Box::new(crate::shell::SystemShell::new()),

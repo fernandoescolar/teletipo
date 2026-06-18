@@ -1,4 +1,4 @@
-mod keyboard;
+pub(crate) mod keyboard;
 mod pointer;
 
 #[cfg(test)]
@@ -13,6 +13,10 @@ pub(crate) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     }
     if let AppWindowEvent::DroppedFile(ref path) = event {
         handle_dropped_file(state, path);
+        return;
+    }
+    if let AppWindowEvent::WindowFocused(focused) = event {
+        state.window_focused = focused;
         return;
     }
     keyboard::handle_event(state, event);

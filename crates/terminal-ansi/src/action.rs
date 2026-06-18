@@ -54,4 +54,10 @@ pub enum Action {
     /// 0/1 = blinking block, 2 = steady block, 3 = blinking underline,
     /// 4 = steady underline, 5 = blinking bar, 6 = steady bar.
     SetCursorShape(u16),
+    /// Kitty keyboard protocol: push flags onto the stack (`\x1b[=<flags>u`).
+    KittyKeyboardPush(u32),
+    /// Kitty keyboard protocol: pop N entries from the stack (`\x1b[<n>u`).
+    KittyKeyboardPop(u32),
+    /// Kitty keyboard protocol: query current flags (`\x1b[?u`).
+    KittyKeyboardQuery,
 }

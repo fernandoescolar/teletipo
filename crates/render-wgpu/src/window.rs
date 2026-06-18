@@ -217,6 +217,9 @@ where
                                 cell_h: state.cell_h_px,
                             });
                         }
+                        WindowEvent::Focused(focused) => {
+                            on_event(AppWindowEvent::WindowFocused(focused));
+                        }
                         WindowEvent::ModifiersChanged(mods) => {
                             on_event(AppWindowEvent::ModifiersChanged(mods.state()));
                         }

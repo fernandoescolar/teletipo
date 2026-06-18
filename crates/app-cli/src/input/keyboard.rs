@@ -33,6 +33,10 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         return;
     }
 
+    if try_user_keybinding(state, key_event) {
+        return;
+    }
+
     if handle_pre_dispatch(state, key_event) {
         return;
     }
@@ -230,6 +234,17 @@ fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEv
     }
 
     let app_cursor = state.tab().app.application_cursor_keys();
+    let kitty_flags = state.tab().app.kitty_keyboard_flags();
+
+    // Kitty keyboard protocol: if any flags are active, encode every key as
+    // CSI u so the app can distinguish modifiers, key-up events, etc.
+    if kitty_flags != 0
+        && let Some(seq) = kitty_encode(key_event, &state.modifiers, kitty_flags, app_cursor)
+    {
+        state.send_terminal_input(seq.as_bytes());
+        return true;
+    }
+
     match &key_event.logical_key {
         Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "," => false,
         Key::Named(named) => {
@@ -251,6 +266,95 @@ fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEv
             true
         }
         _ => false,
+    }
+}
+
+/// Encode a key event in kitty keyboard protocol CSI u format.
+/// Returns `None` when the key cannot be represented (e.g. bare modifier keys).
+fn kitty_encode(
+    key_event: &winit::event::KeyEvent,
+    mods: &crate::ModifierState,
+    kitty_flags: u32,
+    _app_cursor: bool,
+) -> Option<String> {
+    use winit::keyboard::{Key, NamedKey};
+    // Kitty modifier bitmask: Shift=1, Alt=2, Ctrl=4, Super=8
+    let mut mod_bits: u32 = 0;
+    if mods.shift_down {
+        mod_bits |= 1;
+    }
+    if mods.alt_down {
+        mod_bits |= 2;
+    }
+    if mods.ctrl_down {
+        mod_bits |= 4;
+    }
+    if mods.super_down {
+        mod_bits |= 8;
+    }
+    let modifier_param = mod_bits + 1; // kitty adds 1 to the bitmask
+
+    // Map named keys to their kitty codepoints.
+    let codepoint: u32 = match &key_event.logical_key {
+        Key::Named(NamedKey::Enter) => 13,
+        Key::Named(NamedKey::Escape) => 27,
+        Key::Named(NamedKey::Tab) => 9,
+        Key::Named(NamedKey::Backspace) => 127,
+        Key::Named(NamedKey::Space) => 32,
+        Key::Named(NamedKey::ArrowUp) => 57352,
+        Key::Named(NamedKey::ArrowDown) => 57353,
+        Key::Named(NamedKey::ArrowLeft) => 57354,
+        Key::Named(NamedKey::ArrowRight) => 57355,
+        Key::Named(NamedKey::Home) => 57356,
+        Key::Named(NamedKey::End) => 57357,
+        Key::Named(NamedKey::PageUp) => 57358,
+        Key::Named(NamedKey::PageDown) => 57359,
+        Key::Named(NamedKey::Insert) => 57360,
+        Key::Named(NamedKey::Delete) => 57361,
+        Key::Named(NamedKey::F1) => 57364,
+        Key::Named(NamedKey::F2) => 57365,
+        Key::Named(NamedKey::F3) => 57366,
+        Key::Named(NamedKey::F4) => 57367,
+        Key::Named(NamedKey::F5) => 57368,
+        Key::Named(NamedKey::F6) => 57369,
+        Key::Named(NamedKey::F7) => 57370,
+        Key::Named(NamedKey::F8) => 57371,
+        Key::Named(NamedKey::F9) => 57372,
+        Key::Named(NamedKey::F10) => 57373,
+        Key::Named(NamedKey::F11) => 57374,
+        Key::Named(NamedKey::F12) => 57375,
+        Key::Character(ch) => {
+            // Use the Unicode codepoint of the character
+            if let Some(c) = ch.chars().next() {
+                c as u32
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+
+    // Bit 1 (report_event_types): include key-up events
+    let report_types = kitty_flags & 2 != 0;
+    let event_type: u32 = if key_event.state == winit::event::ElementState::Released {
+        if !report_types {
+            return None; // don't send key-up unless requested
+        }
+        3 // release
+    } else {
+        1 // press
+    };
+
+    // Build: \x1b[<codepoint>;<modifier>:<event_type>u
+    if modifier_param == 1 && event_type == 1 {
+        // No modifiers, press — shortest form: \x1b[<cp>u
+        Some(format!("\x1b[{codepoint}u"))
+    } else if event_type == 1 {
+        // Modifier only: \x1b[<cp>;<mod>u
+        Some(format!("\x1b[{codepoint};{modifier_param}u"))
+    } else {
+        // Full form: \x1b[<cp>;<mod>:<event>u
+        Some(format!("\x1b[{codepoint};{modifier_param}:{event_type}u"))
     }
 }
 
@@ -321,6 +425,7 @@ fn update_cycling_after_editor_edit(state: &mut GpuRuntimeState, cycling: bool) 
         &state.tabs[active].history_entries,
         &new_prefix,
         &state.tabs[active].cwd,
+        &state.shell,
     );
     if !matches.is_empty() && !new_prefix.is_empty() {
         state.tabs[active].suggestion_prefix = Some(new_prefix);
@@ -342,6 +447,7 @@ fn apply_selected_suggestion(state: &mut GpuRuntimeState) {
         &state.tabs[state.active_tab].history_entries,
         &prefix,
         &state.tabs[state.active_tab].cwd,
+        &state.shell,
     );
     if let Some(full) = matches.get(idx).cloned() {
         let editor_text = state.tab().app.editor_snapshot();
@@ -382,6 +488,7 @@ fn handle_tab_key(state: &mut GpuRuntimeState, cycling: bool) {
         &state.tabs[state.active_tab].history_entries,
         &prefix,
         &state.tabs[state.active_tab].cwd,
+        &state.shell,
     );
     if matches.is_empty() {
         return;
@@ -467,6 +574,108 @@ fn handle_paste_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
         }
     }
     true
+}
+
+/// Public wrapper called by `execute_ui_command(CommandId::Copy)`.
+pub(crate) fn execute_copy(state: &mut GpuRuntimeState) {
+    // `handle_copy_shortcut` checks `is_copy_shortcut(state, "c")` which
+    // requires super_down on macOS. Bypass the guard by invoking the copy
+    // path directly via the existing function; it's the cleanest factored unit.
+    let saved_selection = capture_terminal_selection(state);
+    // Temporarily simulate super_down so the copy guard passes.
+    let prev = state.modifiers.super_down;
+    state.modifiers.super_down = true;
+    handle_copy_shortcut(state, "c", &saved_selection);
+    state.modifiers.super_down = prev;
+}
+
+/// Public wrapper called by `execute_ui_command(CommandId::Paste)`.
+pub(crate) fn execute_paste(state: &mut GpuRuntimeState) {
+    handle_paste_shortcut(state, "v");
+}
+
+/// Public wrapper called by `execute_ui_command(CommandId::ZoomIn/ZoomOut)`.
+/// `delta` is +1.0 or -1.0.
+pub(crate) fn execute_zoom(state: &mut GpuRuntimeState, delta: f32) {
+    let new_size = (state.user_config.font.size + delta)
+        .clamp(crate::config::FONT_SIZE_MIN, crate::config::FONT_SIZE_MAX);
+    state
+        .user_config
+        .set_field("font", "size", &format!("{new_size:.1}"));
+    crate::config::save_config(&state.user_config);
+}
+
+/// Returns `true` and fires the matching command if any user keybinding matches
+/// the current key event + modifier state. Must be called at the top of the
+/// main keyboard dispatch before the built-in shortcut logic.
+pub(crate) fn try_user_keybinding(
+    state: &mut GpuRuntimeState,
+    key_event: &winit::event::KeyEvent,
+) -> bool {
+    use winit::keyboard::{Key, NamedKey};
+    if state.user_config.keybindings.is_empty() {
+        return false;
+    }
+    for binding in state.user_config.keybindings.clone() {
+        // Match modifiers
+        let wants_cmd = binding
+            .modifiers
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("Cmd") || m.eq_ignore_ascii_case("Super"));
+        let wants_ctrl = binding
+            .modifiers
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("Ctrl"));
+        let wants_shift = binding
+            .modifiers
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("Shift"));
+        let wants_alt = binding
+            .modifiers
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("Alt") || m.eq_ignore_ascii_case("Option"));
+        if wants_cmd != state.modifiers.super_down
+            || wants_ctrl != state.modifiers.ctrl_down
+            || wants_shift != state.modifiers.shift_down
+            || wants_alt != state.modifiers.alt_down
+        {
+            continue;
+        }
+        // Match key
+        let key_str = binding.key.trim();
+        let matched = match &key_event.logical_key {
+            Key::Character(ch) => ch.as_str().eq_ignore_ascii_case(key_str),
+            Key::Named(NamedKey::Enter) => {
+                key_str.eq_ignore_ascii_case("Return") || key_str.eq_ignore_ascii_case("Enter")
+            }
+            Key::Named(NamedKey::Escape) => key_str.eq_ignore_ascii_case("Escape"),
+            Key::Named(NamedKey::Tab) => key_str.eq_ignore_ascii_case("Tab"),
+            Key::Named(NamedKey::Backspace) => key_str.eq_ignore_ascii_case("BackSpace"),
+            Key::Named(NamedKey::Space) => key_str.eq_ignore_ascii_case("Space"),
+            Key::Named(NamedKey::F1) => key_str.eq_ignore_ascii_case("F1"),
+            Key::Named(NamedKey::F2) => key_str.eq_ignore_ascii_case("F2"),
+            Key::Named(NamedKey::F3) => key_str.eq_ignore_ascii_case("F3"),
+            Key::Named(NamedKey::F4) => key_str.eq_ignore_ascii_case("F4"),
+            Key::Named(NamedKey::F5) => key_str.eq_ignore_ascii_case("F5"),
+            Key::Named(NamedKey::F6) => key_str.eq_ignore_ascii_case("F6"),
+            Key::Named(NamedKey::F7) => key_str.eq_ignore_ascii_case("F7"),
+            Key::Named(NamedKey::F8) => key_str.eq_ignore_ascii_case("F8"),
+            Key::Named(NamedKey::F9) => key_str.eq_ignore_ascii_case("F9"),
+            Key::Named(NamedKey::F10) => key_str.eq_ignore_ascii_case("F10"),
+            Key::Named(NamedKey::F11) => key_str.eq_ignore_ascii_case("F11"),
+            Key::Named(NamedKey::F12) => key_str.eq_ignore_ascii_case("F12"),
+            _ => false,
+        };
+        if matched && let Some(cmd) = crate::commands::CommandId::from_name(&binding.action) {
+            crate::commands::execute_ui_command(
+                state,
+                cmd,
+                crate::commands::CommandContext::default(),
+            );
+            return true;
+        }
+    }
+    false
 }
 
 fn activate_search_overlay(state: &mut GpuRuntimeState) {
@@ -722,6 +931,7 @@ fn handle_named_key_navigation(
                     &state.tabs[state.active_tab].history_entries,
                     &prefix,
                     &state.tabs[state.active_tab].cwd,
+                    &state.shell,
                 );
                 let n = matches.len();
                 if n > 0 {
@@ -754,6 +964,7 @@ fn handle_named_key_navigation(
                     &state.tabs[state.active_tab].history_entries,
                     &prefix,
                     &state.tabs[state.active_tab].cwd,
+                    &state.shell,
                 );
                 let n = matches.len();
                 if n > 0 {
@@ -988,7 +1199,7 @@ fn is_paste_shortcut(state: &GpuRuntimeState, key: &str) -> bool {
 // ── Command palette ───────────────────────────────────────────────────────────
 
 /// Build and open the command palette with all available items.
-fn open_command_palette(state: &mut GpuRuntimeState) {
+pub(crate) fn open_command_palette(state: &mut GpuRuntimeState) {
     use crate::state::{CommandPaletteState, PaletteAction, PaletteItem};
 
     let mut items: Vec<PaletteItem> = crate::commands::palette_commands(state)

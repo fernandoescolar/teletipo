@@ -30,6 +30,38 @@ pub(crate) enum CommandId {
     OpenConfigInEditor,
     RevealConfigInFinder,
     RestartNow,
+    // Actions exposed to custom keybindings
+    Copy,
+    Paste,
+    Clear,
+    ZoomIn,
+    ZoomOut,
+    OpenCommandPalette,
+}
+
+impl CommandId {
+    /// Map a config action-name string (snake_case) to a `CommandId`.
+    pub(crate) fn from_name(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "new_tab" => Some(Self::NewTab),
+            "close_tab" => Some(Self::CloseTab),
+            "move_tab_left" => Some(Self::MoveTabLeft),
+            "move_tab_right" => Some(Self::MoveTabRight),
+            "jump_to_prev_prompt" => Some(Self::JumpToPrevPrompt),
+            "jump_to_next_prompt" => Some(Self::JumpToNextPrompt),
+            "open_settings" => Some(Self::OpenSettings),
+            "open_config_in_editor" => Some(Self::OpenConfigInEditor),
+            "reveal_config_in_finder" => Some(Self::RevealConfigInFinder),
+            "restart_now" => Some(Self::RestartNow),
+            "copy" => Some(Self::Copy),
+            "paste" => Some(Self::Paste),
+            "clear" => Some(Self::Clear),
+            "zoom_in" => Some(Self::ZoomIn),
+            "zoom_out" => Some(Self::ZoomOut),
+            "open_command_palette" => Some(Self::OpenCommandPalette),
+            _ => None,
+        }
+    }
 }
 
 /// Optional execution context for commands that can target a specific tab.
@@ -82,6 +114,12 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
                 crate::updater::restart_app();
             }
         }
+        CommandId::Copy => crate::input::keyboard::execute_copy(state),
+        CommandId::Paste => crate::input::keyboard::execute_paste(state),
+        CommandId::Clear => state.send_terminal_input(b"\x0c"),
+        CommandId::ZoomIn => crate::input::keyboard::execute_zoom(state, 1.0),
+        CommandId::ZoomOut => crate::input::keyboard::execute_zoom(state, -1.0),
+        CommandId::OpenCommandPalette => crate::input::keyboard::open_command_palette(state),
     }
 }
 
