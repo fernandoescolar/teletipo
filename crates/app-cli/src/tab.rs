@@ -94,6 +94,9 @@ pub(crate) struct TabState {
     /// user input is dropped. Set after SIGWINCH so the shell's prompt-redraw
     /// is invisible. Cleared once the instant elapses.
     pub(crate) suppress_until: Option<std::time::Instant>,
+    /// Time this tab was spawned. SIGWINCH suppress is skipped while the tab is
+    /// younger than this threshold so the shell's initial prompt is never eaten.
+    pub(crate) spawned_at: std::time::Instant,
 }
 
 /// Persistent state for a single tab.

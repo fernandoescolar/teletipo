@@ -488,6 +488,7 @@ fn build_single_tab(
         bell_pending: false,
         a11y_screen_version: 0,
         suppress_until: None,
+        spawned_at: std::time::Instant::now(),
     })
 }
 

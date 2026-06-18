@@ -585,15 +585,18 @@ impl GpuRuntimeState {
             self.user_config.padding.vertical as f32,
         );
         let cols = lm.cols();
-        let suppress_until =
-            std::time::Instant::now() + std::time::Duration::from_millis(SIGWINCH_SUPPRESS_MS);
+        const SPAWN_GRACE_MS: u64 = 3_000;
+        let now = std::time::Instant::now();
+        let suppress_until = now + std::time::Duration::from_millis(SIGWINCH_SUPPRESS_MS);
         let n = self.tabs.len();
         for i in 0..n {
             let rows = lm.term_rows(self.tabs[i].split_ratio);
             self.resize_tab(i, rows, cols);
-            // Skip the suppress window for tabs that haven't drawn anything yet.
-            // Suppressing before the first prompt arrives would swallow it entirely.
-            if self.tabs[i].app.terminal_screen_version() > 0 {
+            // Skip the suppress window while the tab is still in its startup grace
+            // period. The shell's initial prompt arrives in the first few hundred
+            // milliseconds; suppressing it would make the prompt invisible.
+            let age_ms = now.duration_since(self.tabs[i].spawned_at).as_millis() as u64;
+            if age_ms >= SPAWN_GRACE_MS {
                 self.tabs[i].suppress_until = Some(suppress_until);
             }
         }
@@ -672,6 +675,7 @@ impl GpuRuntimeState {
             bell_pending: false,
             a11y_screen_version: 0,
             suppress_until: None,
+            spawned_at: std::time::Instant::now(),
         });
         self.active_tab = self.tabs.len() - 1;
     }
@@ -736,6 +740,7 @@ impl GpuRuntimeState {
             bell_pending: false,
             a11y_screen_version: 0,
             suppress_until: None,
+            spawned_at: std::time::Instant::now(),
         });
         self.active_tab = self.tabs.len() - 1;
     }

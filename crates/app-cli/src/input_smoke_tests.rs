@@ -57,6 +57,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         bell_pending: false,
         a11y_screen_version: 0,
         suppress_until: None,
+        spawned_at: std::time::Instant::now(),
     };
     GpuRuntimeState {
         tabs: vec![tab],
