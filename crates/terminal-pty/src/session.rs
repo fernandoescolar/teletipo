@@ -290,6 +290,7 @@ impl PortablePtySession {
         for arg in args {
             cmd.arg(*arg);
         }
+        cmd.env("TERM", default_term());
         if let Some(dir) = cwd
             && !dir.is_empty()
         {
