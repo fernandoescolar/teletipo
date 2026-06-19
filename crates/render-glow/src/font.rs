@@ -406,13 +406,16 @@ fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
         })
         .collect();
 
-    // macOS direct-path fallbacks for fonts that fontdb might miss.
+    // Direct-path fallbacks for fonts that fontdb might miss due to non-standard
+    // scan paths or naming differences. Only loaded if fontdb didn't already find
+    // the family by name.
+    fn load_from_path(path: &str) -> Option<fontdue::Font> {
+        let bytes = std::fs::read(path).ok()?;
+        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+    }
+
     #[cfg(target_os = "macos")]
     {
-        fn load_from_path(path: &str) -> Option<fontdue::Font> {
-            let bytes = std::fs::read(path).ok()?;
-            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
-        }
         if !loaded_families.contains("Zapf Dingbats")
             && let Some(font) = load_from_path("/System/Library/Fonts/ZapfDingbats.ttf")
         {
@@ -422,6 +425,59 @@ fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
             && let Some(font) = load_from_path("/System/Library/Fonts/Menlo.ttc")
         {
             fonts.push(font);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let candidates = [
+            ("Segoe UI Symbol", r"C:\Windows\Fonts\seguisym.ttf"),
+            ("Arial Unicode MS", r"C:\Windows\Fonts\ARIALUNI.TTF"),
+            ("Arial", r"C:\Windows\Fonts\arial.ttf"),
+        ];
+        for (family, path) in candidates {
+            if !loaded_families.contains(family) {
+                if let Some(font) = load_from_path(path) {
+                    fonts.push(font);
+                    loaded_families.insert(family);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let candidates = [
+            (
+                "DejaVu Sans",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ),
+            (
+                "Noto Sans",
+                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            ),
+            ("Noto Sans", "/usr/share/fonts/noto/NotoSans-Regular.ttf"),
+            (
+                "Liberation Sans",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            ),
+            (
+                "Liberation Sans",
+                "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+            ),
+            (
+                "FreeSans",
+                "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            ),
+            ("FreeSans", "/usr/share/fonts/freefont/FreeSans.ttf"),
+        ];
+        for (family, path) in candidates {
+            if !loaded_families.contains(family) {
+                if let Some(font) = load_from_path(path) {
+                    fonts.push(font);
+                    loaded_families.insert(family);
+                }
+            }
         }
     }
 

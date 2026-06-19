@@ -467,7 +467,6 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
         db.with_face_data(id, |data, _| data.to_vec())
     }
 
-    #[cfg(target_os = "macos")]
     fn load_from_path(path: &str) -> Option<fontdue::Font> {
         let bytes = std::fs::read(path).ok()?;
         fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
@@ -486,7 +485,6 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
     ];
 
     let mut loaded_families = std::collections::HashSet::new();
-    #[allow(unused_mut)]
     let mut fonts: Vec<fontdue::Font> = families
         .iter()
         .filter_map(|family| {
@@ -499,24 +497,73 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
         })
         .collect();
 
-    // macOS direct-path fallbacks for fonts that fontdb might miss.
-    // These are essential because some macOS font locations are not scanned by fontdb,
-    // and Apple's font naming conventions can vary across OS versions.
+    // Direct-path fallbacks for fonts that fontdb might miss due to non-standard
+    // scan paths or naming differences. Only loaded if fontdb didn't already find
+    // the family by name.
     #[cfg(target_os = "macos")]
     {
-        // ZapfDingbats covers Dingbats U+2700–U+27BF, including ❯ (U+276F)
-        // which is widely used in shell prompts (fish, starship, oh-my-zsh).
         if !loaded_families.contains("Zapf Dingbats")
             && let Some(font) = load_from_path("/System/Library/Fonts/ZapfDingbats.ttf")
         {
             fonts.push(font);
         }
-        // Menlo is always present on macOS and covers many Unicode ranges including
-        // Dingbats, box drawing, and misc symbols that the dedicated symbol fonts miss.
         if !loaded_families.contains("Menlo")
             && let Some(font) = load_from_path("/System/Library/Fonts/Menlo.ttc")
         {
             fonts.push(font);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let candidates = [
+            ("Segoe UI Symbol", r"C:\Windows\Fonts\seguisym.ttf"),
+            ("Arial Unicode MS", r"C:\Windows\Fonts\ARIALUNI.TTF"),
+            ("Arial", r"C:\Windows\Fonts\arial.ttf"),
+        ];
+        for (family, path) in candidates {
+            if !loaded_families.contains(family) {
+                if let Some(font) = load_from_path(path) {
+                    fonts.push(font);
+                    loaded_families.insert(family);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let candidates = [
+            (
+                "DejaVu Sans",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ),
+            (
+                "Noto Sans",
+                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            ),
+            ("Noto Sans", "/usr/share/fonts/noto/NotoSans-Regular.ttf"),
+            (
+                "Liberation Sans",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            ),
+            (
+                "Liberation Sans",
+                "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+            ),
+            (
+                "FreeSans",
+                "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            ),
+            ("FreeSans", "/usr/share/fonts/freefont/FreeSans.ttf"),
+        ];
+        for (family, path) in candidates {
+            if !loaded_families.contains(family) {
+                if let Some(font) = load_from_path(path) {
+                    fonts.push(font);
+                    loaded_families.insert(family);
+                }
+            }
         }
     }
 
