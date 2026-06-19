@@ -457,6 +457,7 @@ pub(crate) fn load_bold_font_bytes(db: &fontdb::Database, config: &FontConfig) -
 ///   - "Zapf Dingbats" covers Dingbats (U+2700–U+27BF) including ❯ (U+276F)
 ///   - "Menlo" covers a broad range including many chars missing from symbol fonts
 ///   - "Arial Unicode MS" covers a very wide range as a catch-all
+#[allow(clippy::too_many_lines)]
 pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
     fn query_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
         let query = fontdb::Query {
@@ -502,15 +503,17 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
     // the family by name.
     #[cfg(target_os = "macos")]
     {
-        if !loaded_families.contains("Zapf Dingbats")
-            && let Some(font) = load_from_path("/System/Library/Fonts/ZapfDingbats.ttf")
-        {
-            fonts.push(font);
-        }
-        if !loaded_families.contains("Menlo")
-            && let Some(font) = load_from_path("/System/Library/Fonts/Menlo.ttc")
-        {
-            fonts.push(font);
+        let candidates = [
+            ("Zapf Dingbats", r"/System/Library/Fonts/ZapfDingbats.ttf"),
+            ("Menlo", r"/System/Library/Fonts/Menlo.ttc"),
+        ];
+        for (family, path) in candidates {
+            if !loaded_families.contains(family)
+                && let Some(font) = load_from_path(path)
+            {
+                fonts.push(font);
+                loaded_families.insert(family);
+            }
         }
     }
 
@@ -522,11 +525,11 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
             ("Arial", r"C:\Windows\Fonts\arial.ttf"),
         ];
         for (family, path) in candidates {
-            if !loaded_families.contains(family) {
-                if let Some(font) = load_from_path(path) {
-                    fonts.push(font);
-                    loaded_families.insert(family);
-                }
+            if !loaded_families.contains(family)
+                && let Some(font) = load_from_path(path)
+            {
+                fonts.push(font);
+                loaded_families.insert(family);
             }
         }
     }
@@ -557,12 +560,12 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
             ),
             ("FreeSans", "/usr/share/fonts/freefont/FreeSans.ttf"),
         ];
-        for (family, path) in candidates {
-            if !loaded_families.contains(family) {
-                if let Some(font) = load_from_path(path) {
-                    fonts.push(font);
-                    loaded_families.insert(family);
-                }
+        for (family, path) in candidates.iter() {
+            if !loaded_families.contains(family)
+                && let Some(font) = load_from_path(path)
+            {
+                fonts.push(font);
+                loaded_families.insert(family);
             }
         }
     }

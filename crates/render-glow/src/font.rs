@@ -435,12 +435,12 @@ fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
             ("Arial Unicode MS", r"C:\Windows\Fonts\ARIALUNI.TTF"),
             ("Arial", r"C:\Windows\Fonts\arial.ttf"),
         ];
-        for (family, path) in candidates {
-            if !loaded_families.contains(family) {
-                if let Some(font) = load_from_path(path) {
-                    fonts.push(font);
-                    loaded_families.insert(family);
-                }
+        for (family, path) in candidates.iter() {
+            if !loaded_families.contains(family)
+                && let Some(font) = load_from_path(path)
+            {
+                fonts.push(font);
+                loaded_families.insert(family);
             }
         }
     }
@@ -471,12 +471,12 @@ fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
             ),
             ("FreeSans", "/usr/share/fonts/freefont/FreeSans.ttf"),
         ];
-        for (family, path) in candidates {
-            if !loaded_families.contains(family) {
-                if let Some(font) = load_from_path(path) {
-                    fonts.push(font);
-                    loaded_families.insert(family);
-                }
+        for (family, path) in candidates.iter() {
+            if !loaded_families.contains(family)
+                && let Some(font) = load_from_path(path)
+            {
+                fonts.push(font);
+                loaded_families.insert(family);
             }
         }
     }
