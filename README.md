@@ -215,6 +215,7 @@ The suggestion dropdown combines multiple sources, ranked by frecency:
 | Action | Effect |
 |---|---|
 | Click + drag in terminal | Select text |
+| `Shift+drag` or `Option+drag` in terminal | Select text even when an app has mouse reporting enabled (e.g. claude, vim, htop) |
 | `Cmd+click` on a path / link | Open file in `$EDITOR` or browser |
 | Drag the split divider | Resize terminal / editor pane |
 | Drag the scrollbar | Scroll terminal or editor |

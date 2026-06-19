@@ -19,6 +19,9 @@ pub use screen::{DamageRegion, Screen, ScreenSnapshot};
 pub type StyledChars = Vec<(char, Option<[f32; 3]>, Option<[f32; 3]>, u8)>;
 
 /// Style bit flags used in the 4th element of `StyledChars`.
-pub const STYLE_BOLD: u8 = 0b001;
-pub const STYLE_ITALIC: u8 = 0b010;
-pub const STYLE_STRIKETHROUGH: u8 = 0b100;
+pub const STYLE_BOLD: u8 = 0b0001;
+pub const STYLE_ITALIC: u8 = 0b0010;
+pub const STYLE_STRIKETHROUGH: u8 = 0b0100;
+/// SGR 2 — dim/faint.  When set the renderer should multiply the foreground
+/// colour (including the theme default) by ~0.55 to visually halve brightness.
+pub const STYLE_DIM: u8 = 0b1000;

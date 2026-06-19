@@ -5,7 +5,7 @@
 //! Split out of `pipeline.rs` to keep the renderer constructor focused on
 //! resource wiring.
 
-use crate::atlas::{load_emoji_font_bytes, pack_emoji_glyph, pack_glyph};
+use crate::atlas::{CachedGlyph, load_emoji_font_bytes, pack_emoji_glyph, pack_glyph};
 use crate::pipeline::GpuState;
 
 impl<'a> GpuState<'a> {
@@ -97,6 +97,16 @@ impl<'a> GpuState<'a> {
         let font_size = self.font_size;
         let cell_h_px = self.cell_h_px;
 
+        // Whitespace characters must always render as blank, regardless of what
+        // the font provides.  Some Nerd Fonts carry visible glyphs for U+00A0
+        // (non-breaking space), U+2009 (thin space), etc. — a dotted box used
+        // by editors to show invisible characters — which is wrong in a terminal.
+        if ch.is_whitespace() {
+            self.glyph_cache.insert(ch, CachedGlyph::default());
+            self.font = Some(font);
+            return;
+        }
+
         // Check whether the character is actually in the primary font's cmap.
         // fontdue::Font::rasterize returns the .notdef (tofu box) glyph for missing
         // characters, and that glyph has non-zero metrics — so we cannot rely on
@@ -105,19 +115,22 @@ impl<'a> GpuState<'a> {
         let not_in_primary = ch > '\u{7E}' && font.lookup_glyph_index(ch) == 0;
         let (metrics, bitmap) = font.rasterize(ch, font_size);
 
-        // Try Unicode symbol fallback (e.g. Apple Symbols) for non-ASCII not in primary.
+        // Try Unicode symbol fallback fonts in order for non-ASCII not in primary.
+        // Multiple fonts cover different Unicode blocks: Apple Symbols (math/symbols),
+        // Apple Braille (U+2800–U+28FF), Arial Unicode MS (broad catch-all), etc.
         let (final_metrics, final_bitmap, found) = if not_in_primary {
-            if let Some(ref fb) = self.unicode_fallback_font {
+            let mut fallback_result = None;
+            for fb in &self.unicode_fallback_fonts {
                 if fb.lookup_glyph_index(ch) != 0 {
                     let (m, b) = fb.rasterize(ch, font_size);
                     if m.width > 0 && m.height > 0 {
-                        (m, b, true)
-                    } else {
-                        (metrics, bitmap, false)
+                        fallback_result = Some((m, b));
+                        break;
                     }
-                } else {
-                    (metrics, bitmap, false)
                 }
+            }
+            if let Some((m, b)) = fallback_result {
+                (m, b, true)
             } else {
                 (metrics, bitmap, false)
             }
@@ -148,6 +161,11 @@ impl<'a> GpuState<'a> {
                 self.font = Some(font);
                 return;
             }
+            // No font can render this character. Cache a blank entry so we don't
+            // retry every frame and so a white .notdef box isn't rendered instead.
+            self.glyph_cache.insert(ch, CachedGlyph::default());
+            self.font = Some(font);
+            return;
         }
 
         let cached = pack_glyph(

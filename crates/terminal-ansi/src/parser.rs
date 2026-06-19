@@ -17,6 +17,9 @@ enum ParserState {
     #[default]
     Ground,
     Escape,
+    /// ESC followed by an intermediate byte (e.g. `(`, `)`, `*`, `+`).
+    /// Consumes exactly one more byte (the charset designator) and returns to Ground.
+    EscIntermediate,
     Csi,
     Osc,
 }
@@ -58,6 +61,7 @@ impl Parser {
         actions
     }
 
+    #[allow(clippy::too_many_lines)]
     fn feed_byte(&mut self, byte: u8, actions: &mut Vec<Action>) {
         match self.state {
             ParserState::Ground => match byte {
@@ -116,10 +120,48 @@ impl Parser {
                     actions.push(Action::RestoreCursor);
                     self.state = ParserState::Ground;
                 }
+                // ESC M — reverse index (scroll up / RI)
+                b'M' => {
+                    actions.push(Action::ReverseIndex);
+                    self.state = ParserState::Ground;
+                }
+                // ESC D — index (IND, same as linefeed)
+                b'D' => {
+                    actions.push(Action::Linefeed);
+                    self.state = ParserState::Ground;
+                }
+                // ESC E — next line (NEL)
+                b'E' => {
+                    actions.push(Action::CarriageReturn);
+                    actions.push(Action::Linefeed);
+                    self.state = ParserState::Ground;
+                }
+                // ESC c — full reset (RIS) — treat as clear screen + home
+                b'c' => {
+                    actions.push(Action::EraseInDisplay(2));
+                    actions.push(Action::CursorPosition { row: 1, col: 1 });
+                    self.state = ParserState::Ground;
+                }
+                // ESC = / ESC > — application/normal keypad mode (ignored)
+                b'=' | b'>' => {
+                    self.state = ParserState::Ground;
+                }
+                // ESC ( ESC ) ESC * ESC + — charset designation sequences.
+                // The following byte is the designator (e.g. 'B' for ASCII,
+                // '0' for DEC special graphics). We don't implement character
+                // set switching but must consume the extra byte so it is not
+                // printed as a literal character.
+                b'(' | b')' | b'*' | b'+' => {
+                    self.state = ParserState::EscIntermediate;
+                }
                 _ => {
                     self.state = ParserState::Ground;
                 }
             },
+            ParserState::EscIntermediate => {
+                // Consume the charset designator byte and return to Ground.
+                self.state = ParserState::Ground;
+            }
             ParserState::Csi => {
                 if (0x40..=0x7e).contains(&byte) {
                     self.handle_csi_final(byte, actions);
@@ -656,6 +698,33 @@ mod tests {
                 "shape={shape}"
             );
         }
+    }
+
+    #[test]
+    fn charset_designation_consumes_designator_byte() {
+        // ESC ( B = "G0 charset = ASCII" — very common; the 'B' must NOT be
+        // printed as a literal character.
+        let mut parser = Parser::new();
+        let actions = parser.advance(b"\x1b(B");
+        assert!(actions.is_empty(), "expected no actions, got {actions:?}");
+
+        // ESC ) 0 = G1 charset = DEC Special Graphics
+        let actions = parser.advance(b"\x1b)0");
+        assert!(actions.is_empty(), "expected no actions, got {actions:?}");
+
+        // Characters after the sequence must still be printed normally.
+        let actions = parser.advance(b"\x1b(Babc");
+        assert_eq!(
+            actions,
+            vec![Action::Print('a'), Action::Print('b'), Action::Print('c')]
+        );
+    }
+
+    #[test]
+    fn esc_m_emits_reverse_index() {
+        let mut parser = Parser::new();
+        let actions = parser.advance(b"\x1bM");
+        assert_eq!(actions, vec![Action::ReverseIndex]);
     }
 
     #[test]

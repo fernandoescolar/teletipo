@@ -11,8 +11,8 @@ use crate::font::CpuFontRasterizer;
 use crate::shaders::{compile_atlas_program, compile_color_atlas_program, compile_program};
 use crate::types::{
     ATLAS_TEX_SIZE, AtlasGlyph, COLOR_ATLAS_TEX_SIZE, ColorAtlasEntry, FrameLayout, GlyphBitmap,
-    PALETTE_MAX_VISIBLE, SEPARATOR_PX, SETTINGS_MAX_VISIBLE_SEARCH, STYLE_BOLD, STYLE_ITALIC,
-    STYLE_STRIKE, ShapedLines, ShapedTerminalCache, TAB_H_MULT,
+    PALETTE_MAX_VISIBLE, SEPARATOR_PX, SETTINGS_MAX_VISIBLE_SEARCH, STYLE_BOLD, STYLE_DIM,
+    STYLE_ITALIC, STYLE_STRIKE, ShapedLines, ShapedTerminalCache, TAB_H_MULT,
 };
 use crate::util::{
     char_col_width, editor_offset_to_row_col, hash_text, is_icon_like, normalize_rect_selection,
@@ -668,17 +668,28 @@ impl GlPainter {
                         continue;
                     }
 
-                    let fg = snapshot
-                        .terminal_fg_colors
-                        .get(sg.full_char_idx)
-                        .and_then(|c| *c)
-                        .map(|c| [c[0], c[1], c[2], 1.0])
-                        .unwrap_or(fallback_fg);
                     let style = snapshot
                         .terminal_styles
                         .get(sg.full_char_idx)
                         .copied()
                         .unwrap_or(0);
+                    let fg = snapshot
+                        .terminal_fg_colors
+                        .get(sg.full_char_idx)
+                        .and_then(|c| *c)
+                        .map(|c| [c[0], c[1], c[2], 1.0])
+                        .unwrap_or_else(|| {
+                            if style & STYLE_DIM != 0 {
+                                [
+                                    fallback_fg[0] * 0.55,
+                                    fallback_fg[1] * 0.55,
+                                    fallback_fg[2] * 0.55,
+                                    1.0,
+                                ]
+                            } else {
+                                fallback_fg
+                            }
+                        });
 
                     if sg.glyph_id == 0 {
                         // Primary font has no glyph for this character.
@@ -726,13 +737,24 @@ impl GlPainter {
                     }
 
                     let idx = line_char_start + col;
+                    let style = snapshot.terminal_styles.get(idx).copied().unwrap_or(0);
                     let fg = snapshot
                         .terminal_fg_colors
                         .get(idx)
                         .and_then(|c| *c)
                         .map(|c| [c[0], c[1], c[2], 1.0])
-                        .unwrap_or(fallback_fg);
-                    let style = snapshot.terminal_styles.get(idx).copied().unwrap_or(0);
+                        .unwrap_or_else(|| {
+                            if style & STYLE_DIM != 0 {
+                                [
+                                    fallback_fg[0] * 0.55,
+                                    fallback_fg[1] * 0.55,
+                                    fallback_fg[2] * 0.55,
+                                    1.0,
+                                ]
+                            } else {
+                                fallback_fg
+                            }
+                        });
 
                     self.push_glyph_styled(ch, x, y, layout.cell_w_px, layout.cell_h_px, fg, style);
                 }
@@ -2351,19 +2373,10 @@ impl GlPainter {
                     }
                 }
             }
-            return;
         }
 
-        // Fallback for glyphs outside the tiny bitmap table.
-        let inset_x = w * 0.2;
-        let inset_y = h * 0.2;
-        self.push_rect(
-            x + inset_x,
-            y + inset_y,
-            x + w - inset_x,
-            y + h - inset_y,
-            color,
-        );
+        // No glyph available in any font or bitmap table — skip silently.
+        // Drawing a box placeholder is more confusing than blank space.
     }
 
     #[allow(clippy::too_many_arguments)]

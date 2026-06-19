@@ -447,10 +447,17 @@ pub(crate) fn load_bold_font_bytes(db: &fontdb::Database, config: &FontConfig) -
     query_bold_monospace_bytes(db)
 }
 
-/// Tries to load a Unicode-capable fallback font for rendering characters not
-/// supported by the primary monospace font (box-drawing, block elements, symbols).
-/// Returns raw font bytes suitable for `fontdue::Font::from_bytes`.
-pub(crate) fn load_unicode_fallback_font_bytes(db: &fontdb::Database) -> Option<Vec<u8>> {
+/// Load all available Unicode fallback fonts in priority order.
+///
+/// Multiple fonts are needed because no single system font covers every
+/// Unicode block a terminal might render.  For example, on macOS:
+///   - "Apple Symbols" covers box-drawing, math, and misc symbols
+///   - "Apple Braille" covers Braille Patterns (U+2800–U+28FF), used by
+///     CLI spinners (including Claude Code's ⠸⠴⠦ spinner)
+///   - "Zapf Dingbats" covers Dingbats (U+2700–U+27BF) including ❯ (U+276F)
+///   - "Menlo" covers a broad range including many chars missing from symbol fonts
+///   - "Arial Unicode MS" covers a very wide range as a catch-all
+pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
     fn query_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
         let query = fontdb::Query {
             families: &[fontdb::Family::Name(family)],
@@ -460,21 +467,58 @@ pub(crate) fn load_unicode_fallback_font_bytes(db: &fontdb::Database) -> Option<
         db.with_face_data(id, |data, _| data.to_vec())
     }
 
-    // Ordered by Unicode coverage preference: macOS first, then Linux/Windows
-    for family in [
-        "Apple Symbols",    // macOS – broad symbol coverage, outline-based
+    fn load_from_path(path: &str) -> Option<fontdue::Font> {
+        let bytes = std::fs::read(path).ok()?;
+        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+    }
+
+    let families: &[&str] = &[
+        "Apple Symbols",    // macOS – broad symbol coverage (math, misc symbols)
+        "Apple Braille",    // macOS – Braille Patterns (U+2800–U+28FF)
+        "Zapf Dingbats",    // macOS – Dingbats block (U+2700–U+27BF), includes ❯
+        "Menlo",            // macOS – broad monospace coverage including many symbols
         "Arial Unicode MS", // macOS/Windows – very wide Unicode range
-        "Segoe UI Symbol",  // Windows
+        "Segoe UI Symbol",  // Windows – broad symbol coverage
         "Noto Sans",        // Linux (if installed)
         "DejaVu Sans",      // Linux fallback
         "FreeSans",         // another Linux option
-    ] {
-        if let Some(bytes) = query_bytes(db, family) {
-            return Some(bytes);
+    ];
+
+    let mut loaded_families = std::collections::HashSet::new();
+    let mut fonts: Vec<fontdue::Font> = families
+        .iter()
+        .filter_map(|family| {
+            let bytes = query_bytes(db, family)?;
+            let font =
+                fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
+                    .ok()?;
+            loaded_families.insert(*family);
+            Some(font)
+        })
+        .collect();
+
+    // macOS direct-path fallbacks for fonts that fontdb might miss.
+    // These are essential because some macOS font locations are not scanned by fontdb,
+    // and Apple's font naming conventions can vary across OS versions.
+    #[cfg(target_os = "macos")]
+    {
+        // ZapfDingbats covers Dingbats U+2700–U+27BF, including ❯ (U+276F)
+        // which is widely used in shell prompts (fish, starship, oh-my-zsh).
+        if !loaded_families.contains("Zapf Dingbats")
+            && let Some(font) = load_from_path("/System/Library/Fonts/ZapfDingbats.ttf")
+        {
+            fonts.push(font);
+        }
+        // Menlo is always present on macOS and covers many Unicode ranges including
+        // Dingbats, box drawing, and misc symbols that the dedicated symbol fonts miss.
+        if !loaded_families.contains("Menlo")
+            && let Some(font) = load_from_path("/System/Library/Fonts/Menlo.ttc")
+        {
+            fonts.push(font);
         }
     }
 
-    None
+    fonts
 }
 
 pub(crate) const TEXT_ATLAS_SIZE: u32 = 1024;

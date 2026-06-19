@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 // ── Style bit flags ───────────────────────────────────────────────────────────
 
-pub(crate) const STYLE_BOLD: u8 = 0b001;
-pub(crate) const STYLE_ITALIC: u8 = 0b010;
-pub(crate) const STYLE_STRIKE: u8 = 0b100;
+pub(crate) const STYLE_BOLD: u8 = 0b0001;
+pub(crate) const STYLE_ITALIC: u8 = 0b0010;
+pub(crate) const STYLE_STRIKE: u8 = 0b0100;
+pub(crate) const STYLE_DIM: u8 = 0b1000;
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 

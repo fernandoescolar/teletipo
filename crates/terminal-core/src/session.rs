@@ -32,6 +32,7 @@ pub trait TerminalDisplay {
     fn cursor_horizontal_absolute(&mut self, col: u16);
     fn cursor_vertical_absolute(&mut self, row: u16);
     fn cursor_position(&mut self, row: u16, col: u16);
+    fn reverse_index(&mut self);
     fn save_cursor(&mut self);
     fn restore_cursor(&mut self);
     fn set_scroll_region(&mut self, top: u16, bottom: u16);
@@ -126,6 +127,10 @@ impl TerminalDisplay for Screen {
 
     fn cursor_position(&mut self, row: u16, col: u16) {
         Screen::cursor_position(self, row, col)
+    }
+
+    fn reverse_index(&mut self) {
+        Screen::reverse_index(self)
     }
 
     fn save_cursor(&mut self) {
@@ -274,7 +279,8 @@ pub struct GenericTerminalSession<P = Parser, D = Screen> {
     parser: P,
     screen: D,
     last_exit_code: Option<i32>,
-    mouse_mode: u16,
+    mouse_tracking: u16,
+    mouse_sgr: bool,
     bracketed_paste: bool,
     pending_responses: Vec<String>,
     cursor_shape: u16,
@@ -308,7 +314,8 @@ impl GenericTerminalSession<Parser, Screen> {
             parser: Parser::new(),
             screen: Screen::new(rows, cols),
             last_exit_code: None,
-            mouse_mode: 0,
+            mouse_tracking: 0,
+            mouse_sgr: false,
             bracketed_paste: false,
             pending_responses: Vec::new(),
             cursor_shape: 0,
@@ -333,7 +340,8 @@ where
             parser,
             screen,
             last_exit_code: None,
-            mouse_mode: 0,
+            mouse_tracking: 0,
+            mouse_sgr: false,
             bracketed_paste: false,
             pending_responses: Vec::new(),
             cursor_shape: 0,
@@ -404,6 +412,7 @@ where
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn feed(&mut self, bytes: &[u8]) {
         let actions = self.parser.advance(bytes);
         metrics::histogram!("parse_actions").record(actions.len() as f64);
@@ -440,16 +449,18 @@ where
                 Action::DecPrivateModeSet(mode) => match mode {
                     1 => self.application_cursor_keys = true,
                     1049 => self.screen.set_alternate_screen(true),
-                    1000 | 1002 | 1003 | 1006 => self.mouse_mode = mode,
+                    1000 | 1002 | 1003 => self.mouse_tracking = mode,
+                    1006 => self.mouse_sgr = true,
                     2004 => self.bracketed_paste = true,
                     _ => {}
                 },
                 Action::DecPrivateModeReset(mode) => match mode {
                     1 => self.application_cursor_keys = false,
                     1049 => self.screen.set_alternate_screen(false),
-                    1000 | 1002 | 1003 | 1006 if self.mouse_mode == mode => {
-                        self.mouse_mode = 0;
+                    1000 | 1002 | 1003 if self.mouse_tracking == mode => {
+                        self.mouse_tracking = 0;
                     }
+                    1006 => self.mouse_sgr = false,
                     2004 => self.bracketed_paste = false,
                     _ => {}
                 },
@@ -505,6 +516,7 @@ where
                     let flags = self.kitty_keyboard_flags.last().copied().unwrap_or(0);
                     self.pending_responses.push(format!("\x1b[?{flags}u"));
                 }
+                Action::ReverseIndex => self.screen.reverse_index(),
             }
         }
     }
@@ -576,9 +588,15 @@ where
         self.last_exit_code.take()
     }
 
-    /// Active mouse reporting mode (0 = off, 1000/1002/1003/1006 = various protocols).
+    /// Active mouse tracking mode (0 = off, 1000/1002/1003 = reporting level).
+    /// Use `mouse_sgr` to check whether SGR (1006) extended encoding is active.
     pub fn mouse_mode(&self) -> u16 {
-        self.mouse_mode
+        self.mouse_tracking
+    }
+
+    /// Whether SGR extended mouse encoding (DEC 1006) is active.
+    pub fn mouse_sgr(&self) -> bool {
+        self.mouse_sgr
     }
 
     /// Whether bracketed paste mode (DEC 2004) is currently active.
@@ -760,6 +778,8 @@ mod tests {
         fn cursor_vertical_absolute(&mut self, _row: u16) {}
 
         fn cursor_position(&mut self, _row: u16, _col: u16) {}
+
+        fn reverse_index(&mut self) {}
 
         fn save_cursor(&mut self) {}
 
@@ -1013,9 +1033,9 @@ mod tests {
         session.feed(b"\x1b[?1000l");
         assert_eq!(session.mouse_mode(), 0);
         session.feed(b"\x1b[?1006h");
-        assert_eq!(session.mouse_mode(), 1006);
+        assert!(session.mouse_sgr());
         session.feed(b"\x1b[?1006l");
-        assert_eq!(session.mouse_mode(), 0);
+        assert!(!session.mouse_sgr());
     }
 
     #[test]

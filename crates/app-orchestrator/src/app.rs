@@ -253,6 +253,10 @@ impl AppTerminal {
         self.session.mouse_mode()
     }
 
+    pub fn mouse_sgr(&self) -> bool {
+        self.session.mouse_sgr()
+    }
+
     pub fn bracketed_paste(&self) -> bool {
         self.session.bracketed_paste()
     }
@@ -553,9 +557,14 @@ impl App {
         self.terminal.take_last_exit_code()
     }
 
-    /// Active mouse reporting mode (0 = off, 1000/1002/1003/1006).
+    /// Active mouse tracking mode (0 = off, 1000/1002/1003).
     pub fn mouse_mode(&self) -> u16 {
         self.terminal.mouse_mode()
+    }
+
+    /// Whether SGR extended mouse encoding (DEC 1006) is active.
+    pub fn mouse_sgr(&self) -> bool {
+        self.terminal.mouse_sgr()
     }
 
     /// Whether bracketed paste mode (DEC 2004) is active.

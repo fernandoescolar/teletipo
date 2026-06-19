@@ -1503,6 +1503,7 @@ pub(crate) fn add_text_verts(
     }
     let px_x = 2.0 / win_w;
     let px_y = 2.0 / win_h;
+    const STYLE_DIM: u8 = 0b1000;
     let mut row = 0usize;
     let mut col = 0usize;
     for (char_idx, ch) in text.chars().enumerate() {
@@ -1521,11 +1522,18 @@ pub(crate) fn add_text_verts(
             continue;
         }
         let visible_row = row - skip_rows;
+        let style = styles.get(char_idx).copied().unwrap_or(0);
+        let is_dim = style & STYLE_DIM != 0;
         let [r, g, b, a] = match fg_colors.get(char_idx).copied().flatten() {
             Some([cr, cg, cb]) => [cr, cg, cb, default_color[3]],
+            None if is_dim => [
+                default_color[0] * 0.55,
+                default_color[1] * 0.55,
+                default_color[2] * 0.55,
+                default_color[3],
+            ],
             None => default_color,
         };
-        let style = styles.get(char_idx).copied().unwrap_or(0);
         let is_bold = style & 0b001 != 0;
         let is_italic = style & 0b010 != 0;
         // Pick bold glyph cache when available, fall back to regular.
@@ -1612,13 +1620,21 @@ pub(crate) fn add_text_verts_shaped(
             continue;
         }
         let visible_row = line_idx - skip_rows;
+        const STYLE_DIM: u8 = 0b1000;
         for sg in shaped_line {
             let char_idx = sg.full_char_idx;
+            let style = styles.get(char_idx).copied().unwrap_or(0);
+            let is_dim = style & STYLE_DIM != 0;
             let [r, g, b, a] = match fg_colors.get(char_idx).copied().flatten() {
                 Some([cr, cg, cb]) => [cr, cg, cb, default_color[3]],
+                None if is_dim => [
+                    default_color[0] * 0.55,
+                    default_color[1] * 0.55,
+                    default_color[2] * 0.55,
+                    default_color[3],
+                ],
                 None => default_color,
             };
-            let style = styles.get(char_idx).copied().unwrap_or(0);
             let is_bold = style & 0b001 != 0;
             let is_italic = style & 0b010 != 0;
 

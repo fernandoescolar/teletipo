@@ -7,7 +7,7 @@ use winit::window::Window;
 
 use crate::atlas::{
     CachedGlyph, load_bold_font_bytes, load_font_bytes, load_system_font_database,
-    load_unicode_fallback_font_bytes, pack_glyph, shape_terminal_text,
+    load_unicode_fallback_fonts, pack_glyph, shape_terminal_text,
 };
 use crate::geometry::{
     TEXT_VERTEX_BUF_CAPACITY, VERTEX_BUF_CAPACITY, add_text_verts, add_text_verts_shaped,
@@ -46,8 +46,8 @@ pub(crate) struct GpuState<'a> {
     /// Cache of glyphs rasterized by TTF glyph ID (used for ligature glyphs).
     /// Keyed by `(glyph_id, is_bold)`.
     pub(crate) shaped_glyph_cache: HashMap<(u16, bool), CachedGlyph>,
-    /// Fallback font for non-ASCII characters not covered by the primary monospace font.
-    pub(crate) unicode_fallback_font: Option<fontdue::Font>,
+    /// Fallback fonts tried in order for non-ASCII chars not covered by the primary font.
+    pub(crate) unicode_fallback_fonts: Vec<fontdue::Font>,
     /// Raw bytes of a colour emoji font (Apple Color Emoji / Noto Color Emoji / Segoe UI Emoji).
     /// Used to extract SBIX/CBDT raster images for characters fontdue cannot render.
     ///
@@ -84,7 +84,7 @@ struct FontInitResources {
     atlas_alloc_x: u32,
     atlas_alloc_y: u32,
     atlas_row_h: u32,
-    unicode_fallback_font: Option<fontdue::Font>,
+    unicode_fallback_fonts: Vec<fontdue::Font>,
 }
 
 struct AsciiRasterContext<'a> {
@@ -155,9 +155,7 @@ fn init_font_resources(
     };
     let glyph_cache = rasterize_ascii_glyphs(font.as_ref(), &mut raster_ctx);
 
-    let unicode_fallback_font = load_unicode_fallback_font_bytes(&font_db).and_then(|bytes| {
-        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
-    });
+    let unicode_fallback_fonts = load_unicode_fallback_fonts(&font_db);
 
     let bold_font_bytes = load_bold_font_bytes(&font_db, &render_config.font);
     let bold_font = bold_font_bytes.as_ref().and_then(|bytes| {
@@ -179,7 +177,7 @@ fn init_font_resources(
         atlas_alloc_x,
         atlas_alloc_y,
         atlas_row_h,
-        unicode_fallback_font,
+        unicode_fallback_fonts,
     }
 }
 
@@ -224,7 +222,7 @@ impl<'a> GpuState<'a> {
             atlas_alloc_x,
             atlas_alloc_y,
             atlas_row_h,
-            unicode_fallback_font,
+            unicode_fallback_fonts,
         } = init_font_resources(&queue, &atlas_texture, render_config);
 
         // Colour emoji font is loaded lazily on first use — see
@@ -255,7 +253,7 @@ impl<'a> GpuState<'a> {
             theme: render_config.theme.clone(),
             font_data,
             shaped_glyph_cache: HashMap::new(),
-            unicode_fallback_font,
+            unicode_fallback_fonts,
             emoji_font_bytes: None,
             emoji_load_attempted: false,
             last_terminal_version: 0,

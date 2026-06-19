@@ -1,5 +1,5 @@
 use crate::cell::Cell;
-use crate::{STYLE_BOLD, STYLE_ITALIC, STYLE_STRIKETHROUGH};
+use crate::{STYLE_BOLD, STYLE_DIM, STYLE_ITALIC, STYLE_STRIKETHROUGH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnsiColor {
@@ -43,10 +43,16 @@ pub fn ansi_cell_tuple_with_palette(
     };
     let mut fg = ansi_color_to_rgb_with_palette(fg_color, palette);
     let bg = ansi_color_to_rgb_with_palette(bg_color, palette);
-    if cell.style.dim {
-        fg = fg.map(|[r, g, b]| [r * 0.55, g * 0.55, b * 0.55]);
-    }
     let mut style_bits: u8 = 0;
+    if cell.style.dim {
+        // If fg is an explicit color, dim it here. If fg is None (default theme
+        // color), set STYLE_DIM so the renderer can dim its own default color.
+        if fg.is_some() {
+            fg = fg.map(|[r, g, b]| [r * 0.55, g * 0.55, b * 0.55]);
+        } else {
+            style_bits |= STYLE_DIM;
+        }
+    }
     if cell.style.bold {
         style_bits |= STYLE_BOLD;
     }

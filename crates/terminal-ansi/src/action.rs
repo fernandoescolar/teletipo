@@ -60,4 +60,6 @@ pub enum Action {
     KittyKeyboardPop(u32),
     /// Kitty keyboard protocol: query current flags (`\x1b[?u`).
     KittyKeyboardQuery,
+    /// ESC M — reverse index (RI): move cursor up one line, scroll down if at top margin.
+    ReverseIndex,
 }

@@ -207,10 +207,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         // Forward cursor motion to PTY when in fullscreen with motion reporting.
         // Mode 1002: only when a mouse button is held (button-motion tracking).
         // Mode 1003: always (any-event tracking).
+        // Shift or Alt/Option held: bypass reporting for local text selection.
         let mouse_mode = state.tab().app.mouse_mode();
+        let bypass_mouse = state.modifiers.shift_down || state.modifiers.alt_down;
         if state.tab().app.is_alternate_screen() && mouse_mode >= 1002 {
-            let should_send =
-                mouse_mode == 1003 || (mouse_mode == 1002 && state.cursor.mouse_btn_held.is_some());
+            let should_send = !bypass_mouse
+                && (mouse_mode == 1003
+                    || (mouse_mode == 1002 && state.cursor.mouse_btn_held.is_some()));
             if should_send {
                 let tab_bar_h_f = state.tab_bar_h();
                 let split_ratio = state.tab().split_ratio;
@@ -230,8 +233,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     pad_h,
                     pad_v,
                 ) {
+                    let encode_mode = if state.tab().app.mouse_sgr() {
+                        1006
+                    } else {
+                        mouse_mode
+                    };
                     let bytes =
-                        encode_mouse_motion(state.cursor.mouse_btn_held, row, col, mouse_mode);
+                        encode_mouse_motion(state.cursor.mouse_btn_held, row, col, encode_mode);
                     state.send_terminal_input(&bytes);
                 }
             }
@@ -266,10 +274,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
             state.drag.dragging_editor_horizontal_scrollbar = false;
             state.tab_mut().is_selecting = false;
             state.tab_mut().is_selecting_editor = false;
+            // Track whether the press was forwarded to PTY before clearing.
+            // If Shift was held during press, mouse_btn_held was never set.
+            let press_was_forwarded = state.cursor.mouse_btn_held.is_some();
             state.cursor.mouse_btn_held = None;
-            // Send mouse release to PTY when mouse reporting is active.
+            // Send mouse release to PTY only if the press was also forwarded.
             let mouse_mode = state.tab().app.mouse_mode();
-            if mouse_mode != 0 {
+            if mouse_mode != 0 && press_was_forwarded {
                 let tab_bar_h = state.tab_bar_h() as f64;
                 let split_ratio = state.tab().split_ratio;
                 let term_row_count = state.tab().term_row_count;
@@ -288,7 +299,12 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     pad_h,
                     pad_v,
                 ) {
-                    let bytes = encode_mouse_btn(0, row, col, false, mouse_mode);
+                    let encode_mode = if state.tab().app.mouse_sgr() {
+                        1006
+                    } else {
+                        mouse_mode
+                    };
+                    let bytes = encode_mouse_btn(0, row, col, false, encode_mode);
                     state.send_terminal_input(&bytes);
                 }
             }
@@ -592,12 +608,18 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 pad_h,
                 pad_v,
             ) {
-                // If a mouse reporting mode is active, send the click to the PTY
-                // instead of starting a local text selection.
+                // If a mouse reporting mode is active and neither Shift nor Alt/Option
+                // is held, forward the click to the PTY. Either modifier bypasses mouse
+                // reporting so the user can do a local text selection.
                 let mouse_mode = state.tab().app.mouse_mode();
-                if mouse_mode != 0 {
+                if mouse_mode != 0 && !state.modifiers.shift_down && !state.modifiers.alt_down {
                     let (row, col) = cell;
-                    let bytes = encode_mouse_btn(0, row, col, true, mouse_mode);
+                    let encode_mode = if state.tab().app.mouse_sgr() {
+                        1006
+                    } else {
+                        mouse_mode
+                    };
+                    let bytes = encode_mouse_btn(0, row, col, true, encode_mode);
                     state.send_terminal_input(&bytes);
                     state.cursor.mouse_btn_held = Some(0);
                     return true;
@@ -905,8 +927,13 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 {
                     // Button 64 = scroll up, 65 = scroll down.
                     let btn = if *delta_lines > 0.0 { 64u8 } else { 65u8 };
+                    let encode_mode = if state.tab().app.mouse_sgr() {
+                        1006
+                    } else {
+                        mouse_mode
+                    };
                     for _ in 0..lines {
-                        let bytes = encode_mouse_btn(btn, row, col, true, mouse_mode);
+                        let bytes = encode_mouse_btn(btn, row, col, true, encode_mode);
                         state.send_terminal_input(&bytes);
                     }
                     return true;

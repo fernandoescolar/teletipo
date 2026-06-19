@@ -389,6 +389,28 @@ impl Screen {
         self.bump_version();
     }
 
+    /// ESC M — reverse index: move cursor up one line, scrolling the scroll
+    /// region down if the cursor is already at the top margin.
+    pub fn reverse_index(&mut self) {
+        let top = self.scroll_region.map_or(0, |(t, _)| t);
+        let rows = self.active_grid().rows;
+        let bottom = self
+            .scroll_region
+            .map_or(rows.saturating_sub(1), |(_, b)| b);
+        let grid = self.active_grid_mut();
+        if grid.cursor_row == top {
+            // At top margin — insert a blank line by scrolling the region down.
+            for row in (top..bottom).rev() {
+                Self::copy_row(grid, row, row + 1);
+            }
+            grid.clear_row(top);
+        } else {
+            grid.cursor_row = grid.cursor_row.saturating_sub(1);
+        }
+        grid.pending_wrap = false;
+        self.bump_version();
+    }
+
     pub fn cursor_down(&mut self, n: u16) {
         let grid = self.active_grid_mut();
         let delta = n as usize;

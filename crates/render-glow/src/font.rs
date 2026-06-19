@@ -13,7 +13,12 @@ pub(crate) struct CpuFontRasterizer {
     pub(crate) font_size_px: f32,
     pub(crate) primary_font: Option<fontdue::Font>,
     pub(crate) primary_font_source: Option<FontSource>,
-    fallback_font: Option<fontdue::Font>,
+    /// Ordered list of Unicode symbol fallback fonts tried when a character
+    /// is absent from the primary font.  Uses specific fonts (Apple Symbols,
+    /// ZapfDingbats, Arial Unicode MS, …) rather than the generic SansSerif
+    /// family, which on macOS resolves to San Francisco and returns stub box
+    /// glyphs for many Unicode ranges fontdue cannot render.
+    unicode_fallback_fonts: Vec<fontdue::Font>,
     /// Outline emoji font (monochrome, e.g. Noto Emoji) — used when no color
     /// bitmap strike is available for a character.
     emoji_font: Option<fontdue::Font>,
@@ -25,7 +30,7 @@ pub(crate) struct CpuFontRasterizer {
 
 impl CpuFontRasterizer {
     pub(crate) fn new(family: Option<String>, font_size_px: f32) -> Self {
-        let (primary_font, primary_font_source, fallback_font, emoji_font, emoji_source) =
+        let (primary_font, primary_font_source, unicode_fallback_fonts, emoji_font, emoji_source) =
             load_fonts_for_family(family.as_deref());
         let color_rasterizer =
             emoji_source.and_then(|(path, fi)| ColorEmojiRasterizer::new(&path, fi));
@@ -33,7 +38,7 @@ impl CpuFontRasterizer {
             font_size_px,
             primary_font,
             primary_font_source,
-            fallback_font,
+            unicode_fallback_fonts,
             emoji_font,
             color_rasterizer,
             glyph_cache: HashMap::new(),
@@ -72,6 +77,13 @@ impl CpuFontRasterizer {
     }
 
     pub(crate) fn glyph(&mut self, ch: char, style: u8) -> Option<GlyphBitmap> {
+        // Whitespace characters must always render as blank. Some fonts carry
+        // visible glyphs for U+00A0 and other Unicode spaces (editor-style
+        // "show invisible characters" markers) that must not appear in a terminal.
+        if ch.is_whitespace() {
+            return None;
+        }
+
         let style_key = style & (STYLE_BOLD | STYLE_ITALIC);
         if let Some(g) = self.glyph_cache.get(&(ch, style_key)) {
             return Some(g.clone());
@@ -101,10 +113,10 @@ impl CpuFontRasterizer {
         {
             return Some(font);
         }
-        if let Some(font) = self.fallback_font.as_ref()
-            && font.lookup_glyph_index(ch) != 0
-        {
-            return Some(font);
+        for font in &self.unicode_fallback_fonts {
+            if font.lookup_glyph_index(ch) != 0 {
+                return Some(font);
+            }
         }
         if let Some(font) = self.emoji_font.as_ref()
             && font.lookup_glyph_index(ch) != 0
@@ -231,7 +243,7 @@ pub(crate) fn shape_line(
 type LoadedFonts = (
     Option<fontdue::Font>,  // primary
     Option<FontSource>,     // primary source
-    Option<fontdue::Font>,  // fallback (SansSerif)
+    Vec<fontdue::Font>,     // Unicode symbol fallbacks (ordered)
     Option<fontdue::Font>,  // outline emoji (Noto Emoji, for fontdue)
     Option<(PathBuf, u32)>, // color emoji: (file path, face index)
 );
@@ -301,14 +313,7 @@ pub(crate) fn load_fonts_for_family(family: Option<&str>) -> LoadedFonts {
         .ok()
     });
 
-    let fallback = load_font_from_query(
-        &db,
-        Query {
-            families: &[Family::SansSerif],
-            weight: Weight::NORMAL,
-            ..Query::default()
-        },
-    );
+    let fallback = load_unicode_fallback_fonts(&db);
 
     // Load a monochrome outline emoji font for fontdue rasterization.
     // Only load fonts whose glyph outlines fontdue can rasterize (glyf/CFF).
@@ -362,6 +367,65 @@ pub(crate) fn load_fonts_for_family(family: Option<&str>) -> LoadedFonts {
     }
 
     (primary, primary_source, fallback, emoji, color_emoji_source)
+}
+
+/// Load an ordered list of Unicode symbol fallback fonts.
+/// Specific fonts with known good Unicode coverage are preferred over generic
+/// family queries (SansSerif on macOS resolves to San Francisco, which has stub
+/// glyph outlines for many Unicode ranges that fontdue cannot render).
+fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
+    const FAMILIES: &[&str] = &[
+        "Apple Symbols",
+        "Apple Braille",
+        "Zapf Dingbats",
+        "Menlo",
+        "Arial Unicode MS",
+        "Segoe UI Symbol",
+        "Noto Sans",
+        "DejaVu Sans",
+        "FreeSans",
+    ];
+
+    let mut loaded_families = std::collections::HashSet::new();
+    let mut fonts: Vec<fontdue::Font> = FAMILIES
+        .iter()
+        .filter_map(|family| {
+            let source = load_font_source_from_query(
+                db,
+                Query {
+                    families: &[Family::Name(family)],
+                    weight: Weight::NORMAL,
+                    ..Query::default()
+                },
+            )?;
+            let font =
+                fontdue::Font::from_bytes(source.bytes.as_ref(), fontdue::FontSettings::default())
+                    .ok()?;
+            loaded_families.insert(*family);
+            Some(font)
+        })
+        .collect();
+
+    // macOS direct-path fallbacks for fonts that fontdb might miss.
+    #[cfg(target_os = "macos")]
+    {
+        fn load_from_path(path: &str) -> Option<fontdue::Font> {
+            let bytes = std::fs::read(path).ok()?;
+            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+        }
+        if !loaded_families.contains("Zapf Dingbats")
+            && let Some(font) = load_from_path("/System/Library/Fonts/ZapfDingbats.ttf")
+        {
+            fonts.push(font);
+        }
+        if !loaded_families.contains("Menlo")
+            && let Some(font) = load_from_path("/System/Library/Fonts/Menlo.ttc")
+        {
+            fonts.push(font);
+        }
+    }
+
+    fonts
 }
 
 fn resolve_family_name(db: &fontdb::Database, name: &str) -> Option<String> {
@@ -425,22 +489,6 @@ fn find_emoji_font_path(db: &fontdb::Database, families: &[&str]) -> Option<(Pat
         return Some((path, face_info.index));
     }
     None
-}
-
-fn load_font_from_query(db: &fontdb::Database, query: Query<'_>) -> Option<fontdue::Font> {
-    let id = db.query(&query)?;
-    let mut loaded: Option<fontdue::Font> = None;
-    let _ = db.with_face_data(id, |data, face_index| {
-        loaded = fontdue::Font::from_bytes(
-            data,
-            fontdue::FontSettings {
-                collection_index: face_index,
-                ..fontdue::FontSettings::default()
-            },
-        )
-        .ok();
-    });
-    loaded
 }
 
 fn load_font_source_from_query(db: &fontdb::Database, query: Query<'_>) -> Option<FontSource> {
