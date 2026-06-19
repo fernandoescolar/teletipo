@@ -62,6 +62,10 @@ struct SavedSelection {
 }
 
 fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) -> bool {
+    if state.keybindings_panel.open {
+        crate::keybindings_ui::handle_keybindings_key(state, key_event);
+        return true;
+    }
     if state.settings.open {
         settings::handle_settings_key(state, key_event);
         return true;

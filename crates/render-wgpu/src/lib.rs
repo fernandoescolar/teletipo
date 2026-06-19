@@ -22,10 +22,11 @@ pub use geometry::{
 };
 pub use renderer::{NullRenderer, Renderer, WgpuRenderer};
 pub use types::{
-    AppWindowEvent, ColorTheme, CommandPalette, ContextMenu, DamageRegion, FontConfig, PaneKind,
-    PaneLayout, PipelineStage, RenderCell, RenderConfig, RenderRow, RenderSnapshot, RenderStats,
-    SearchPanel, SettingsItem, SettingsOverlay, SuggestionDropdown, TerminalLink, Toast, ToastKind,
-    VsyncMode, default_ansi_palette,
+    AppWindowEvent, ColorTheme, CommandPalette, ContextMenu, DamageRegion, FontConfig,
+    KeybindingRow, KeybindingsOverlay, PaneKind, PaneLayout, PipelineStage, RenderCell,
+    RenderConfig, RenderRow, RenderSnapshot, RenderStats, SearchPanel, SettingsItem,
+    SettingsOverlay, SuggestionDropdown, TerminalLink, Toast, ToastKind, VsyncMode,
+    default_ansi_palette,
 };
 pub use window::{
     run_gpu_window, run_gpu_window_live, run_gpu_window_live_with_events,

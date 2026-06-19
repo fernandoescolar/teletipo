@@ -484,6 +484,7 @@ impl GlPainter {
         self.draw_suggestion_dropdown(snapshot, &layout);
         self.draw_context_menu(snapshot, &layout);
         self.draw_settings_overlay(snapshot, &layout);
+        self.draw_keybindings_overlay(snapshot, &layout);
         self.draw_command_palette(snapshot, &layout);
         self.draw_toasts(snapshot, &layout);
         self.draw_resize_overlay(snapshot, &layout);
@@ -1608,6 +1609,191 @@ impl GlPainter {
                     }
                 }
             }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn draw_keybindings_overlay(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
+        use crate::types::{clamp_color, mix_color};
+        let Some(overlay) = &snapshot.keybindings_overlay else {
+            return;
+        };
+
+        let n_rows = overlay.rows.len();
+        let visible = overlay.visible_rows.min(n_rows);
+
+        // Panel geometry
+        let row_h = layout.cell_h_px * 1.7;
+        let title_h = layout.cell_h_px * 2.2;
+        let footer_h = layout.cell_h_px * 2.0;
+        let panel_h = title_h + visible as f32 * row_h + footer_h;
+        let panel_w = (layout.cell_w_px * 72.0)
+            .min(layout.width * 0.92)
+            .max(layout.cell_w_px * 44.0);
+        let x0 = (layout.width - panel_w) * 0.5;
+        let y0 = (layout.height - panel_h) * 0.5;
+        let x1 = x0 + panel_w;
+        let y1 = y0 + panel_h;
+
+        // Colours
+        let th = &snapshot.theme;
+        let ov_bg = clamp_color(th.terminal_bg, 0.01);
+        let ov_border = th.separator_focused;
+        let ov_title_bg = clamp_color(th.terminal_bg, -0.01);
+        let ov_row_alt = clamp_color(th.terminal_bg, 0.03);
+        let ov_select = mix_color(
+            clamp_color(th.terminal_bg, 0.08),
+            th.separator_focused,
+            0.22,
+        );
+        let ov_record = mix_color(
+            clamp_color(th.terminal_bg, 0.06),
+            [0.9, 0.5, 0.1, 1.0],
+            0.20,
+        );
+
+        // Scrim + panel background
+        self.push_rect(0.0, 0.0, layout.width, layout.height, [0.0, 0.0, 0.0, 0.65]);
+        self.push_rect(x0 - 2.0, y0 - 2.0, x1 + 2.0, y1 + 2.0, ov_border);
+        self.push_rect(x0, y0, x1, y1, ov_bg);
+        self.push_rect(x0, y0, x1, y0 + title_h, ov_title_bg);
+
+        // Title
+        let title = if overlay.just_saved {
+            "  KEYBINDINGS  \u{2713} Saved"
+        } else if overlay.recording {
+            "  KEYBINDINGS  \u{25cf} Press key combo..."
+        } else {
+            "  KEYBINDINGS"
+        };
+        let ty = y0 + (title_h - layout.cell_h_px) * 0.5;
+        let mut tx = x0;
+        for ch in title.chars() {
+            self.push_glyph(ch, tx, ty, layout.cell_w_px, layout.cell_h_px, th.text);
+            tx += layout.cell_w_px;
+        }
+
+        // Row backgrounds + text
+        let label_col = x0 + layout.cell_w_px * 2.0;
+        let binding_col = x0 + panel_w * 0.55;
+
+        let scroll = overlay.scroll_offset;
+        let visible_rows = &overlay.rows[scroll..(scroll + visible).min(n_rows)];
+
+        for (i, row) in visible_rows.iter().enumerate() {
+            let flat_idx = scroll + i;
+            let ry = y0 + title_h + i as f32 * row_h;
+            let is_cursor = flat_idx == overlay.cursor;
+
+            // Row background
+            let row_bg = if is_cursor {
+                if overlay.recording {
+                    ov_record
+                } else {
+                    ov_select
+                }
+            } else if i % 2 == 1 {
+                ov_row_alt
+            } else {
+                ov_bg
+            };
+            self.push_rect(x0, ry, x1, ry + row_h, row_bg);
+
+            let text_y = ry + (row_h - layout.cell_h_px) * 0.5;
+            let [r, g, b, _] = th.text;
+            let label_color = if is_cursor {
+                th.text
+            } else {
+                [r * 0.85, g * 0.85, b * 0.85, 1.0]
+            };
+            let binding_color = if is_cursor && overlay.recording {
+                [1.0, 0.70, 0.25, 1.0_f32] // orange pulse while recording
+            } else if row.binding.is_some() && !row.is_default {
+                th.cursor // user-defined binding: accent colour
+            } else if row.is_default {
+                [r * 0.65, g * 0.65, b * 0.65, 1.0] // default: medium-dim
+            } else {
+                [r * 0.40, g * 0.40, b * 0.40, 1.0] // unbound: very dim
+            };
+
+            // Action label (left column)
+            let mut lx = label_col;
+            for ch in row.label.chars() {
+                self.push_glyph(
+                    ch,
+                    lx,
+                    text_y,
+                    layout.cell_w_px,
+                    layout.cell_h_px,
+                    label_color,
+                );
+                lx += layout.cell_w_px;
+            }
+
+            // Binding (right column)
+            let binding_str: std::borrow::Cow<str> = if is_cursor && overlay.recording {
+                "\u{25cf} press combo\u{2026}".into()
+            } else if let Some(ref b) = row.binding {
+                if row.is_default {
+                    format!("{b}  (default)").into()
+                } else {
+                    b.as_str().into()
+                }
+            } else {
+                "(not bound)".into()
+            };
+            let mut bx = binding_col;
+            for ch in binding_str.chars() {
+                self.push_glyph(
+                    ch,
+                    bx,
+                    text_y,
+                    layout.cell_w_px,
+                    layout.cell_h_px,
+                    binding_color,
+                );
+                bx += layout.cell_w_px;
+            }
+        }
+
+        // Scrollbar indicator (right edge)
+        if n_rows > visible {
+            let sb_x = x1 - layout.cell_w_px * 0.4;
+            let sb_w = layout.cell_w_px * 0.25;
+            let track_h = visible as f32 * row_h;
+            let thumb_h = (track_h * visible as f32 / n_rows as f32).max(row_h * 0.5);
+            let thumb_frac = scroll as f32 / (n_rows - visible) as f32;
+            let thumb_y = y0 + title_h + thumb_frac * (track_h - thumb_h);
+            self.push_rect(
+                sb_x,
+                y0 + title_h,
+                sb_x + sb_w,
+                y0 + title_h + track_h,
+                [0.3, 0.3, 0.3, 0.3],
+            );
+            self.push_rect(sb_x, thumb_y, sb_x + sb_w, thumb_y + thumb_h, ov_border);
+        }
+
+        // Footer hint
+        let footer_y = y1 - footer_h + (footer_h - layout.cell_h_px) * 0.5;
+        let footer_text = if overlay.recording {
+            "  Esc \u{2192} cancel"
+        } else {
+            "  Enter \u{2192} bind    Backspace \u{2192} remove    Esc \u{2192} close"
+        };
+        let [r, g, b, _] = th.text;
+        let hint_color = [r * 0.55, g * 0.55, b * 0.55, 1.0_f32];
+        let mut fx = x0;
+        for ch in footer_text.chars() {
+            self.push_glyph(
+                ch,
+                fx,
+                footer_y,
+                layout.cell_w_px,
+                layout.cell_h_px,
+                hint_color,
+            );
+            fx += layout.cell_w_px;
         }
     }
 

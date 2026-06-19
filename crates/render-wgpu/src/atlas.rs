@@ -467,6 +467,7 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
         db.with_face_data(id, |data, _| data.to_vec())
     }
 
+    #[cfg(target_os = "macos")]
     fn load_from_path(path: &str) -> Option<fontdue::Font> {
         let bytes = std::fs::read(path).ok()?;
         fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
@@ -485,6 +486,7 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
     ];
 
     let mut loaded_families = std::collections::HashSet::new();
+    #[allow(unused_mut)]
     let mut fonts: Vec<fontdue::Font> = families
         .iter()
         .filter_map(|family| {

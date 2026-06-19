@@ -611,6 +611,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         padding_h: state.user_config.padding.horizontal,
         padding_v: state.user_config.padding.vertical,
         settings_overlay: build_settings_overlay(state),
+        keybindings_overlay: crate::keybindings_ui::build_keybindings_overlay(state),
         title_cwd: {
             // OSC 0/2 window title takes priority; fall back to CWD path.
             if let Some(title) = state.tabs[state.active_tab].app.window_title() {

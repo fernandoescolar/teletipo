@@ -85,6 +85,8 @@ pub(crate) struct GpuRuntimeState {
     pub(crate) update_last_checked: Instant,
     /// Settings overlay interaction state.
     pub(crate) settings: SettingsUiState,
+    /// Keybindings editor panel state.
+    pub(crate) keybindings_panel: crate::state::KeybindingsUiState,
     /// Command palette overlay (Cmd+Shift+P). `None` when the palette is closed.
     pub(crate) command_palette: Option<crate::state::CommandPaletteState>,
     /// SSH hosts loaded from `~/.ssh/config` at startup.
@@ -149,6 +151,9 @@ impl GpuRuntimeState {
         match self.overlays.active_modal {
             Some(ModalOverlay::Settings) => self.close_settings_modal(),
             Some(ModalOverlay::CommandPalette) => self.close_command_palette_modal(),
+            Some(ModalOverlay::Keybindings) => {
+                crate::keybindings_ui::close_keybindings_panel(self);
+            }
             None => {}
         }
     }

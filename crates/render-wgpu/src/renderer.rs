@@ -173,6 +173,7 @@ mod tests {
             padding_h: 0,
             padding_v: 0,
             settings_overlay: None,
+            keybindings_overlay: None,
             title_cwd: String::new(),
             editor_suggestion: String::new(),
             suggestion_dropdown: None,

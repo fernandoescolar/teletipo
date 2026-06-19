@@ -108,6 +108,22 @@ pub(crate) struct OverlayState {
 pub(crate) enum ModalOverlay {
     Settings,
     CommandPalette,
+    Keybindings,
+}
+
+/// State for the interactive keybindings editor panel.
+#[derive(Debug, Default)]
+pub(crate) struct KeybindingsUiState {
+    /// Whether the panel is open.
+    pub(crate) open: bool,
+    /// Currently highlighted action row index.
+    pub(crate) cursor: usize,
+    /// First visible row (scroll offset).
+    pub(crate) scroll_offset: usize,
+    /// When `true`, waiting for the user to press a key combo for the selected action.
+    pub(crate) recording: bool,
+    /// One-shot: show "Saved" confirmation after a binding is set.
+    pub(crate) just_saved: bool,
 }
 
 /// Context menu origin and dispatch target.

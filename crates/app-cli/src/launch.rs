@@ -302,6 +302,7 @@ pub(crate) fn build_initial_state(
         update_rx: Some(update_rx),
         update_last_checked: std::time::Instant::now(),
         settings: crate::SettingsUiState::default(),
+        keybindings_panel: crate::state::KeybindingsUiState::default(),
         command_palette: None,
         ssh_hosts: crate::ssh::load_ssh_hosts(),
         window_focused: true,

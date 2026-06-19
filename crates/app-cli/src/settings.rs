@@ -165,6 +165,7 @@ pub(crate) fn apply_shell_choice(state: &mut GpuRuntimeState, command: Option<&s
     state.settings.dirty = true;
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_field_items(state: &GpuRuntimeState) -> Vec<SettingsItem> {
     let mut items: Vec<SettingsItem> = Vec::new();
     items.push(SettingsItem {
@@ -249,6 +250,14 @@ fn build_field_items(state: &GpuRuntimeState) -> Vec<SettingsItem> {
         key: "Reveal Config in Finder".to_owned(),
         value: String::new(),
     });
+    items.push(SettingsItem {
+        is_header: false,
+        is_selectable: true,
+        is_searchable: false,
+        is_action: true,
+        key: "Open Keybindings".to_owned(),
+        value: String::new(),
+    });
     items
 }
 
@@ -324,7 +333,8 @@ pub(crate) fn handle_settings_key(
     if key_event.state != ElementState::Pressed {
         return true; // consume non-press events too while settings is open
     }
-    let n_fields = SETTINGS_FIELDS.len() + 2; // +2 for the two action rows at the end
+    // +3 for the three action rows at the end
+    let n_fields = SETTINGS_FIELDS.len() + 3;
 
     // ── Search mode: type-to-filter for the font family picker ───────────────
     if state.settings.search_buf.is_some() {
@@ -504,6 +514,15 @@ pub(crate) fn handle_settings_key(
                 crate::commands::execute_ui_command(
                     state,
                     crate::commands::CommandId::RevealConfigInFinder,
+                    crate::commands::CommandContext::default(),
+                );
+                return true;
+            } else if idx == action_base + 2 {
+                // Close settings first, then open keybindings.
+                state.close_settings_modal();
+                crate::commands::execute_ui_command(
+                    state,
+                    crate::commands::CommandId::OpenKeybindings,
                     crate::commands::CommandContext::default(),
                 );
                 return true;

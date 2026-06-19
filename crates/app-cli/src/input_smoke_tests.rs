@@ -82,6 +82,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         update_rx: None,
         update_last_checked: std::time::Instant::now(),
         settings: SettingsUiState::default(),
+        keybindings_panel: crate::state::KeybindingsUiState::default(),
         command_palette: None,
         ssh_hosts: vec![],
         window_focused: true,

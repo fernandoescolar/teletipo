@@ -30,6 +30,7 @@ pub(crate) enum CommandId {
     OpenConfigInEditor,
     RevealConfigInFinder,
     RestartNow,
+    OpenKeybindings,
     // Actions exposed to custom keybindings
     Copy,
     Paste,
@@ -81,6 +82,7 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
         CommandId::JumpToPrevPrompt => state.jump_to_prev_prompt(),
         CommandId::JumpToNextPrompt => state.jump_to_next_prompt(),
         CommandId::OpenSettings => state.open_settings_modal(),
+        CommandId::OpenKeybindings => crate::keybindings_ui::open_keybindings_panel(state),
         CommandId::OpenConfigInEditor => {
             if let Some(path) = crate::config::config_path() {
                 #[cfg(target_os = "macos")]
@@ -137,6 +139,7 @@ pub(crate) fn palette_commands(state: &GpuRuntimeState) -> Vec<(String, CommandI
             CommandId::JumpToNextPrompt,
         ),
         ("Open Settings".to_owned(), CommandId::OpenSettings),
+        ("Open Keybindings".to_owned(), CommandId::OpenKeybindings),
         (
             "Open Config in Editor".to_owned(),
             CommandId::OpenConfigInEditor,

@@ -9,6 +9,7 @@ mod consts;
 mod coords;
 mod entry;
 mod input;
+mod keybindings_ui;
 mod launch;
 mod layout;
 mod metrics;

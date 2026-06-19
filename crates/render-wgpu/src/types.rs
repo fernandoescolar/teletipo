@@ -88,6 +88,8 @@ pub struct RenderSnapshot {
     pub padding_v: u32,
     /// When `Some`, display the in-app settings overlay.
     pub settings_overlay: Option<SettingsOverlay>,
+    /// When `Some`, display the interactive keybindings editor overlay.
+    pub keybindings_overlay: Option<KeybindingsOverlay>,
     /// Active tab's working directory formatted for the window title (home dir
     /// replaced with `~`; never truncated).
     pub title_cwd: String,
@@ -506,6 +508,36 @@ impl Default for DamageRegion {
             dirty_cells: Vec::new(),
         }
     }
+}
+
+/// A single row in the keybindings overlay.
+#[derive(Debug, Clone)]
+pub struct KeybindingRow {
+    /// Snake_case action identifier (e.g. `"new_tab"`).
+    pub action_id: String,
+    /// Human-readable label (e.g. `"New Tab"`).
+    pub label: String,
+    /// Formatted key combo string (e.g. `"Cmd+T"`), or `None` when truly unbound.
+    pub binding: Option<String>,
+    /// `true` when `binding` comes from the built-in default (not user-configured).
+    pub is_default: bool,
+}
+
+/// Overlay for the interactive keybindings editor.
+#[derive(Debug, Clone)]
+pub struct KeybindingsOverlay {
+    /// All bindable actions, one per row.
+    pub rows: Vec<KeybindingRow>,
+    /// Index of the currently highlighted row.
+    pub cursor: usize,
+    /// First visible row (for scrolling).
+    pub scroll_offset: usize,
+    /// When `true`, the highlighted row is in "recording" mode — waiting for a key combo.
+    pub recording: bool,
+    /// One-shot flag: flash a "Saved" confirmation.
+    pub just_saved: bool,
+    /// How many rows fit on screen at once (set by the keybindings_ui layer).
+    pub visible_rows: usize,
 }
 
 #[derive(Debug, Clone, Default)]
