@@ -189,6 +189,12 @@ pub(crate) enum PaletteAction {
     NewSshTab(String),
     /// Switch the palette to SSH sub-prompt mode so the user can type a destination.
     OpenSshPrompt,
+    /// Switch to a different open tab by index.
+    SwitchToTab(usize),
+    /// Insert a command from history into the editor.
+    InsertHistoryCommand(String),
+    /// Fill the query with a prefix and refilter without closing the palette.
+    FilterByPrefix(String),
 }
 
 /// A single item in the command palette list.
@@ -206,6 +212,9 @@ pub(crate) struct CommandPaletteState {
     pub(crate) cursor_byte: usize,
     /// All available items (built when the palette opens and kept stable).
     pub(crate) all_items: Vec<PaletteItem>,
+    /// Indices into `all_items` shown when the query is empty (primary actions +
+    /// category headers). When the query is non-empty, all items are searched instead.
+    pub(crate) default_filtered: Vec<usize>,
     /// Indices into `all_items` that match `query` (all items when query is empty).
     pub(crate) filtered: Vec<usize>,
     /// Index into `filtered` of the currently selected item.
@@ -231,11 +240,17 @@ pub(crate) const PALETTE_MAX_VISIBLE_PUB: usize = PALETTE_MAX_VISIBLE;
 
 impl CommandPaletteState {
     /// Re-build `filtered` from `all_items` and the current `query`.
+    /// When the query is empty, shows only `default_filtered` (primary actions +
+    /// category headers). When non-empty, searches across all items.
     pub(crate) fn refilter(&mut self) {
         let q = self.query.to_lowercase();
-        self.filtered = (0..self.all_items.len())
-            .filter(|&i| q.is_empty() || self.all_items[i].label.to_lowercase().contains(&q))
-            .collect();
+        if q.is_empty() {
+            self.filtered = self.default_filtered.clone();
+        } else {
+            self.filtered = (0..self.all_items.len())
+                .filter(|&i| self.all_items[i].label.to_lowercase().contains(&q))
+                .collect();
+        }
         self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
         self.recompute_scroll();
     }

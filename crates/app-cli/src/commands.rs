@@ -38,6 +38,12 @@ pub(crate) enum CommandId {
     ZoomIn,
     ZoomOut,
     OpenCommandPalette,
+    // Developer utilities
+    CopyCwd,
+    OpenCwdInFinder,
+    RepeatLastCommand,
+    ClearScrollback,
+    CopyLastOutput,
 }
 
 impl CommandId {
@@ -60,6 +66,11 @@ impl CommandId {
             "zoom_in" => Some(Self::ZoomIn),
             "zoom_out" => Some(Self::ZoomOut),
             "open_command_palette" => Some(Self::OpenCommandPalette),
+            "copy_cwd" => Some(Self::CopyCwd),
+            "open_cwd_in_finder" => Some(Self::OpenCwdInFinder),
+            "repeat_last_command" => Some(Self::RepeatLastCommand),
+            "clear_scrollback" => Some(Self::ClearScrollback),
+            "copy_last_output" => Some(Self::CopyLastOutput),
             _ => None,
         }
     }
@@ -122,6 +133,68 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
         CommandId::ZoomIn => crate::input::keyboard::execute_zoom(state, 1.0),
         CommandId::ZoomOut => crate::input::keyboard::execute_zoom(state, -1.0),
         CommandId::OpenCommandPalette => crate::input::keyboard::open_command_palette(state),
+        CommandId::CopyCwd => {
+            let cwd = state.tab().cwd.clone();
+            if cwd.is_empty() {
+                state.push_toast("Working directory unknown", crate::state::ToastKind::Warn);
+            } else {
+                state.shell_services.clipboard_set(cwd);
+                state.push_toast("Path copied", crate::state::ToastKind::Success);
+            }
+        }
+        CommandId::OpenCwdInFinder => {
+            let cwd = state.tab().cwd.clone();
+            if !cwd.is_empty() {
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open").arg(&cwd).spawn();
+                #[cfg(not(target_os = "macos"))]
+                let _ = std::process::Command::new("xdg-open").arg(&cwd).spawn();
+            }
+        }
+        CommandId::RepeatLastCommand => {
+            let last = state.tab().history.last().cloned();
+            if let Some(cmd) = last {
+                let tab = state.tab_mut();
+                tab.app.editor_clear();
+                tab.app.insert_editor_input(&cmd);
+                tab.history_index = None;
+                tab.editor_scroll_offset = 0;
+                tab.editor_horizontal_scroll_offset = 0;
+            }
+        }
+        CommandId::ClearScrollback => {
+            // \x1b[3J erases saved (scrollback) lines; \x0c redraws the prompt.
+            state.send_terminal_input(b"\x1b[3J\x0c");
+        }
+        CommandId::CopyLastOutput => {
+            let output: String = {
+                let tab = &state.tabs[state.active_tab];
+                let zones = tab.app.terminal.command_zones();
+                let last_output_start = zones.last().and_then(|z| z.output_start_row);
+                let current_prompt = tab.app.terminal.current_zone_prompt_row();
+                if let Some(output_start) = last_output_start {
+                    let full_text = tab.app.terminal.snapshot_text_with_scrollback();
+                    let total_lines = full_text.lines().count();
+                    let output_end = current_prompt.unwrap_or(total_lines);
+                    full_text
+                        .lines()
+                        .skip(output_start)
+                        .take(output_end.saturating_sub(output_start))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                        .trim_end()
+                        .to_owned()
+                } else {
+                    String::new()
+                }
+            };
+            if output.is_empty() {
+                state.push_toast("No command output available", crate::state::ToastKind::Warn);
+            } else {
+                state.shell_services.clipboard_set(output);
+                state.push_toast("Output copied", crate::state::ToastKind::Success);
+            }
+        }
     }
 }
 
@@ -149,6 +222,17 @@ pub(crate) fn palette_commands(state: &GpuRuntimeState) -> Vec<(String, CommandI
             CommandId::RevealConfigInFinder,
         ),
     ];
+    out.extend([
+        ("Copy Working Directory".to_owned(), CommandId::CopyCwd),
+        (
+            "Reveal Working Directory in Finder".to_owned(),
+            CommandId::OpenCwdInFinder,
+        ),
+        ("Repeat Last Command".to_owned(), CommandId::RepeatLastCommand),
+        ("Clear Scrollback".to_owned(), CommandId::ClearScrollback),
+        ("Copy Last Output".to_owned(), CommandId::CopyLastOutput),
+    ]);
+
     if matches!(
         state.overlays.pending_update,
         Some(UpdateBanner::Available(_))

@@ -337,6 +337,15 @@ impl GpuRuntimeState {
     }
 
     pub(crate) fn send_terminal_input(&mut self, bytes: &[u8]) {
+        // Safety barrier: nothing should write raw bytes to the PTY while the
+        // inline editor is active.  In PTY mode (alternate screen or command
+        // running) all bytes are legitimate.  In editor mode, callers must use
+        // editor methods instead.  A violation here means a bug in a call site.
+        debug_assert!(
+            crate::input::keyboard::is_pty_mode(self),
+            "send_terminal_input called in editor mode — use editor methods instead"
+        );
+
         let active = self.active_tab;
         let tab = &mut self.tabs[active];
         if tab.suppress_until.is_some() {

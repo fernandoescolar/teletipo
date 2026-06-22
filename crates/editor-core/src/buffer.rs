@@ -281,6 +281,97 @@ impl EditorBuffer {
         }
     }
 
+    /// Delete from the cursor to the start of the current line (Ctrl+U).
+    pub fn delete_to_line_start(&mut self) {
+        let pos = self.cursor.offset;
+        let full = self.gap.to_owned_string();
+        let line_start = full[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        if pos == line_start {
+            return;
+        }
+        let removed = self.gap.delete_range(line_start, pos);
+        self.sync_cache();
+        self.cursor.offset = line_start;
+        self.selection.anchor = line_start;
+        self.selection.active = line_start;
+        self.history.push_undo(Edit::Delete {
+            at: line_start,
+            text: removed,
+        });
+        self.history.clear_redo();
+    }
+
+    /// Delete from the cursor to the end of the current line (Ctrl+K).
+    pub fn delete_to_line_end(&mut self) {
+        let pos = self.cursor.offset;
+        let full = self.gap.to_owned_string();
+        let line_end = full[pos..]
+            .find('\n')
+            .map(|i| pos + i)
+            .unwrap_or(full.len());
+        if pos == line_end {
+            return;
+        }
+        let removed = self.gap.delete_range(pos, line_end);
+        self.sync_cache();
+        self.selection.anchor = pos;
+        self.selection.active = pos;
+        self.history.push_undo(Edit::Delete {
+            at: pos,
+            text: removed,
+        });
+        self.history.clear_redo();
+    }
+
+    /// Delete the word immediately before the cursor (Ctrl+W).
+    pub fn delete_word_backward(&mut self) {
+        let pos = self.cursor.offset;
+        if pos == 0 {
+            return;
+        }
+        let full = self.gap.to_owned_string();
+        let before = &full[..pos];
+        // Walk backwards: skip trailing whitespace, then skip the word.
+        let mut chars = before.char_indices().rev();
+        let mut at = pos;
+        // Phase 1: skip whitespace.
+        let mut hit_word = false;
+        for (i, c) in chars.by_ref() {
+            if c.is_whitespace() {
+                at = i;
+            } else {
+                at = i;
+                hit_word = true;
+                break;
+            }
+        }
+        if !hit_word {
+            // Only whitespace before cursor — delete it all.
+            if at == pos {
+                return;
+            }
+        } else {
+            // Phase 2: skip the word characters.
+            for (i, c) in chars {
+                if c.is_whitespace() {
+                    at = i + c.len_utf8();
+                    break;
+                }
+                at = i;
+            }
+        }
+        if at >= pos {
+            return;
+        }
+        let removed = self.gap.delete_range(at, pos);
+        self.sync_cache();
+        self.cursor.offset = at;
+        self.selection.anchor = at;
+        self.selection.active = at;
+        self.history.push_undo(Edit::Delete { at, text: removed });
+        self.history.clear_redo();
+    }
+
     /// Clears all text and resets the cursor to the beginning.
     /// The cleared text is pushed onto the undo stack so it can be recovered.
     pub fn clear(&mut self) {

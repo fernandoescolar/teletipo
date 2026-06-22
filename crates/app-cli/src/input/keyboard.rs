@@ -18,12 +18,19 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
             && text != "\r"
             && text != "\n"
         {
-            let route_to_pty = state.tab().app.is_alternate_screen()
-                || (state.tab().command_running && !state.tab().editor_unlocked);
-            if route_to_pty {
+            if is_pty_mode(state) {
+                // In PTY mode the program is responsible for interpreting the
+                // input; send as-is.
                 state.send_terminal_input(text.as_bytes());
             } else {
-                state.tab_mut().app.insert_editor_input(text.as_str());
+                // In editor mode strip control characters (same policy as paste).
+                let safe: String = text
+                    .chars()
+                    .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+                    .collect();
+                if !safe.is_empty() {
+                    state.tab_mut().app.insert_editor_input(&safe);
+                }
             }
         }
         return;
@@ -213,6 +220,16 @@ fn send_ctrl_character_to_terminal(state: &mut GpuRuntimeState, ch: &str) -> boo
     false
 }
 
+/// Returns `true` when keyboard input should go straight to the PTY.
+/// In this mode all bytes (including control chars and escape sequences) are
+/// legitimate — the running program or shell is in charge.
+/// When `false` the inline editor is active and only editor-level actions
+/// should be performed; nothing should be written to the PTY unexpectedly.
+pub(crate) fn is_pty_mode(state: &GpuRuntimeState) -> bool {
+    state.tab().app.is_alternate_screen()
+        || (state.tab().command_running && !state.tab().editor_unlocked)
+}
+
 fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) -> bool {
     let is_alternate = state.tab().app.is_alternate_screen();
     let command_running = state.tab().command_running;
@@ -231,8 +248,7 @@ fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEv
         return true;
     }
 
-    // When the editor is unlocked, don't intercept input — let it flow to the editor.
-    let route_to_pty = is_alternate || (command_running && !editor_unlocked);
+    let route_to_pty = is_pty_mode(state);
     if !route_to_pty || state.modifiers.super_down {
         return false;
     }
@@ -567,13 +583,28 @@ fn handle_paste_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
                 || (state.tab().command_running && !state.tab().editor_unlocked);
             if route_to_pty {
                 if state.tab().app.bracketed_paste() {
+                    // Bracketed paste wraps the text so the shell treats it as
+                    // literal input; no further sanitization needed.
                     let bracketed = format!("\x1b[200~{normalized}\x1b[201~");
                     state.send_terminal_input(bracketed.as_bytes());
                 } else {
-                    state.send_terminal_input(normalized.as_bytes());
+                    // No bracketed paste: strip control characters that could
+                    // trigger unintended shell actions (ESC sequences, ^C, EOF…).
+                    // Keep \n and \t which are legitimate in multi-line pastes.
+                    let safe: String = normalized
+                        .chars()
+                        .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+                        .collect();
+                    state.send_terminal_input(safe.as_bytes());
                 }
             } else {
-                state.tab_mut().app.insert_editor_input(&normalized);
+                // Inline editor: strip control characters that have no meaning
+                // as text (keep \n for multi-line and \t for indentation).
+                let safe: String = normalized
+                    .chars()
+                    .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+                    .collect();
+                state.tab_mut().app.insert_editor_input(&safe);
             }
         }
     }
@@ -803,6 +834,43 @@ fn handle_ctrl_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
         state.tab_mut().app.editor_redo();
         return true;
     }
+
+    // While the inline editor is active (no command running, not in alternate
+    // screen), Ctrl+C/D/U/W should not leak to the PTY — the shell would print
+    // "^C", move the cursor, and redraw the prompt, causing the editor overlay
+    // to render at the wrong column on the next keystroke.  Handle them locally
+    // instead, mirroring standard readline behaviour.
+    let in_editor = !state.tab().command_running && !state.tab().app.is_alternate_screen();
+    if in_editor {
+        if ch.eq_ignore_ascii_case("c") {
+            // Ctrl+C: discard the current editor line (same as readline).
+            state.tab_mut().app.editor_clear();
+            return true;
+        }
+        if ch.eq_ignore_ascii_case("u") {
+            // Ctrl+U: delete from cursor to start of line.
+            state.tab_mut().app.editor_delete_to_line_start();
+            return true;
+        }
+        if ch.eq_ignore_ascii_case("k") {
+            // Ctrl+K: delete from cursor to end of line.
+            state.tab_mut().app.editor_delete_to_line_end();
+            return true;
+        }
+        if ch.eq_ignore_ascii_case("w") {
+            // Ctrl+W: delete the word before the cursor.
+            state.tab_mut().app.editor_delete_word_backward();
+            return true;
+        }
+        if ch.eq_ignore_ascii_case("d") {
+            // Ctrl+D on empty editor: do nothing (no EOF to the shell).
+            return true;
+        }
+        // For any other Ctrl+key while in editor mode, do nothing rather than
+        // accidentally mutating PTY/shell state.
+        return true;
+    }
+
     send_ctrl_character_to_terminal(state, ch);
     true
 }
@@ -851,7 +919,10 @@ fn handle_named_key_overlay_and_scroll(
             } else if cycling {
                 state.tabs[state.active_tab].suggestion_prefix = None;
                 state.tabs[state.active_tab].suggestion_index = None;
-            } else {
+            } else if is_pty_mode(state) {
+                // Only forward ESC to the PTY when a command is running.
+                // In editor mode ESC has no meaningful action and sending \x1b
+                // could corrupt the shell's parser state.
                 state.send_terminal_input(b"\x1b");
             }
             true
@@ -1206,7 +1277,8 @@ fn is_paste_shortcut(state: &GpuRuntimeState, key: &str) -> bool {
 pub(crate) fn open_command_palette(state: &mut GpuRuntimeState) {
     use crate::state::{CommandPaletteState, PaletteAction, PaletteItem};
 
-    let mut items: Vec<PaletteItem> = crate::commands::palette_commands(state)
+    // ── Primary: unique, specific actions (shown when query is empty) ─────────
+    let mut primary: Vec<PaletteItem> = crate::commands::palette_commands(state)
         .into_iter()
         .map(|(label, cmd)| PaletteItem {
             label,
@@ -1214,16 +1286,73 @@ pub(crate) fn open_command_palette(state: &mut GpuRuntimeState) {
         })
         .collect();
 
-    // Add theme-switching items.
+    primary.push(PaletteItem {
+        label: "SSH → New connection…".to_owned(),
+        action: PaletteAction::OpenSshPrompt,
+    });
+
+    // Category headers — shown in default view, open a prefixed search on select.
+    let active = state.active_tab;
+    let has_tabs = state.tabs.len() > 1;
+    let has_history = !state.tabs[active].history_entries.is_empty();
+    let has_ssh_hosts = !state.ssh_hosts.is_empty();
+    let has_themes = !state.themes_fonts.available_themes.is_empty();
+    let has_fonts = !state.themes_fonts.available_fonts.is_empty();
+    let has_shells = crate::settings::shell_options()
+        .iter()
+        .any(|s| s.command.is_some());
+
+    if has_themes {
+        primary.push(PaletteItem {
+            label: "Set Theme…".to_owned(),
+            action: PaletteAction::FilterByPrefix("Set Theme: ".to_owned()),
+        });
+    }
+    if has_fonts {
+        primary.push(PaletteItem {
+            label: "Set Font…".to_owned(),
+            action: PaletteAction::FilterByPrefix("Set Font: ".to_owned()),
+        });
+    }
+    if has_shells {
+        primary.push(PaletteItem {
+            label: "New Tab (shell)…".to_owned(),
+            action: PaletteAction::FilterByPrefix("New Tab (".to_owned()),
+        });
+    }
+    if has_ssh_hosts {
+        primary.push(PaletteItem {
+            label: "SSH → host…".to_owned(),
+            action: PaletteAction::FilterByPrefix("SSH → ".to_owned()),
+        });
+    }
+    if has_tabs {
+        primary.push(PaletteItem {
+            label: "Switch Tab…".to_owned(),
+            action: PaletteAction::FilterByPrefix("Tab ".to_owned()),
+        });
+    }
+    if has_history {
+        primary.push(PaletteItem {
+            label: "History…".to_owned(),
+            action: PaletteAction::FilterByPrefix("History: ".to_owned()),
+        });
+    }
+
+    primary.sort_by_key(|item| item.label.to_lowercase());
+
+    // ── Secondary: all category items (only reachable via search) ─────────────
+    let mut secondary: Vec<PaletteItem> = Vec::new();
+
     for (i, theme) in state.themes_fonts.available_themes.iter().enumerate() {
-        items.push(PaletteItem {
+        secondary.push(PaletteItem {
             label: format!("Set Theme: {}", theme.name),
             action: PaletteAction::SetTheme(i),
         });
     }
-    // Add font items.
+
     for (i, font) in state.themes_fonts.available_fonts.iter().enumerate() {
-        items.push(PaletteItem {
+        secondary.push(PaletteItem {
             label: format!("Set Font: {}", font.family),
             action: PaletteAction::SetFont(i),
         });
@@ -1231,7 +1360,7 @@ pub(crate) fn open_command_palette(state: &mut GpuRuntimeState) {
 
     for shell in crate::settings::shell_options() {
         if let Some(command) = shell.command {
-            items.push(PaletteItem {
+            secondary.push(PaletteItem {
                 label: format!("New Tab ({})", shell.label),
                 action: PaletteAction::NewTabWithShell(command),
             });
@@ -1239,25 +1368,69 @@ pub(crate) fn open_command_palette(state: &mut GpuRuntimeState) {
     }
 
     for host in &state.ssh_hosts {
-        items.push(PaletteItem {
+        secondary.push(PaletteItem {
             label: format!("SSH → {}", host.name),
             action: PaletteAction::NewSshTab(host.ssh_command()),
         });
     }
 
-    items.push(PaletteItem {
-        label: "SSH → New connection…".to_owned(),
-        action: PaletteAction::OpenSshPrompt,
-    });
+    for (i, tab) in state.tabs.iter().enumerate() {
+        if i == active {
+            continue;
+        }
+        let label = if tab.cwd.is_empty() {
+            format!("Tab {}", i + 1)
+        } else {
+            format!("Tab {}: {}", i + 1, tab.cwd)
+        };
+        secondary.push(PaletteItem {
+            label,
+            action: PaletteAction::SwitchToTab(i),
+        });
+    }
 
-    items.sort_by_key(|item| item.label.to_lowercase());
+    // Command history: frecency-sorted, deduped, capped at 100.
+    {
+        let tab = &state.tabs[active];
+        let mut history_scored: Vec<(&str, u64)> = tab
+            .history_entries
+            .iter()
+            .map(|e| {
+                (
+                    e.cmd.as_str(),
+                    (e.count as u64).saturating_mul(1_000_000).saturating_add(e.last_used_secs),
+                )
+            })
+            .collect();
+        history_scored.sort_by(|a, b| b.1.cmp(&a.1));
 
-    let n = items.len();
-    let filtered: Vec<usize> = (0..n).collect();
+        let mut seen = std::collections::HashSet::new();
+        for (cmd, _) in history_scored.into_iter().take(100) {
+            if seen.insert(cmd) {
+                secondary.push(PaletteItem {
+                    label: format!("History: {cmd}"),
+                    action: PaletteAction::InsertHistoryCommand(cmd.to_owned()),
+                });
+            }
+        }
+    }
+
+    secondary.sort_by_key(|item| item.label.to_lowercase());
+
+    // Build the full item list: primary first, then secondary.
+    // `default_filtered` covers only the primary section.
+    let primary_len = primary.len();
+    let mut items = primary;
+    items.extend(secondary);
+
+    let default_filtered: Vec<usize> = (0..primary_len).collect();
+    let filtered = default_filtered.clone();
+
     state.open_command_palette_modal(CommandPaletteState {
         query: String::new(),
         cursor_byte: 0,
         all_items: items,
+        default_filtered,
         filtered,
         selected: 0,
         scroll_offset: 0,
@@ -1423,6 +1596,7 @@ fn execute_palette_action(state: &mut GpuRuntimeState) {
             state.open_command_palette_modal(crate::state::CommandPaletteState {
                 query: String::new(),
                 cursor_byte: 0,
+                default_filtered: cp.default_filtered,
                 all_items: cp.all_items,
                 filtered: cp.filtered,
                 selected: cp.selected,
@@ -1430,6 +1604,36 @@ fn execute_palette_action(state: &mut GpuRuntimeState) {
                 sub_prompt: Some(crate::state::SubPrompt::Ssh),
             });
             // Palette is now open in sub-prompt mode — do not close.
+        }
+        PaletteAction::SwitchToTab(idx) => {
+            if idx < state.tabs.len() {
+                state.active_tab = idx;
+            }
+        }
+        PaletteAction::InsertHistoryCommand(cmd) => {
+            let tab = &mut state.tabs[state.active_tab];
+            tab.app.editor_clear();
+            tab.app.insert_editor_input(&cmd);
+            tab.history_index = None;
+            tab.editor_scroll_offset = 0;
+            tab.editor_horizontal_scroll_offset = 0;
+        }
+        PaletteAction::FilterByPrefix(prefix) => {
+            // Reopen the palette with the prefix pre-filled so the user sees
+            // only items from that category. The palette stays open.
+            let cursor_byte = prefix.len();
+            let mut new_cp = crate::state::CommandPaletteState {
+                query: prefix,
+                cursor_byte,
+                default_filtered: cp.default_filtered,
+                all_items: cp.all_items,
+                filtered: Vec::new(),
+                selected: 0,
+                scroll_offset: 0,
+                sub_prompt: None,
+            };
+            new_cp.refilter();
+            state.open_command_palette_modal(new_cp);
         }
     }
 }

@@ -171,6 +171,18 @@ impl AppEditor {
         self.buffer.move_cursor_right(extend_selection);
     }
 
+    pub fn delete_to_line_start(&mut self) {
+        self.buffer.delete_to_line_start();
+    }
+
+    pub fn delete_to_line_end(&mut self) {
+        self.buffer.delete_to_line_end();
+    }
+
+    pub fn delete_word_backward(&mut self) {
+        self.buffer.delete_word_backward();
+    }
+
     pub fn snapshot(&self) -> String {
         self.buffer.text().to_string()
     }
@@ -306,6 +318,12 @@ impl AppTerminal {
         self.session.command_zones()
     }
 
+    /// Absolute row where the current (in-progress) prompt started, if any.
+    /// Used to bound the output of the last completed command zone.
+    pub fn current_zone_prompt_row(&self) -> Option<usize> {
+        self.session.current_zone().map(|z| z.prompt_start_row)
+    }
+
     /// Returns all OSC 8 hyperlink spans visible at the given scroll offset.
     /// See [`terminal_core::GenericTerminalSession::hyperlink_spans`].
     pub fn hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
@@ -410,6 +428,18 @@ impl App {
 
     pub fn editor_clear(&mut self) {
         self.editor.clear();
+    }
+
+    pub fn editor_delete_to_line_start(&mut self) {
+        self.editor.delete_to_line_start();
+    }
+
+    pub fn editor_delete_to_line_end(&mut self) {
+        self.editor.delete_to_line_end();
+    }
+
+    pub fn editor_delete_word_backward(&mut self) {
+        self.editor.delete_word_backward();
     }
 
     pub fn editor_cursor_offset(&self) -> usize {
