@@ -165,7 +165,6 @@ pub(crate) fn apply_shell_choice(state: &mut GpuRuntimeState, command: Option<&s
     state.settings.dirty = true;
 }
 
-#[allow(clippy::too_many_lines)]
 fn build_field_items(state: &GpuRuntimeState) -> Vec<SettingsItem> {
     let mut items: Vec<SettingsItem> = Vec::new();
     items.push(SettingsItem {
@@ -393,7 +392,6 @@ fn handle_settings_search_key(state: &mut GpuRuntimeState, key_event: &winit::ev
 }
 
 /// Handle a key event in the normal (non-search) settings mode.
-#[allow(clippy::cognitive_complexity)]
 fn handle_settings_normal_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
     // +3 for the three action rows at the end
     let n_fields = SETTINGS_FIELDS.len() + 3;

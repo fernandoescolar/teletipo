@@ -194,7 +194,60 @@ pub(crate) fn save_session(state: &GpuRuntimeState) {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+/// Pick which tab sessions to restore based on user config.
+fn resolve_saved_tabs(session: PersistentSession, restore_session: bool) -> Vec<TabSession> {
+    if restore_session {
+        if !session.tabs.is_empty() {
+            return session.tabs;
+        }
+        return vec![TabSession {
+            terminal_output: session.terminal_output,
+            history: session.history,
+            split_ratio: session.split_ratio,
+            cwd: String::new(),
+            history_entries: vec![],
+        }];
+    }
+    // Restore only history and split ratio; discard terminal content and extra tabs.
+    let (history, split_ratio, history_entries) = if !session.tabs.is_empty() {
+        let t = &session.tabs[0];
+        (t.history.clone(), t.split_ratio, t.history_entries.clone())
+    } else {
+        (session.history, session.split_ratio, vec![])
+    };
+    vec![TabSession {
+        terminal_output: String::new(),
+        history,
+        split_ratio,
+        cwd: String::new(),
+        history_entries,
+    }]
+}
+
+/// Compute rows/cols for the initial PTY based on window dimensions and default cell metrics.
+fn initial_terminal_size(
+    window_width: u32,
+    window_height: u32,
+    first_split_ratio: f32,
+    pad_h: f32,
+    pad_v: f32,
+) -> (usize, usize) {
+    // Default cell metrics must match those used in GpuRuntimeState to avoid a
+    // SIGWINCH-triggered prompt redraw immediately after startup.
+    const DEFAULT_CELL_W: f32 = 8.4;
+    const DEFAULT_CELL_H: f32 = 16.8;
+    let lm = crate::layout::LayoutMetrics::new(
+        window_width,
+        window_height,
+        0.0,
+        DEFAULT_CELL_W,
+        DEFAULT_CELL_H,
+        pad_h,
+        pad_v,
+    );
+    sanitize_terminal_size(lm.term_rows(first_split_ratio) as usize, lm.cols() as usize)
+}
+
 pub(crate) fn build_initial_state(
     exec: Option<&str>,
     shell: &str,
@@ -219,56 +272,15 @@ pub(crate) fn build_initial_state(
         .clone()
         .unwrap_or_else(|| shell.to_owned());
 
-    let saved_tabs: Vec<TabSession> = if user_config.terminal.restore_session {
-        if !session.tabs.is_empty() {
-            session.tabs
-        } else {
-            vec![TabSession {
-                terminal_output: session.terminal_output,
-                history: session.history,
-                split_ratio: session.split_ratio,
-                cwd: String::new(),
-                history_entries: vec![],
-            }]
-        }
-    } else {
-        // Restore only history and split ratio from the last active tab,
-        // but not terminal content or extra tabs.
-        let (history, split_ratio, history_entries) = if !session.tabs.is_empty() {
-            let t = &session.tabs[0];
-            (t.history.clone(), t.split_ratio, t.history_entries.clone())
-        } else {
-            (session.history, session.split_ratio, vec![])
-        };
-        vec![TabSession {
-            terminal_output: String::new(),
-            history,
-            split_ratio,
-            cwd: String::new(),
-            history_entries,
-        }]
-    };
-
-    // Use the default cell metrics (same values used in GpuRuntimeState below)
-    // to compute a terminal size that matches the actual window. This avoids a
-    // SIGWINCH-triggered prompt redraw immediately after startup.
-    const DEFAULT_CELL_W: f32 = 8.4;
-    const DEFAULT_CELL_H: f32 = 16.8;
-    let pad_h = user_config.padding.horizontal as f32;
-    let pad_v = user_config.padding.vertical as f32;
+    let saved_tabs = resolve_saved_tabs(session, user_config.terminal.restore_session);
     let first_split_ratio = saved_tabs.first().map(|t| t.split_ratio).unwrap_or(0.7);
-    let lm = crate::layout::LayoutMetrics::new(
+    let (rows, cols) = initial_terminal_size(
         window_width,
         window_height,
-        0.0, // no tab bar yet (single tab at startup)
-        DEFAULT_CELL_W,
-        DEFAULT_CELL_H,
-        pad_h,
-        pad_v,
+        first_split_ratio,
+        user_config.padding.horizontal as f32,
+        user_config.padding.vertical as f32,
     );
-    let (rows, cols) =
-        sanitize_terminal_size(lm.term_rows(first_split_ratio) as usize, lm.cols() as usize);
-
     let tabs = build_tabs(saved_tabs, rows, cols, &effective_shell, exec)?;
 
     let mut state = GpuRuntimeState {
@@ -325,7 +337,6 @@ pub(crate) fn build_initial_state(
     Ok(state)
 }
 
-#[allow(clippy::too_many_lines)]
 /// Parameters bundle for building a single tab, factored out to avoid a
 /// too-many-arguments violation.
 struct TabBuildParams<'a> {
