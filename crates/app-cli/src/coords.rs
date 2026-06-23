@@ -162,44 +162,49 @@ pub(crate) fn editor_cursor_row_col(text: &str, offset: usize) -> (usize, usize)
     (row, col)
 }
 
+/// Layout parameters for the terminal pane, used when mapping pixel coordinates
+/// to terminal grid cells.
+pub(crate) struct TerminalLayout {
+    pub split_ratio: f32,
+    pub cell_w_px: f32,
+    pub cell_h_px: f32,
+    pub term_row_count: usize,
+    pub tab_bar_h: f32,
+    pub pad_h: f32,
+    pub pad_v: f32,
+}
+
 /// Converts a cursor physical-pixel position to a terminal grid (row, col).
 /// Returns `None` if the cursor is outside the terminal pane or in the scrollbar area.
 /// Uses `term_row_count` to compute the bottom-alignment offset so the mapping
 /// matches what the renderer draws.  `pad_h` and `pad_v` are the horizontal and
 /// vertical padding (pixels) applied to the terminal content area; clicks inside
 /// the padding region are clamped to the first row/column.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn cursor_to_terminal_cell(
     cx: f64,
     cy: f64,
     window_width: u32,
     window_height: u32,
-    split_ratio: f32,
-    cell_w_px: f32,
-    cell_h_px: f32,
-    term_row_count: usize,
-    tab_bar_h: f32,
-    pad_h: f32,
-    pad_v: f32,
+    layout: &TerminalLayout,
 ) -> Option<(usize, usize)> {
-    let cell_w = cell_w_px as f64;
-    let cell_h = cell_h_px as f64;
-    let tbh = tab_bar_h as f64;
+    let cell_w = layout.cell_w_px as f64;
+    let cell_h = layout.cell_h_px as f64;
+    let tbh = layout.tab_bar_h as f64;
     let available_h = window_height as f64 - tbh;
-    let terminal_h = available_h * split_ratio as f64;
+    let terminal_h = available_h * layout.split_ratio as f64;
     // Mirror the renderer: pad_v is reserved at both the top and bottom, so
     // the usable content area is narrower.  Text for row r starts at:
     //   term_top_offset_px + pad_v + r * cell_h
     // where term_top_offset_px = tbh + (effective_term_h - content_h).
-    let effective_term_h = (terminal_h - 2.0 * pad_v as f64).max(0.0);
-    let content_h = (term_row_count as f64 * cell_h).min(effective_term_h);
-    let term_top_y = tbh + (effective_term_h - content_h).max(0.0) + pad_v as f64;
+    let effective_term_h = (terminal_h - 2.0 * layout.pad_v as f64).max(0.0);
+    let content_h = (layout.term_row_count as f64 * cell_h).min(effective_term_h);
+    let term_top_y = tbh + (effective_term_h - content_h).max(0.0) + layout.pad_v as f64;
     let term_bottom_y = tbh + terminal_h;
     let scrollbar_x = window_width as f64 - SCROLLBAR_W_PX as f64;
     if cy < term_top_y || cy >= term_bottom_y || cx < 0.0 || cx >= scrollbar_x {
         return None;
     }
-    let col = ((cx - pad_h as f64) / cell_w).max(0.0) as usize;
+    let col = ((cx - layout.pad_h as f64) / cell_w).max(0.0) as usize;
     let row = ((cy - term_top_y) / cell_h).max(0.0) as usize;
     Some((row, col))
 }
@@ -699,8 +704,22 @@ mod tests {
     fn cursor_outside_pane_returns_none() {
         // cy above the terminal pane → None
         assert!(
-            cursor_to_terminal_cell(100.0, 5.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 4.0, 4.0)
-                .is_none()
+            cursor_to_terminal_cell(
+                100.0,
+                5.0,
+                800,
+                600,
+                &TerminalLayout {
+                    split_ratio: 0.5,
+                    cell_w_px: 8.0,
+                    cell_h_px: 16.0,
+                    term_row_count: 24,
+                    tab_bar_h: 30.0,
+                    pad_h: 4.0,
+                    pad_v: 4.0,
+                }
+            )
+            .is_none()
         );
     }
 
@@ -708,15 +727,42 @@ mod tests {
     fn cursor_in_scrollbar_returns_none() {
         // cx in the rightmost SCROLLBAR_W_PX pixels → None
         assert!(
-            cursor_to_terminal_cell(795.0, 100.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 4.0, 4.0)
-                .is_none()
+            cursor_to_terminal_cell(
+                795.0,
+                100.0,
+                800,
+                600,
+                &TerminalLayout {
+                    split_ratio: 0.5,
+                    cell_w_px: 8.0,
+                    cell_h_px: 16.0,
+                    term_row_count: 24,
+                    tab_bar_h: 30.0,
+                    pad_h: 4.0,
+                    pad_v: 4.0,
+                }
+            )
+            .is_none()
         );
     }
 
     #[test]
     fn cursor_in_pane_returns_row_col() {
-        let res =
-            cursor_to_terminal_cell(50.0, 100.0, 800, 600, 0.5, 8.0, 16.0, 24, 30.0, 0.0, 0.0);
+        let res = cursor_to_terminal_cell(
+            50.0,
+            100.0,
+            800,
+            600,
+            &TerminalLayout {
+                split_ratio: 0.5,
+                cell_w_px: 8.0,
+                cell_h_px: 16.0,
+                term_row_count: 24,
+                tab_bar_h: 30.0,
+                pad_h: 0.0,
+                pad_v: 0.0,
+            },
+        );
         assert!(res.is_some());
     }
 

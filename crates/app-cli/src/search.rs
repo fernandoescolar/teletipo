@@ -7,9 +7,6 @@ pub(crate) const PANEL_BUTTON_CELLS: f32 = 2.0;
 
 /// Character offset (in cells from panel left) where the query text begins (after the label).
 pub(crate) const QUERY_TEXT_OFFSET_CELLS: f32 = 6.6;
-/// Maximum number of query characters visible at once in the input area.
-#[allow(dead_code)]
-pub(crate) const QUERY_VISIBLE_CHARS: usize = 13;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SearchMatch {

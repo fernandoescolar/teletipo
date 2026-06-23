@@ -217,7 +217,6 @@ fn binding_from_key_event(
 
 /// Handle a key event while the keybindings panel is open.
 /// Returns `true` if the event was consumed.
-#[allow(clippy::too_many_lines)]
 pub(crate) fn handle_keybindings_key(
     state: &mut GpuRuntimeState,
     key_event: &winit::event::KeyEvent,

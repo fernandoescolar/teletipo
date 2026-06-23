@@ -1,7 +1,7 @@
 use crate::GpuRuntimeState;
 use crate::coords::{
-    clamp_editor_scroll, cursor_to_terminal_cell, detect_terminal_links, editor_row_col_to_offset,
-    editor_word_bounds, expand_tilde, extract_selection, strip_line_col,
+    TerminalLayout, clamp_editor_scroll, cursor_to_terminal_cell, detect_terminal_links,
+    editor_row_col_to_offset, editor_word_bounds, expand_tilde, extract_selection, strip_line_col,
 };
 use crate::launch::execute_context_menu_item;
 use crate::search;
@@ -175,13 +175,15 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 *y,
                 state.layout.window_width,
                 state.layout.window_height,
-                split_ratio,
-                state.layout.cell_w,
-                state.layout.cell_h,
-                term_row_count,
-                tab_bar_h as f32,
-                pad_h,
-                pad_v,
+                &TerminalLayout {
+                    split_ratio,
+                    cell_w_px: state.layout.cell_w,
+                    cell_h_px: state.layout.cell_h,
+                    term_row_count,
+                    tab_bar_h: tab_bar_h as f32,
+                    pad_h,
+                    pad_v,
+                },
             ) {
                 state.tab_mut().selection_end = Some(cell);
                 state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
@@ -225,13 +227,15 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     state.cursor.cursor_y,
                     state.layout.window_width,
                     state.layout.window_height,
-                    split_ratio,
-                    state.layout.cell_w,
-                    state.layout.cell_h,
-                    term_row_count,
-                    tab_bar_h_f,
-                    pad_h,
-                    pad_v,
+                    &TerminalLayout {
+                        split_ratio,
+                        cell_w_px: state.layout.cell_w,
+                        cell_h_px: state.layout.cell_h,
+                        term_row_count,
+                        tab_bar_h: tab_bar_h_f,
+                        pad_h,
+                        pad_v,
+                    },
                 ) {
                     let encode_mode = if state.tab().app.mouse_sgr() {
                         1006
@@ -291,13 +295,15 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     state.cursor.cursor_y,
                     state.layout.window_width,
                     state.layout.window_height,
-                    split_ratio,
-                    state.layout.cell_w,
-                    state.layout.cell_h,
-                    term_row_count,
-                    tab_bar_h as f32,
-                    pad_h,
-                    pad_v,
+                    &TerminalLayout {
+                        split_ratio,
+                        cell_w_px: state.layout.cell_w,
+                        cell_h_px: state.layout.cell_h,
+                        term_row_count,
+                        tab_bar_h: tab_bar_h as f32,
+                        pad_h,
+                        pad_v,
+                    },
                 ) {
                     let encode_mode = if state.tab().app.mouse_sgr() {
                         1006
@@ -563,13 +569,15 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     state.cursor.cursor_y,
                     state.layout.window_width,
                     state.layout.window_height,
-                    split_ratio,
-                    state.layout.cell_w,
-                    state.layout.cell_h,
-                    term_row_count,
-                    tab_bar_h as f32,
-                    pad_h,
-                    pad_v,
+                    &TerminalLayout {
+                        split_ratio,
+                        cell_w_px: state.layout.cell_w,
+                        cell_h_px: state.layout.cell_h,
+                        term_row_count,
+                        tab_bar_h: tab_bar_h as f32,
+                        pad_h,
+                        pad_v,
+                    },
                 ) {
                     let last_text = state.tab().last_terminal_text.clone();
                     let term_cols = if state.layout.cell_w > 0.0 {
@@ -600,13 +608,15 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 state.cursor.cursor_y,
                 state.layout.window_width,
                 state.layout.window_height,
-                split_ratio,
-                state.layout.cell_w,
-                state.layout.cell_h,
-                term_row_count,
-                tab_bar_h as f32,
-                pad_h,
-                pad_v,
+                &TerminalLayout {
+                    split_ratio,
+                    cell_w_px: state.layout.cell_w,
+                    cell_h_px: state.layout.cell_h,
+                    term_row_count,
+                    tab_bar_h: tab_bar_h as f32,
+                    pad_h,
+                    pad_v,
+                },
             ) {
                 // If a mouse reporting mode is active and neither Shift nor Alt/Option
                 // is held, forward the click to the PTY. Either modifier bypasses mouse
@@ -916,13 +926,15 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                         state.cursor.cursor_y,
                         state.layout.window_width,
                         state.layout.window_height,
-                        split_ratio,
-                        state.layout.cell_w,
-                        state.layout.cell_h,
-                        term_row_count,
-                        tab_bar_h_f as f32,
-                        pad_h,
-                        pad_v,
+                        &TerminalLayout {
+                            split_ratio,
+                            cell_w_px: state.layout.cell_w,
+                            cell_h_px: state.layout.cell_h,
+                            term_row_count,
+                            tab_bar_h: tab_bar_h_f as f32,
+                            pad_h,
+                            pad_v,
+                        },
                     )
                 {
                     // Button 64 = scroll up, 65 = scroll down.

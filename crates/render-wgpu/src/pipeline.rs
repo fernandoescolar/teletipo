@@ -6,14 +6,14 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::atlas::{
-    CachedGlyph, load_bold_font_bytes, load_font_bytes, load_system_font_database,
+    AtlasAllocState, CachedGlyph, load_bold_font_bytes, load_font_bytes, load_system_font_database,
     load_unicode_fallback_fonts, pack_glyph, shape_terminal_text,
 };
 use crate::geometry::{
-    TEXT_VERTEX_BUF_CAPACITY, VERTEX_BUF_CAPACITY, add_text_verts, add_text_verts_shaped,
-    build_command_palette_bg_verts, build_panel_vertices, build_scroll_indicator_bg_verts,
-    build_settings_overlay_bg_verts, build_suggestion_dropdown_bg_verts, build_toast_bg_verts,
-    floats_as_bytes,
+    TEXT_VERTEX_BUF_CAPACITY, TextRenderCtx, VERTEX_BUF_CAPACITY, add_text_verts,
+    add_text_verts_shaped, build_command_palette_bg_verts, build_panel_vertices,
+    build_scroll_indicator_bg_verts, build_settings_overlay_bg_verts,
+    build_suggestion_dropdown_bg_verts, build_toast_bg_verts, floats_as_bytes,
 };
 use crate::shell_highlight::highlight_shell;
 use crate::types::{ColorTheme, RenderConfig, RenderSnapshot};
@@ -106,11 +106,13 @@ fn rasterize_ascii_glyphs(
         for ch in ' '..='~' {
             let (metrics, bitmap) = font.rasterize(ch, ctx.font_size);
             let cached = pack_glyph(
-                ctx.queue,
-                ctx.atlas_texture,
-                ctx.atlas_alloc_x,
-                ctx.atlas_alloc_y,
-                ctx.atlas_row_h,
+                &mut AtlasAllocState {
+                    queue: ctx.queue,
+                    texture: ctx.atlas_texture,
+                    alloc_x: ctx.atlas_alloc_x,
+                    alloc_y: ctx.atlas_alloc_y,
+                    row_h: ctx.atlas_row_h,
+                },
                 &metrics,
                 &bitmap,
                 ctx.cell_h_px,
@@ -519,36 +521,40 @@ impl<'a> GpuState<'a> {
             let terminal_vert_start = text_verts.len();
             if let Some(ref shaped) = shaped_terminal {
                 add_text_verts_shaped(
-                    term_top_px + pad_v,
-                    pad_h,
-                    self.theme.text,
-                    &terminal_fg_colors,
-                    &terminal_styles,
                     shaped,
+                    &TextRenderCtx {
+                        pane_top_px: term_top_px + pad_v,
+                        x_start_px: pad_h,
+                        default_color: self.theme.text,
+                        fg_colors: &terminal_fg_colors,
+                        styles: &terminal_styles,
+                        glyph_cache: &self.glyph_cache,
+                        bold_glyph_cache: Some(&self.bold_glyph_cache),
+                        cell_w_px: self.cell_w_px,
+                        cell_h_px: self.cell_h_px,
+                        window_size: self.size,
+                        skip_rows: 0,
+                    },
                     &self.shaped_glyph_cache,
-                    &self.glyph_cache,
-                    Some(&self.bold_glyph_cache),
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
                     &mut text_verts,
-                    0,
                 );
             } else {
                 add_text_verts(
                     &terminal_text,
-                    term_top_px + pad_v,
-                    pad_h,
-                    self.theme.text,
-                    &terminal_fg_colors,
-                    &terminal_styles,
-                    &self.glyph_cache,
-                    Some(&self.bold_glyph_cache),
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
+                    &TextRenderCtx {
+                        pane_top_px: term_top_px + pad_v,
+                        x_start_px: pad_h,
+                        default_color: self.theme.text,
+                        fg_colors: &terminal_fg_colors,
+                        styles: &terminal_styles,
+                        glyph_cache: &self.glyph_cache,
+                        bold_glyph_cache: Some(&self.bold_glyph_cache),
+                        cell_w_px: self.cell_w_px,
+                        cell_h_px: self.cell_h_px,
+                        window_size: self.size,
+                        skip_rows: 0,
+                    },
                     &mut text_verts,
-                    0,
                 );
             }
 
@@ -593,18 +599,21 @@ impl<'a> GpuState<'a> {
         }
         add_text_verts(
             &padded_editor,
-            edit_top_px + pad_v,
-            pad_h - snapshot.editor_horizontal_scroll_offset as f32 * self.cell_w_px,
-            editor_text_color,
-            &padded_hl,
-            &[],
-            &self.glyph_cache,
-            None,
-            self.cell_w_px,
-            self.cell_h_px,
-            self.size,
+            &TextRenderCtx {
+                pane_top_px: edit_top_px + pad_v,
+                x_start_px: pad_h
+                    - snapshot.editor_horizontal_scroll_offset as f32 * self.cell_w_px,
+                default_color: editor_text_color,
+                fg_colors: &padded_hl,
+                styles: &[],
+                glyph_cache: &self.glyph_cache,
+                bold_glyph_cache: None,
+                cell_w_px: self.cell_w_px,
+                cell_h_px: self.cell_h_px,
+                window_size: self.size,
+                skip_rows: editor_skip,
+            },
             &mut text_verts,
-            editor_skip,
         );
 
         // Tab label text — rendered inside the tab bar region at the very top.
@@ -628,18 +637,20 @@ impl<'a> GpuState<'a> {
                 // Label — left-padded, leaving room for the × button on the right.
                 add_text_verts(
                     label,
-                    0.0,
-                    tab_x0 + self.cell_w_px * 0.4,
-                    text_color,
-                    &[],
-                    &[],
-                    &self.glyph_cache,
-                    None,
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
+                    &TextRenderCtx {
+                        pane_top_px: 0.0,
+                        x_start_px: tab_x0 + self.cell_w_px * 0.4,
+                        default_color: text_color,
+                        fg_colors: &[],
+                        styles: &[],
+                        glyph_cache: &self.glyph_cache,
+                        bold_glyph_cache: None,
+                        cell_w_px: self.cell_w_px,
+                        cell_h_px: self.cell_h_px,
+                        window_size: self.size,
+                        skip_rows: 0,
+                    },
                     &mut text_verts,
-                    0,
                 );
                 // × close button at the right edge of the tab.
                 let close_x = tab_x1 - self.cell_w_px * 1.3;
@@ -649,39 +660,43 @@ impl<'a> GpuState<'a> {
                 };
                 add_text_verts(
                     "\u{d7}",
-                    0.0,
-                    close_x,
-                    close_color,
-                    &[],
-                    &[],
-                    &self.glyph_cache,
-                    None,
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
+                    &TextRenderCtx {
+                        pane_top_px: 0.0,
+                        x_start_px: close_x,
+                        default_color: close_color,
+                        fg_colors: &[],
+                        styles: &[],
+                        glyph_cache: &self.glyph_cache,
+                        bold_glyph_cache: None,
+                        cell_w_px: self.cell_w_px,
+                        cell_h_px: self.cell_h_px,
+                        window_size: self.size,
+                        skip_rows: 0,
+                    },
                     &mut text_verts,
-                    0,
                 );
             }
             // "+" button text on the far right.
             let add_x = self.size.width as f32 - add_btn_w + self.cell_w_px * 0.5;
             add_text_verts(
                 "+",
-                0.0,
-                add_x,
-                {
-                    let [r, g, b] = th.ansi_palette[10];
-                    [r, g, b, 0.95_f32]
+                &TextRenderCtx {
+                    pane_top_px: 0.0,
+                    x_start_px: add_x,
+                    default_color: {
+                        let [r, g, b] = th.ansi_palette[10];
+                        [r, g, b, 0.95_f32]
+                    },
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
                 },
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
                 &mut text_verts,
-                0,
             );
         }
 
@@ -754,18 +769,20 @@ impl<'a> GpuState<'a> {
                     let y_item = my + i as f32 * menu_item_h + (menu_item_h - self.cell_h_px) * 0.5;
                     add_text_verts(
                         item,
-                        y_item,
-                        mx + self.cell_w_px * 0.5,
-                        text_color,
-                        &[],
-                        &[],
-                        &self.glyph_cache,
-                        None,
-                        self.cell_w_px,
-                        self.cell_h_px,
-                        self.size,
+                        &TextRenderCtx {
+                            pane_top_px: y_item,
+                            x_start_px: mx + self.cell_w_px * 0.5,
+                            default_color: text_color,
+                            fg_colors: &[],
+                            styles: &[],
+                            glyph_cache: &self.glyph_cache,
+                            bold_glyph_cache: None,
+                            cell_w_px: self.cell_w_px,
+                            cell_h_px: self.cell_h_px,
+                            window_size: self.size,
+                            skip_rows: 0,
+                        },
                         &mut text_verts,
-                        0,
                     );
                 }
             }
@@ -785,18 +802,20 @@ impl<'a> GpuState<'a> {
             // ── "Find: " label ────────────────────────────────────────────────
             add_text_verts(
                 "Find: ",
-                text_y,
-                panel_x + self.cell_w_px * 0.6,
-                [0.55, 0.62, 0.78, 1.0],
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
+                &TextRenderCtx {
+                    pane_top_px: text_y,
+                    x_start_px: panel_x + self.cell_w_px * 0.6,
+                    default_color: [0.55, 0.62, 0.78, 1.0],
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
+                },
                 &mut text_verts,
-                0,
             );
 
             // ── Query text (viewport-aware, up to 13 visible chars) ───────────
@@ -830,18 +849,20 @@ impl<'a> GpuState<'a> {
 
             add_text_verts(
                 &query_display_text,
-                text_y,
-                panel_x + self.cell_w_px * (QUERY_TEXT_X + query_x_offset),
-                [0.88, 0.92, 0.98, 1.0],
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
+                &TextRenderCtx {
+                    pane_top_px: text_y,
+                    x_start_px: panel_x + self.cell_w_px * (QUERY_TEXT_X + query_x_offset),
+                    default_color: [0.88, 0.92, 0.98, 1.0],
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
+                },
                 &mut text_verts,
-                0,
             );
 
             // ── Regex / case-sensitive flag indicators ─────────────────────────
@@ -860,33 +881,37 @@ impl<'a> GpuState<'a> {
             };
             add_text_verts(
                 "[R]",
-                text_y,
-                panel_x + self.cell_w_px * 20.0,
-                regex_color,
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
+                &TextRenderCtx {
+                    pane_top_px: text_y,
+                    x_start_px: panel_x + self.cell_w_px * 20.0,
+                    default_color: regex_color,
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
+                },
                 &mut text_verts,
-                0,
             );
             add_text_verts(
                 "[Cc]",
-                text_y,
-                panel_x + self.cell_w_px * 23.0,
-                case_color,
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
+                &TextRenderCtx {
+                    pane_top_px: text_y,
+                    x_start_px: panel_x + self.cell_w_px * 23.0,
+                    default_color: case_color,
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
+                },
                 &mut text_verts,
-                0,
             );
 
             // ── Match count or error message ─────────────────────────────────
@@ -905,18 +930,20 @@ impl<'a> GpuState<'a> {
             };
             add_text_verts(
                 &count_or_err,
-                text_y,
-                panel_x + self.cell_w_px * 27.0,
-                count_color,
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
+                &TextRenderCtx {
+                    pane_top_px: text_y,
+                    x_start_px: panel_x + self.cell_w_px * 27.0,
+                    default_color: count_color,
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
+                },
                 &mut text_verts,
-                0,
             );
 
             // ── Navigation / close button glyphs ─────────────────────────────
@@ -924,18 +951,20 @@ impl<'a> GpuState<'a> {
                 let bx = panel_x + panel_w - button_w * (3 - i) as f32;
                 add_text_verts(
                     &glyph.to_string(),
-                    text_y,
-                    bx + self.cell_w_px * 0.55,
-                    [0.92, 0.96, 1.0, 1.0],
-                    &[],
-                    &[],
-                    &self.glyph_cache,
-                    None,
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
+                    &TextRenderCtx {
+                        pane_top_px: text_y,
+                        x_start_px: bx + self.cell_w_px * 0.55,
+                        default_color: [0.92, 0.96, 1.0, 1.0],
+                        fg_colors: &[],
+                        styles: &[],
+                        glyph_cache: &self.glyph_cache,
+                        bold_glyph_cache: None,
+                        cell_w_px: self.cell_w_px,
+                        cell_h_px: self.cell_h_px,
+                        window_size: self.size,
+                        skip_rows: 0,
+                    },
                     &mut text_verts,
-                    0,
                 );
             }
         }
@@ -961,18 +990,20 @@ impl<'a> GpuState<'a> {
                 };
                 add_text_verts(
                     item,
-                    row_y,
-                    pad_h + self.cell_w_px,
-                    color,
-                    &[],
-                    &[],
-                    &self.glyph_cache,
-                    None,
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
+                    &TextRenderCtx {
+                        pane_top_px: row_y,
+                        x_start_px: pad_h + self.cell_w_px,
+                        default_color: color,
+                        fg_colors: &[],
+                        styles: &[],
+                        glyph_cache: &self.glyph_cache,
+                        bold_glyph_cache: None,
+                        cell_w_px: self.cell_w_px,
+                        cell_h_px: self.cell_h_px,
+                        window_size: self.size,
+                        skip_rows: 0,
+                    },
                     &mut text_verts,
-                    0,
                 );
             }
         }
@@ -1011,18 +1042,20 @@ impl<'a> GpuState<'a> {
             let title_y = panel_y0 + (title_h - self.cell_h_px) / 2.0;
             add_text_verts(
                 title_text,
-                title_y,
-                panel_x0 + self.cell_w_px,
-                th.text,
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
+                &TextRenderCtx {
+                    pane_top_px: title_y,
+                    x_start_px: panel_x0 + self.cell_w_px,
+                    default_color: th.text,
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
+                },
                 &mut text_verts,
-                0,
             );
 
             // Rows
@@ -1073,18 +1106,20 @@ impl<'a> GpuState<'a> {
                     }
                     add_text_verts(
                         &item.key,
-                        row_y,
-                        key_col,
-                        th.separator_focused,
-                        &[],
-                        &[],
-                        &self.glyph_cache,
-                        None,
-                        self.cell_w_px,
-                        self.cell_h_px,
-                        self.size,
+                        &TextRenderCtx {
+                            pane_top_px: row_y,
+                            x_start_px: key_col,
+                            default_color: th.separator_focused,
+                            fg_colors: &[],
+                            styles: &[],
+                            glyph_cache: &self.glyph_cache,
+                            bold_glyph_cache: None,
+                            cell_w_px: self.cell_w_px,
+                            cell_h_px: self.cell_h_px,
+                            window_size: self.size,
+                            skip_rows: 0,
+                        },
                         &mut text_verts,
-                        0,
                     );
                 } else {
                     let is_focused = editable_idx == overlay.cursor;
@@ -1115,18 +1150,20 @@ impl<'a> GpuState<'a> {
                     };
                     add_text_verts(
                         &item.key,
-                        row_y,
-                        key_col,
-                        key_color,
-                        &[],
-                        &[],
-                        &self.glyph_cache,
-                        None,
-                        self.cell_w_px,
-                        self.cell_h_px,
-                        self.size,
+                        &TextRenderCtx {
+                            pane_top_px: row_y,
+                            x_start_px: key_col,
+                            default_color: key_color,
+                            fg_colors: &[],
+                            styles: &[],
+                            glyph_cache: &self.glyph_cache,
+                            bold_glyph_cache: None,
+                            cell_w_px: self.cell_w_px,
+                            cell_h_px: self.cell_h_px,
+                            window_size: self.size,
+                            skip_rows: 0,
+                        },
                         &mut text_verts,
-                        0,
                     );
 
                     // Build the display value string for the right column.
@@ -1187,18 +1224,20 @@ impl<'a> GpuState<'a> {
                     };
                     add_text_verts(
                         display_val,
-                        row_y,
-                        val_col,
-                        val_color,
-                        &[],
-                        &[],
-                        &self.glyph_cache,
-                        None,
-                        self.cell_w_px,
-                        self.cell_h_px,
-                        self.size,
+                        &TextRenderCtx {
+                            pane_top_px: row_y,
+                            x_start_px: val_col,
+                            default_color: val_color,
+                            fg_colors: &[],
+                            styles: &[],
+                            glyph_cache: &self.glyph_cache,
+                            bold_glyph_cache: None,
+                            cell_w_px: self.cell_w_px,
+                            cell_h_px: self.cell_h_px,
+                            window_size: self.size,
+                            skip_rows: 0,
+                        },
                         &mut text_verts,
-                        0,
                     );
                 }
             }
@@ -1219,21 +1258,23 @@ impl<'a> GpuState<'a> {
                 };
                 add_text_verts(
                     footer_text,
-                    footer_y,
-                    panel_x0,
-                    {
-                        let [r, g, b, _] = th.text;
-                        [r * 0.55, g * 0.55, b * 0.55, 0.90_f32]
+                    &TextRenderCtx {
+                        pane_top_px: footer_y,
+                        x_start_px: panel_x0,
+                        default_color: {
+                            let [r, g, b, _] = th.text;
+                            [r * 0.55, g * 0.55, b * 0.55, 0.90_f32]
+                        },
+                        fg_colors: &[],
+                        styles: &[],
+                        glyph_cache: &self.glyph_cache,
+                        bold_glyph_cache: None,
+                        cell_w_px: self.cell_w_px,
+                        cell_h_px: self.cell_h_px,
+                        window_size: self.size,
+                        skip_rows: 0,
                     },
-                    &[],
-                    &[],
-                    &self.glyph_cache,
-                    None,
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
                     &mut text_verts,
-                    0,
                 );
             }
 
@@ -1272,18 +1313,20 @@ impl<'a> GpuState<'a> {
                     };
                     add_text_verts(
                         &labeled,
-                        item_y,
-                        key_col,
-                        color,
-                        &[],
-                        &[],
-                        &self.glyph_cache,
-                        None,
-                        self.cell_w_px,
-                        self.cell_h_px,
-                        self.size,
+                        &TextRenderCtx {
+                            pane_top_px: item_y,
+                            x_start_px: key_col,
+                            default_color: color,
+                            fg_colors: &[],
+                            styles: &[],
+                            glyph_cache: &self.glyph_cache,
+                            bold_glyph_cache: None,
+                            cell_w_px: self.cell_w_px,
+                            cell_h_px: self.cell_h_px,
+                            window_size: self.size,
+                            skip_rows: 0,
+                        },
                         &mut text_verts,
-                        0,
                     );
                 }
                 // "no results" hint when the query matched nothing.
@@ -1291,21 +1334,23 @@ impl<'a> GpuState<'a> {
                     let item_y = drop_top_px + (row_h - self.cell_h_px) / 2.0;
                     add_text_verts(
                         "(no results)",
-                        item_y,
-                        key_col,
-                        {
-                            let [r, g, b, _] = th.text;
-                            [r * 0.45, g * 0.45, b * 0.45, 0.70]
+                        &TextRenderCtx {
+                            pane_top_px: item_y,
+                            x_start_px: key_col,
+                            default_color: {
+                                let [r, g, b, _] = th.text;
+                                [r * 0.45, g * 0.45, b * 0.45, 0.70]
+                            },
+                            fg_colors: &[],
+                            styles: &[],
+                            glyph_cache: &self.glyph_cache,
+                            bold_glyph_cache: None,
+                            cell_w_px: self.cell_w_px,
+                            cell_h_px: self.cell_h_px,
+                            window_size: self.size,
+                            skip_rows: 0,
                         },
-                        &[],
-                        &[],
-                        &self.glyph_cache,
-                        None,
-                        self.cell_w_px,
-                        self.cell_h_px,
-                        self.size,
                         &mut text_verts,
-                        0,
                     );
                 }
             }
@@ -1333,18 +1378,20 @@ impl<'a> GpuState<'a> {
             let text_x = (self.size.width as f32 - text_w_px) / 2.0;
             add_text_verts(
                 &label,
-                text_y,
-                text_x,
-                [0.60, 0.85, 1.00, 1.0],
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
+                &TextRenderCtx {
+                    pane_top_px: text_y,
+                    x_start_px: text_x,
+                    default_color: [0.60, 0.85, 1.00, 1.0],
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
+                },
                 &mut text_verts,
-                0,
             );
         }
 
@@ -1373,18 +1420,20 @@ impl<'a> GpuState<'a> {
             let header_text_y = y0_px + (header_h_px - self.cell_h_px) / 2.0;
             add_text_verts(
                 &query_display,
-                header_text_y,
-                left_px + pad_px,
-                [0.88, 0.92, 1.00, 1.0],
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
+                &TextRenderCtx {
+                    pane_top_px: header_text_y,
+                    x_start_px: left_px + pad_px,
+                    default_color: [0.88, 0.92, 1.00, 1.0],
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
+                },
                 &mut text_verts,
-                0,
             );
 
             // Item rows
@@ -1401,18 +1450,20 @@ impl<'a> GpuState<'a> {
                 };
                 add_text_verts(
                     item,
-                    text_y,
-                    left_px + pad_px,
-                    color,
-                    &[],
-                    &[],
-                    &self.glyph_cache,
-                    None,
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
+                    &TextRenderCtx {
+                        pane_top_px: text_y,
+                        x_start_px: left_px + pad_px,
+                        default_color: color,
+                        fg_colors: &[],
+                        styles: &[],
+                        glyph_cache: &self.glyph_cache,
+                        bold_glyph_cache: None,
+                        cell_w_px: self.cell_w_px,
+                        cell_h_px: self.cell_h_px,
+                        window_size: self.size,
+                        skip_rows: 0,
+                    },
                     &mut text_verts,
-                    0,
                 );
             }
         }
@@ -1449,18 +1500,20 @@ impl<'a> GpuState<'a> {
                 };
                 add_text_verts(
                     &toast.text,
-                    text_y,
-                    text_x,
-                    text_color,
-                    &[],
-                    &[],
-                    &self.glyph_cache,
-                    None,
-                    self.cell_w_px,
-                    self.cell_h_px,
-                    self.size,
+                    &TextRenderCtx {
+                        pane_top_px: text_y,
+                        x_start_px: text_x,
+                        default_color: text_color,
+                        fg_colors: &[],
+                        styles: &[],
+                        glyph_cache: &self.glyph_cache,
+                        bold_glyph_cache: None,
+                        cell_w_px: self.cell_w_px,
+                        cell_h_px: self.cell_h_px,
+                        window_size: self.size,
+                        skip_rows: 0,
+                    },
                     &mut text_verts,
-                    0,
                 );
             }
         }
@@ -1484,18 +1537,20 @@ impl<'a> GpuState<'a> {
             let y_start = tab_bar_h + self.cell_h_px;
             add_text_verts(
                 overlay_text,
-                y_start,
-                x_start,
-                [1.0, 1.0, 1.0, 1.0],
-                &[],
-                &[],
-                &self.glyph_cache,
-                None,
-                self.cell_w_px,
-                self.cell_h_px,
-                self.size,
+                &TextRenderCtx {
+                    pane_top_px: y_start,
+                    x_start_px: x_start,
+                    default_color: [1.0, 1.0, 1.0, 1.0],
+                    fg_colors: &[],
+                    styles: &[],
+                    glyph_cache: &self.glyph_cache,
+                    bold_glyph_cache: None,
+                    cell_w_px: self.cell_w_px,
+                    cell_h_px: self.cell_h_px,
+                    window_size: self.size,
+                    skip_rows: 0,
+                },
                 &mut text_verts,
-                0,
             );
         }
 

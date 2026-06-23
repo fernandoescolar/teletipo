@@ -412,7 +412,32 @@ where
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    fn handle_osc(&mut self, s: String) {
+        if s == "133;A" {
+            self.on_osc133_a();
+        } else if s == "133;B" {
+            self.on_osc133_b();
+        } else if s == "133;C" {
+            self.on_osc133_c();
+        } else if let Some(rest) = s.strip_prefix("133;D;")
+            && let Ok(code) = rest.parse::<i32>()
+        {
+            self.on_osc133_d(code);
+        } else if let Some(title) = s.strip_prefix("0;").or_else(|| s.strip_prefix("2;")) {
+            self.window_title = Some(title.to_owned());
+        } else if let Some(uri) = s.strip_prefix("7;") {
+            // OSC 7 — shell reports its working directory as `file://[host]/path`.
+            if let Some(path_str) = uri
+                .strip_prefix("file://")
+                .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
+                .or_else(|| uri.strip_prefix("file:///"))
+            {
+                let decoded = percent_decode(path_str);
+                self.cwd = Some(std::path::PathBuf::from(decoded));
+            }
+        }
+    }
+
     pub fn feed(&mut self, bytes: &[u8]) {
         let actions = self.parser.advance(bytes);
         metrics::histogram!("parse_actions").record(actions.len() as f64);
@@ -464,36 +489,7 @@ where
                     2004 => self.bracketed_paste = false,
                     _ => {}
                 },
-                Action::Osc(s) => {
-                    if s == "133;A" {
-                        self.on_osc133_a();
-                    } else if s == "133;B" {
-                        self.on_osc133_b();
-                    } else if s == "133;C" {
-                        self.on_osc133_c();
-                    } else if let Some(rest) = s.strip_prefix("133;D;")
-                        && let Ok(code) = rest.parse::<i32>()
-                    {
-                        self.on_osc133_d(code);
-                    } else if let Some(title) =
-                        s.strip_prefix("0;").or_else(|| s.strip_prefix("2;"))
-                    {
-                        self.window_title = Some(title.to_owned());
-                    } else if let Some(uri) = s.strip_prefix("7;") {
-                        // OSC 7 — shell reports its working directory as
-                        // `file://[host]/path`. Strip the authority component
-                        // (everything up to the third slash after "file://").
-                        if let Some(path_str) = uri
-                            .strip_prefix("file://")
-                            .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
-                            .or_else(|| uri.strip_prefix("file:///"))
-                        {
-                            // URL-decode percent-encoded characters (e.g. %20 → ' ')
-                            let decoded = percent_decode(path_str);
-                            self.cwd = Some(std::path::PathBuf::from(decoded));
-                        }
-                    }
-                }
+                Action::Osc(s) => self.handle_osc(s),
                 Action::SetHyperlink(uri_opt) => {
                     self.screen.set_active_hyperlink(uri_opt.as_deref());
                 }

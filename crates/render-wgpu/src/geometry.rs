@@ -13,6 +13,34 @@ use winit::dpi::PhysicalSize;
 use crate::atlas::{CachedGlyph, ShapedGlyph};
 use crate::types::RenderSnapshot;
 
+/// Context bundle for rendering the editor caret quad.
+pub(crate) struct CaretCtx {
+    pub edit_top_px: f32,
+    pub cell_w_px: f32,
+    pub cell_h_px: f32,
+    pub size: winit::dpi::PhysicalSize<u32>,
+    pub color: [f32; 4],
+    pub scroll_offset: usize,
+    pub horizontal_scroll_offset: usize,
+    pub pad_h: f32,
+    pub pad_v: f32,
+}
+
+/// Context bundle shared by `add_text_verts` and `add_text_verts_shaped`.
+pub(crate) struct TextRenderCtx<'a> {
+    pub pane_top_px: f32,
+    pub x_start_px: f32,
+    pub default_color: [f32; 4],
+    pub fg_colors: &'a [Option<[f32; 3]>],
+    pub styles: &'a [u8],
+    pub glyph_cache: &'a std::collections::HashMap<char, CachedGlyph>,
+    pub bold_glyph_cache: Option<&'a std::collections::HashMap<char, CachedGlyph>>,
+    pub cell_w_px: f32,
+    pub cell_h_px: f32,
+    pub window_size: winit::dpi::PhysicalSize<u32>,
+    pub skip_rows: usize,
+}
+
 pub const SCROLLBAR_W_PX: f32 = 5.0;
 
 pub(crate) const VERTEX_BUF_CAPACITY: u64 = 2 << 20;
@@ -849,15 +877,17 @@ pub(crate) fn build_panel_vertices(
         verts.extend_from_slice(&editor_caret_verts(
             &snapshot.editor_text,
             snapshot.editor_cursor_offset,
-            edit_top_px,
-            cell_w_px,
-            cell_h_px,
-            size,
-            theme.cursor,
-            editor_scroll,
-            snapshot.editor_horizontal_scroll_offset,
-            pad_h,
-            pad_v,
+            &CaretCtx {
+                edit_top_px,
+                cell_w_px,
+                cell_h_px,
+                size,
+                color: theme.cursor,
+                scroll_offset: editor_scroll,
+                horizontal_scroll_offset: snapshot.editor_horizontal_scroll_offset,
+                pad_h,
+                pad_v,
+            },
         ));
     }
 
@@ -1431,33 +1461,24 @@ pub(crate) fn build_suggestion_dropdown_bg_verts(
     verts
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn editor_caret_verts(
     editor_text: &str,
     cursor_offset: usize,
-    edit_top_px: f32,
-    cell_w_px: f32,
-    cell_h_px: f32,
-    size: PhysicalSize<u32>,
-    color: [f32; 4],
-    scroll_offset: usize,
-    horizontal_scroll_offset: usize,
-    pad_h: f32,
-    pad_v: f32,
+    ctx: &CaretCtx,
 ) -> [f32; 36] {
-    let win_w = size.width as f32;
-    let win_h = size.height as f32;
-    if win_w == 0.0 || win_h == 0.0 || cell_w_px == 0.0 || cell_h_px == 0.0 {
+    let win_w = ctx.size.width as f32;
+    let win_h = ctx.size.height as f32;
+    if win_w == 0.0 || win_h == 0.0 || ctx.cell_w_px == 0.0 || ctx.cell_h_px == 0.0 {
         return [0.0; 36];
     }
     let clamped = cursor_offset.min(editor_text.len());
     let before = &editor_text[..clamped];
     let row = before.chars().filter(|&c| c == '\n').count();
     // Caret is above the visible scroll window — don't draw it.
-    if row < scroll_offset {
+    if row < ctx.scroll_offset {
         return [0.0; 36];
     }
-    let visible_row = row - scroll_offset;
+    let visible_row = row - ctx.scroll_offset;
     // Wide characters (emoji, CJK) each occupy 2 visual columns.
     let col_in_editor: usize = match before.rfind('\n') {
         Some(pos) => before[pos + 1..].chars().map(char_col_width).sum(),
@@ -1466,38 +1487,18 @@ pub(crate) fn editor_caret_verts(
     let col = col_in_editor;
     let px_x = 2.0 / win_w;
     let px_y = 2.0 / win_h;
-    let gx0 = pad_h + (col as f32 - horizontal_scroll_offset as f32) * cell_w_px;
-    let gy0 = edit_top_px + pad_v + visible_row as f32 * cell_h_px;
+    let gx0 = ctx.pad_h + (col as f32 - ctx.horizontal_scroll_offset as f32) * ctx.cell_w_px;
+    let gy0 = ctx.edit_top_px + ctx.pad_v + visible_row as f32 * ctx.cell_h_px;
     let x0 = gx0 * px_x - 1.0;
     let x1 = (gx0 + 2.0) * px_x - 1.0;
     let y1 = 1.0 - gy0 * px_y;
-    let y0 = 1.0 - (gy0 + cell_h_px) * px_y;
-    quad_verts(x0, y0, x1, y1, color)
+    let y0 = 1.0 - (gy0 + ctx.cell_h_px) * px_y;
+    quad_verts(x0, y0, x1, y1, ctx.color)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn add_text_verts(
-    text: &str,
-    pane_top_px: f32,
-    x_start_px: f32,
-    default_color: [f32; 4],
-    fg_colors: &[Option<[f32; 3]>],
-    // Per-character style bits: bit 0 = bold, bit 1 = italic, bit 2 = strikethrough.
-    // Pass an empty slice when no style information is available.
-    styles: &[u8],
-    glyph_cache: &HashMap<char, CachedGlyph>,
-    // Optional cache of bold-face glyphs. When `Some` and a character has the bold
-    // style bit set, the bold glyph is used; falls back to `glyph_cache` if not found.
-    bold_glyph_cache: Option<&HashMap<char, CachedGlyph>>,
-    cell_w_px: f32,
-    cell_h_px: f32,
-    window_size: PhysicalSize<u32>,
-    verts: &mut Vec<f32>,
-    // Number of text rows to skip before rendering (editor scroll).
-    skip_rows: usize,
-) {
-    let win_w = window_size.width as f32;
-    let win_h = window_size.height as f32;
+pub(crate) fn add_text_verts(text: &str, ctx: &TextRenderCtx<'_>, verts: &mut Vec<f32>) {
+    let win_w = ctx.window_size.width as f32;
+    let win_h = ctx.window_size.height as f32;
     if win_w == 0.0 || win_h == 0.0 {
         return;
     }
@@ -1517,32 +1518,32 @@ pub(crate) fn add_text_verts(
         if ch == '\0' {
             continue;
         }
-        if row < skip_rows {
+        if row < ctx.skip_rows {
             col += 1;
             continue;
         }
-        let visible_row = row - skip_rows;
-        let style = styles.get(char_idx).copied().unwrap_or(0);
+        let visible_row = row - ctx.skip_rows;
+        let style = ctx.styles.get(char_idx).copied().unwrap_or(0);
         let is_dim = style & STYLE_DIM != 0;
-        let [r, g, b, a] = match fg_colors.get(char_idx).copied().flatten() {
-            Some([cr, cg, cb]) => [cr, cg, cb, default_color[3]],
+        let [r, g, b, a] = match ctx.fg_colors.get(char_idx).copied().flatten() {
+            Some([cr, cg, cb]) => [cr, cg, cb, ctx.default_color[3]],
             None if is_dim => [
-                default_color[0] * 0.55,
-                default_color[1] * 0.55,
-                default_color[2] * 0.55,
-                default_color[3],
+                ctx.default_color[0] * 0.55,
+                ctx.default_color[1] * 0.55,
+                ctx.default_color[2] * 0.55,
+                ctx.default_color[3],
             ],
-            None => default_color,
+            None => ctx.default_color,
         };
         let is_bold = style & 0b001 != 0;
         let is_italic = style & 0b010 != 0;
         // Pick bold glyph cache when available, fall back to regular.
         let cache = if is_bold {
-            bold_glyph_cache
+            ctx.bold_glyph_cache
                 .and_then(|bc| bc.get(&ch))
-                .or_else(|| glyph_cache.get(&ch))
+                .or_else(|| ctx.glyph_cache.get(&ch))
         } else {
-            glyph_cache.get(&ch)
+            ctx.glyph_cache.get(&ch)
         };
         // Wide (colour) glyphs occupy 2 terminal columns; track how many columns to advance.
         let mut advance_cols = 1usize;
@@ -1550,8 +1551,8 @@ pub(crate) fn add_text_verts(
             && glyph.width_px > 0.0
             && glyph.height_px > 0.0
         {
-            let gx0 = x_start_px + col as f32 * cell_w_px + glyph.offset_x_px;
-            let gy0 = pane_top_px + visible_row as f32 * cell_h_px + glyph.offset_y_px;
+            let gx0 = ctx.x_start_px + col as f32 * ctx.cell_w_px + glyph.offset_x_px;
+            let gy0 = ctx.pane_top_px + visible_row as f32 * ctx.cell_h_px + glyph.offset_y_px;
             let x0 = gx0 * px_x - 1.0;
             let x1 = (gx0 + glyph.width_px) * px_x - 1.0;
             let y1 = 1.0 - gy0 * px_y;
@@ -1560,7 +1561,7 @@ pub(crate) fn add_text_verts(
             // Italic: shear the top of each glyph forward (to the right) by 20% of the
             // cell height, giving a forward lean without loading a separate italic font.
             let lean = if is_italic {
-                cell_h_px * 0.20 * px_x
+                ctx.cell_h_px * 0.20 * px_x
             } else {
                 0.0
             };
@@ -1575,7 +1576,7 @@ pub(crate) fn add_text_verts(
             verts.extend_from_slice(&[x0, y0, u0, v1, r, g, b, va]);
             // Colour (emoji) glyphs span ~2 monospace columns; advance accordingly.
             if glyph.is_color {
-                advance_cols = ((glyph.width_px / cell_w_px).round() as usize).max(1);
+                advance_cols = ((glyph.width_px / ctx.cell_w_px).round() as usize).max(1);
             }
         }
         col += advance_cols;
@@ -1589,26 +1590,14 @@ pub(crate) fn add_text_verts(
 /// avoid duplicating atlas space.
 ///
 /// `shaped_lines` must have one entry per `\n`-separated line in the text.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_text_verts_shaped(
-    pane_top_px: f32,
-    x_start_px: f32,
-    default_color: [f32; 4],
-    fg_colors: &[Option<[f32; 3]>],
-    // Per-character style bits: bit 0 = bold, bit 1 = italic, bit 2 = strikethrough.
-    styles: &[u8],
     shaped_lines: &[Vec<ShapedGlyph>],
+    ctx: &TextRenderCtx<'_>,
     shaped_cache: &HashMap<(u16, bool), CachedGlyph>,
-    glyph_cache: &HashMap<char, CachedGlyph>,
-    bold_glyph_cache: Option<&HashMap<char, CachedGlyph>>,
-    cell_w_px: f32,
-    cell_h_px: f32,
-    window_size: PhysicalSize<u32>,
     verts: &mut Vec<f32>,
-    skip_rows: usize,
 ) {
-    let win_w = window_size.width as f32;
-    let win_h = window_size.height as f32;
+    let win_w = ctx.window_size.width as f32;
+    let win_h = ctx.window_size.height as f32;
     if win_w == 0.0 || win_h == 0.0 {
         return;
     }
@@ -1616,24 +1605,24 @@ pub(crate) fn add_text_verts_shaped(
     let px_y = 2.0 / win_h;
 
     for (line_idx, shaped_line) in shaped_lines.iter().enumerate() {
-        if line_idx < skip_rows {
+        if line_idx < ctx.skip_rows {
             continue;
         }
-        let visible_row = line_idx - skip_rows;
+        let visible_row = line_idx - ctx.skip_rows;
         const STYLE_DIM: u8 = 0b1000;
         for sg in shaped_line {
             let char_idx = sg.full_char_idx;
-            let style = styles.get(char_idx).copied().unwrap_or(0);
+            let style = ctx.styles.get(char_idx).copied().unwrap_or(0);
             let is_dim = style & STYLE_DIM != 0;
-            let [r, g, b, a] = match fg_colors.get(char_idx).copied().flatten() {
-                Some([cr, cg, cb]) => [cr, cg, cb, default_color[3]],
+            let [r, g, b, a] = match ctx.fg_colors.get(char_idx).copied().flatten() {
+                Some([cr, cg, cb]) => [cr, cg, cb, ctx.default_color[3]],
                 None if is_dim => [
-                    default_color[0] * 0.55,
-                    default_color[1] * 0.55,
-                    default_color[2] * 0.55,
-                    default_color[3],
+                    ctx.default_color[0] * 0.55,
+                    ctx.default_color[1] * 0.55,
+                    ctx.default_color[2] * 0.55,
+                    ctx.default_color[3],
                 ],
-                None => default_color,
+                None => ctx.default_color,
             };
             let is_bold = style & 0b001 != 0;
             let is_italic = style & 0b010 != 0;
@@ -1642,11 +1631,11 @@ pub(crate) fn add_text_verts_shaped(
             // For ligature glyphs (span_cols > 1) use the shaped-glyph-ID cache.
             let glyph = if sg.span_cols == 1 {
                 if is_bold {
-                    bold_glyph_cache
+                    ctx.bold_glyph_cache
                         .and_then(|bc| bc.get(&sg.source_char))
-                        .or_else(|| glyph_cache.get(&sg.source_char))
+                        .or_else(|| ctx.glyph_cache.get(&sg.source_char))
                 } else {
-                    glyph_cache.get(&sg.source_char)
+                    ctx.glyph_cache.get(&sg.source_char)
                 }
             } else {
                 shaped_cache
@@ -1659,9 +1648,10 @@ pub(crate) fn add_text_verts_shaped(
                 continue;
             }
 
-            let gx0 = x_start_px + sg.col as f32 * cell_w_px + glyph.offset_x_px + sg.x_offset_px;
-            let gy0 =
-                pane_top_px + visible_row as f32 * cell_h_px + glyph.offset_y_px - sg.y_offset_px;
+            let gx0 =
+                ctx.x_start_px + sg.col as f32 * ctx.cell_w_px + glyph.offset_x_px + sg.x_offset_px;
+            let gy0 = ctx.pane_top_px + visible_row as f32 * ctx.cell_h_px + glyph.offset_y_px
+                - sg.y_offset_px;
             let x0 = gx0 * px_x - 1.0;
             let x1 = (gx0 + glyph.width_px) * px_x - 1.0;
             let y1 = 1.0 - gy0 * px_y;
@@ -1669,7 +1659,7 @@ pub(crate) fn add_text_verts_shaped(
             let (u0, v0, u1, v1) = (glyph.u0, glyph.v0, glyph.u1, glyph.v1);
 
             let lean = if is_italic {
-                cell_h_px * 0.20 * px_x
+                ctx.cell_h_px * 0.20 * px_x
             } else {
                 0.0
             };

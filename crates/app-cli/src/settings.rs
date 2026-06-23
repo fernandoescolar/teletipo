@@ -325,7 +325,6 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
 /// Handle a key event while the settings overlay is open.
 /// Returns `true` if the event was consumed (caller should `return`).
 /// Must only be called when `state.settings.open` is true.
-#[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // overlay dispatcher: flat match on every key
 pub(crate) fn handle_settings_key(
     state: &mut GpuRuntimeState,
     key_event: &winit::event::KeyEvent,
@@ -333,59 +332,71 @@ pub(crate) fn handle_settings_key(
     if key_event.state != ElementState::Pressed {
         return true; // consume non-press events too while settings is open
     }
-    // +3 for the three action rows at the end
-    let n_fields = SETTINGS_FIELDS.len() + 3;
 
     // ── Search mode: type-to-filter for the font family picker ───────────────
     if state.settings.search_buf.is_some() {
-        match &key_event.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                // Cancel search — restore the original family selection.
-                state.settings.search_buf = None;
-                state.settings.search_selected = 0;
-                state.settings.search_scroll_offset = 0;
-            }
-            Key::Named(NamedKey::Enter) => {
-                // Confirm the highlighted match.
-                confirm_search_selection(state);
-            }
-            Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowLeft) => {
-                // Compute current matches count inline (cheap, just filtering).
-                let n = search_match_count(state);
-                if n > 0 && state.settings.search_selected > 0 {
-                    state.settings.search_selected -= 1;
-                    clamp_search_scroll(state, n);
-                }
-            }
-            Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowRight) => {
-                let n = search_match_count(state);
-                if n > 0 && state.settings.search_selected + 1 < n {
-                    state.settings.search_selected += 1;
-                    clamp_search_scroll(state, n);
-                }
-            }
-            Key::Named(NamedKey::Backspace) => {
-                if let Some(ref mut buf) = state.settings.search_buf {
-                    buf.pop();
-                    state.settings.search_selected = 0;
-                    state.settings.search_scroll_offset = 0;
-                }
-            }
-            Key::Character(_) | Key::Named(NamedKey::Space) => {
-                if let Some(text) = key_event.text.as_ref()
-                    && let Some(ref mut buf) = state.settings.search_buf
-                {
-                    buf.push_str(text.as_str());
-                    state.settings.search_selected = 0;
-                    state.settings.search_scroll_offset = 0;
-                }
-            }
-            _ => {}
-        }
+        handle_settings_search_key(state, key_event);
         return true;
     }
 
     // ── Normal settings mode ──────────────────────────────────────────────────
+    handle_settings_normal_key(state, key_event);
+    true // all keys consumed while settings is open
+}
+
+/// Handle a key event while the settings search dropdown is active.
+fn handle_settings_search_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+    match &key_event.logical_key {
+        Key::Named(NamedKey::Escape) => {
+            // Cancel search — restore the original family selection.
+            state.settings.search_buf = None;
+            state.settings.search_selected = 0;
+            state.settings.search_scroll_offset = 0;
+        }
+        Key::Named(NamedKey::Enter) => {
+            // Confirm the highlighted match.
+            confirm_search_selection(state);
+        }
+        Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowLeft) => {
+            // Compute current matches count inline (cheap, just filtering).
+            let n = search_match_count(state);
+            if n > 0 && state.settings.search_selected > 0 {
+                state.settings.search_selected -= 1;
+                clamp_search_scroll(state, n);
+            }
+        }
+        Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowRight) => {
+            let n = search_match_count(state);
+            if n > 0 && state.settings.search_selected + 1 < n {
+                state.settings.search_selected += 1;
+                clamp_search_scroll(state, n);
+            }
+        }
+        Key::Named(NamedKey::Backspace) => {
+            if let Some(ref mut buf) = state.settings.search_buf {
+                buf.pop();
+                state.settings.search_selected = 0;
+                state.settings.search_scroll_offset = 0;
+            }
+        }
+        Key::Character(_) | Key::Named(NamedKey::Space) => {
+            if let Some(text) = key_event.text.as_ref()
+                && let Some(ref mut buf) = state.settings.search_buf
+            {
+                buf.push_str(text.as_str());
+                state.settings.search_selected = 0;
+                state.settings.search_scroll_offset = 0;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Handle a key event in the normal (non-search) settings mode.
+#[allow(clippy::cognitive_complexity)]
+fn handle_settings_normal_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+    // +3 for the three action rows at the end
+    let n_fields = SETTINGS_FIELDS.len() + 3;
     match &key_event.logical_key {
         Key::Named(NamedKey::Escape) => {
             if state.settings.edit_buf.is_some() {
@@ -411,146 +422,10 @@ pub(crate) fn handle_settings_key(
             state.settings.edit_buf = None;
         }
         Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
-            let is_right = matches!(&key_event.logical_key, Key::Named(NamedKey::ArrowRight));
-            if state.settings.cursor >= SETTINGS_FIELDS.len() {
-                return true; // action rows don't respond to arrow left/right
-            }
-            let field = &SETTINGS_FIELDS[state.settings.cursor];
-            if field.key == "theme" && !state.themes_fonts.available_themes.is_empty() {
-                let n = state.themes_fonts.available_themes.len();
-                let cur = state.themes_fonts.active_theme_idx.unwrap_or(0);
-                let next = if is_right {
-                    (cur + 1) % n
-                } else if cur == 0 {
-                    n - 1
-                } else {
-                    cur - 1
-                };
-                state.themes_fonts.active_theme_idx = Some(next);
-                let tf = state.themes_fonts.available_themes[next].clone();
-                apply_theme_file(&mut state.user_config, &tf);
-                state.settings.dirty = true;
-            } else if field.section == "font"
-                && field.key == "family"
-                && !state.themes_fonts.available_fonts.is_empty()
-            {
-                let n = state.themes_fonts.available_fonts.len();
-                let cur = state.themes_fonts.active_font_idx;
-                let next = if is_right {
-                    (cur + 1) % n
-                } else if cur == 0 {
-                    n - 1
-                } else {
-                    cur - 1
-                };
-                state.themes_fonts.active_font_idx = next;
-                state.user_config.font.family = if next == 0 {
-                    None
-                } else {
-                    Some(state.themes_fonts.available_fonts[next].family.clone())
-                };
-                state.settings.dirty = true;
-            } else if field.section == "terminal" && field.key == "shell" {
-                let options = shell_options();
-                if !options.is_empty() {
-                    let cur = options
-                        .iter()
-                        .position(|opt| {
-                            shell_label_for_command(state.user_config.terminal.shell.as_deref())
-                                == opt.label
-                        })
-                        .unwrap_or(0);
-                    let next = if is_right {
-                        (cur + 1) % options.len()
-                    } else if cur == 0 {
-                        options.len() - 1
-                    } else {
-                        cur - 1
-                    };
-                    apply_shell_choice(state, options[next].command.as_deref());
-                }
-            } else if is_bool_field(field.section, field.key) {
-                let raw = state.user_config.get_field(field.section, field.key);
-                let current = matches!(raw.to_lowercase().as_str(), "on" | "true" | "1");
-                let new_val = if current { "off" } else { "on" };
-                if state
-                    .user_config
-                    .set_field(field.section, field.key, new_val)
-                {
-                    state.settings.dirty = true;
-                }
-            } else if let Some(step) = numeric_step(field.section, field.key) {
-                // Numeric field: increment / decrement by step.
-                let raw = state.user_config.get_field(field.section, field.key);
-                let current: f32 = raw.parse().unwrap_or(0.0);
-                let delta = if is_right { step } else { -step };
-                let new_val = if step.fract() == 0.0 {
-                    // Integer step (padding, scrollback_lines): write without decimal point.
-                    format!("{}", (current + delta).max(0.0) as u32)
-                } else {
-                    // Fractional step (font size): keep one decimal place.
-                    format!("{:.1}", (current + delta).max(0.0))
-                };
-                if state
-                    .user_config
-                    .set_field(field.section, field.key, &new_val)
-                {
-                    state.settings.dirty = true;
-                }
-            }
+            handle_settings_arrow_lr(state, key_event);
         }
         Key::Named(NamedKey::Enter) => {
-            let idx = state.settings.cursor;
-            // Handle action rows (beyond SETTINGS_FIELDS).
-            let action_base = SETTINGS_FIELDS.len();
-            if idx == action_base {
-                crate::commands::execute_ui_command(
-                    state,
-                    crate::commands::CommandId::OpenConfigInEditor,
-                    crate::commands::CommandContext::default(),
-                );
-                return true;
-            } else if idx == action_base + 1 {
-                crate::commands::execute_ui_command(
-                    state,
-                    crate::commands::CommandId::RevealConfigInFinder,
-                    crate::commands::CommandContext::default(),
-                );
-                return true;
-            } else if idx == action_base + 2 {
-                // Close settings first, then open keybindings.
-                state.close_settings_modal();
-                crate::commands::execute_ui_command(
-                    state,
-                    crate::commands::CommandId::OpenKeybindings,
-                    crate::commands::CommandContext::default(),
-                );
-                return true;
-            }
-            let field = &SETTINGS_FIELDS[idx];
-            let is_searchable = (field.section == "font" && field.key == "family")
-                || field.key == "theme"
-                || (field.section == "terminal" && field.key == "shell");
-            if is_searchable {
-                // Activate type-to-filter search mode (font family and theme).
-                state.settings.search_buf = Some(String::new());
-                state.settings.search_selected = 0;
-                state.settings.search_scroll_offset = 0;
-            } else if let Some(buf) = state.settings.edit_buf.take() {
-                // Confirm any open edit buffer (numeric and free-text fields).
-                if state.user_config.set_field(field.section, field.key, &buf) {
-                    state.settings.dirty = true;
-                }
-            } else {
-                // Open edit mode — clear placeholder text for better UX.
-                let current = state.user_config.get_field(field.section, field.key);
-                let current = if current == "(auto)" || current == "(default)" {
-                    String::new()
-                } else {
-                    current
-                };
-                state.settings.edit_buf = Some(current);
-            }
+            handle_settings_enter(state);
         }
         Key::Named(NamedKey::Backspace) => {
             if let Some(ref mut buf) = state.settings.edit_buf {
@@ -558,29 +433,7 @@ pub(crate) fn handle_settings_key(
             }
         }
         Key::Character(ch) if state.modifiers.super_down && ch.as_str() == "s" => {
-            // Explicit Cmd+S: flush any open edit buffer then save.
-            if let Some(buf) = state.settings.edit_buf.take()
-                && state.settings.cursor < SETTINGS_FIELDS.len()
-            {
-                let field = &SETTINGS_FIELDS[state.settings.cursor];
-                let is_selectable = field.key == "theme"
-                    || (field.section == "font" && field.key == "family")
-                    || (field.section == "terminal" && field.key == "shell")
-                    || numeric_step(field.section, field.key).is_some()
-                    || is_bool_field(field.section, field.key);
-                if !is_selectable && !state.user_config.set_field(field.section, field.key, &buf) {
-                    tracing::warn!(
-                        section = field.section,
-                        key = field.key,
-                        value = %buf,
-                        "rejected invalid setting value"
-                    );
-                }
-            }
-            save_config(&state.user_config);
-            state.settings.dirty = false;
-            state.settings.just_saved = true;
-            state.close_active_modal();
+            handle_settings_save(state);
         }
         Key::Character(_) | Key::Named(NamedKey::Space) => {
             if let Some(ref mut buf) = state.settings.edit_buf
@@ -591,7 +444,178 @@ pub(crate) fn handle_settings_key(
         }
         _ => {}
     }
-    true // all keys consumed while settings is open
+}
+
+/// Handle left/right arrow in normal settings mode (cycle field values).
+fn handle_settings_arrow_lr(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+    let is_right = matches!(&key_event.logical_key, Key::Named(NamedKey::ArrowRight));
+    if state.settings.cursor >= SETTINGS_FIELDS.len() {
+        return; // action rows don't respond to arrow left/right
+    }
+    let field = &SETTINGS_FIELDS[state.settings.cursor];
+    if field.key == "theme" && !state.themes_fonts.available_themes.is_empty() {
+        let n = state.themes_fonts.available_themes.len();
+        let cur = state.themes_fonts.active_theme_idx.unwrap_or(0);
+        let next = if is_right {
+            (cur + 1) % n
+        } else if cur == 0 {
+            n - 1
+        } else {
+            cur - 1
+        };
+        state.themes_fonts.active_theme_idx = Some(next);
+        let tf = state.themes_fonts.available_themes[next].clone();
+        apply_theme_file(&mut state.user_config, &tf);
+        state.settings.dirty = true;
+    } else if field.section == "font"
+        && field.key == "family"
+        && !state.themes_fonts.available_fonts.is_empty()
+    {
+        let n = state.themes_fonts.available_fonts.len();
+        let cur = state.themes_fonts.active_font_idx;
+        let next = if is_right {
+            (cur + 1) % n
+        } else if cur == 0 {
+            n - 1
+        } else {
+            cur - 1
+        };
+        state.themes_fonts.active_font_idx = next;
+        state.user_config.font.family = if next == 0 {
+            None
+        } else {
+            Some(state.themes_fonts.available_fonts[next].family.clone())
+        };
+        state.settings.dirty = true;
+    } else if field.section == "terminal" && field.key == "shell" {
+        let options = shell_options();
+        if !options.is_empty() {
+            let cur = options
+                .iter()
+                .position(|opt| {
+                    shell_label_for_command(state.user_config.terminal.shell.as_deref())
+                        == opt.label
+                })
+                .unwrap_or(0);
+            let next = if is_right {
+                (cur + 1) % options.len()
+            } else if cur == 0 {
+                options.len() - 1
+            } else {
+                cur - 1
+            };
+            apply_shell_choice(state, options[next].command.as_deref());
+        }
+    } else if is_bool_field(field.section, field.key) {
+        let raw = state.user_config.get_field(field.section, field.key);
+        let current = matches!(raw.to_lowercase().as_str(), "on" | "true" | "1");
+        let new_val = if current { "off" } else { "on" };
+        if state
+            .user_config
+            .set_field(field.section, field.key, new_val)
+        {
+            state.settings.dirty = true;
+        }
+    } else if let Some(step) = numeric_step(field.section, field.key) {
+        // Numeric field: increment / decrement by step.
+        let raw = state.user_config.get_field(field.section, field.key);
+        let current: f32 = raw.parse().unwrap_or(0.0);
+        let delta = if is_right { step } else { -step };
+        let new_val = if step.fract() == 0.0 {
+            // Integer step (padding, scrollback_lines): write without decimal point.
+            format!("{}", (current + delta).max(0.0) as u32)
+        } else {
+            // Fractional step (font size): keep one decimal place.
+            format!("{:.1}", (current + delta).max(0.0))
+        };
+        if state
+            .user_config
+            .set_field(field.section, field.key, &new_val)
+        {
+            state.settings.dirty = true;
+        }
+    }
+}
+
+/// Handle Enter in normal settings mode (activate, confirm, or open edit).
+fn handle_settings_enter(state: &mut GpuRuntimeState) {
+    let idx = state.settings.cursor;
+    // Handle action rows (beyond SETTINGS_FIELDS).
+    let action_base = SETTINGS_FIELDS.len();
+    if idx == action_base {
+        crate::commands::execute_ui_command(
+            state,
+            crate::commands::CommandId::OpenConfigInEditor,
+            crate::commands::CommandContext::default(),
+        );
+        return;
+    } else if idx == action_base + 1 {
+        crate::commands::execute_ui_command(
+            state,
+            crate::commands::CommandId::RevealConfigInFinder,
+            crate::commands::CommandContext::default(),
+        );
+        return;
+    } else if idx == action_base + 2 {
+        // Close settings first, then open keybindings.
+        state.close_settings_modal();
+        crate::commands::execute_ui_command(
+            state,
+            crate::commands::CommandId::OpenKeybindings,
+            crate::commands::CommandContext::default(),
+        );
+        return;
+    }
+    let field = &SETTINGS_FIELDS[idx];
+    let is_searchable = (field.section == "font" && field.key == "family")
+        || field.key == "theme"
+        || (field.section == "terminal" && field.key == "shell");
+    if is_searchable {
+        // Activate type-to-filter search mode (font family and theme).
+        state.settings.search_buf = Some(String::new());
+        state.settings.search_selected = 0;
+        state.settings.search_scroll_offset = 0;
+    } else if let Some(buf) = state.settings.edit_buf.take() {
+        // Confirm any open edit buffer (numeric and free-text fields).
+        if state.user_config.set_field(field.section, field.key, &buf) {
+            state.settings.dirty = true;
+        }
+    } else {
+        // Open edit mode — clear placeholder text for better UX.
+        let current = state.user_config.get_field(field.section, field.key);
+        let current = if current == "(auto)" || current == "(default)" {
+            String::new()
+        } else {
+            current
+        };
+        state.settings.edit_buf = Some(current);
+    }
+}
+
+/// Handle Cmd+S in normal settings mode (flush edit buffer and save).
+fn handle_settings_save(state: &mut GpuRuntimeState) {
+    if let Some(buf) = state.settings.edit_buf.take()
+        && state.settings.cursor < SETTINGS_FIELDS.len()
+    {
+        let field = &SETTINGS_FIELDS[state.settings.cursor];
+        let is_selectable = field.key == "theme"
+            || (field.section == "font" && field.key == "family")
+            || (field.section == "terminal" && field.key == "shell")
+            || numeric_step(field.section, field.key).is_some()
+            || is_bool_field(field.section, field.key);
+        if !is_selectable && !state.user_config.set_field(field.section, field.key, &buf) {
+            tracing::warn!(
+                section = field.section,
+                key = field.key,
+                value = %buf,
+                "rejected invalid setting value"
+            );
+        }
+    }
+    save_config(&state.user_config);
+    state.settings.dirty = false;
+    state.settings.just_saved = true;
+    state.close_active_modal();
 }
 
 // ── Search helpers ────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{Event, Ime, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ControlFlow, EventLoop};
+use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
 use winit::window::{Icon, Window, WindowBuilder};
 
 use crate::error::RenderError;
@@ -109,7 +109,139 @@ where
     run_gpu_window_live_with_events_and_window(next_snapshot, on_event, |_| {}, config)
 }
 
-#[allow(clippy::too_many_lines)] // winit event-loop wiring; refactor tracked separately
+struct LoopState<'a, E, F> {
+    gpu: GpuState<'a>,
+    on_event: E,
+    next_snapshot: F,
+    base_font_size: f32,
+    last_title: String,
+    #[cfg(target_os = "macos")]
+    last_titlebar_bg: [f32; 4],
+}
+
+impl<'a, E, F> LoopState<'a, E, F>
+where
+    E: FnMut(AppWindowEvent),
+    F: FnMut() -> RenderSnapshot,
+{
+    fn dispatch(
+        &mut self,
+        event: Event<()>,
+        window: &'static Window,
+        target: &EventLoopWindowTarget<()>,
+    ) {
+        target.set_control_flow(ControlFlow::Poll);
+        match event {
+            Event::WindowEvent { event, window_id } if window_id == window.id() => {
+                self.handle_window_event(event, window, target);
+            }
+            Event::AboutToWait => window.request_redraw(),
+            _ => {}
+        }
+    }
+
+    fn handle_window_event(
+        &mut self,
+        event: WindowEvent,
+        window: &'static Window,
+        target: &EventLoopWindowTarget<()>,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => {
+                (self.on_event)(AppWindowEvent::CloseRequested);
+                target.exit();
+            }
+            WindowEvent::Moved(pos) => {
+                (self.on_event)(AppWindowEvent::WindowMoved { x: pos.x, y: pos.y });
+            }
+            WindowEvent::Resized(size) => {
+                self.gpu.resize(size);
+                (self.on_event)(AppWindowEvent::Resized {
+                    width: size.width,
+                    height: size.height,
+                    scale_factor: window.scale_factor(),
+                    cell_w: self.gpu.cell_w_px,
+                    cell_h: self.gpu.cell_h_px,
+                });
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                let size = window.inner_size();
+                self.gpu.resize(size);
+                let sf = window.scale_factor();
+                self.gpu.rescale_font(self.base_font_size, sf);
+                (self.on_event)(AppWindowEvent::Resized {
+                    width: size.width,
+                    height: size.height,
+                    scale_factor: sf,
+                    cell_w: self.gpu.cell_w_px,
+                    cell_h: self.gpu.cell_h_px,
+                });
+            }
+            WindowEvent::Focused(focused) => {
+                (self.on_event)(AppWindowEvent::WindowFocused(focused));
+            }
+            WindowEvent::ModifiersChanged(mods) => {
+                (self.on_event)(AppWindowEvent::ModifiersChanged(mods.state()));
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                (self.on_event)(AppWindowEvent::CursorMoved {
+                    x: position.x,
+                    y: position.y,
+                });
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                (self.on_event)(AppWindowEvent::MouseInput { state, button });
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(pos) => (pos.y as f32) / 20.0,
+                };
+                if dy != 0.0 {
+                    (self.on_event)(AppWindowEvent::MouseWheel { delta_lines: dy });
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                (self.on_event)(AppWindowEvent::KeyboardInput(event));
+            }
+            WindowEvent::Ime(Ime::Commit(text)) => {
+                (self.on_event)(AppWindowEvent::ImeCommit(text));
+            }
+            WindowEvent::DroppedFile(path) => {
+                (self.on_event)(AppWindowEvent::DroppedFile(path));
+            }
+            WindowEvent::RedrawRequested => self.handle_redraw(window, target),
+            _ => {}
+        }
+    }
+
+    fn handle_redraw(&mut self, window: &'static Window, target: &EventLoopWindowTarget<()>) {
+        let snapshot = (self.next_snapshot)();
+        if snapshot.request_exit {
+            target.exit();
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        if snapshot.theme.terminal_bg != self.last_titlebar_bg {
+            self.last_titlebar_bg = snapshot.theme.terminal_bg;
+            apply_titlebar_color(window, self.last_titlebar_bg);
+        }
+        let new_title = format_window_title(&snapshot.title_cwd);
+        if new_title != self.last_title {
+            self.last_title = new_title.clone();
+            window.set_title(&new_title);
+        }
+        if snapshot.editor_focused {
+            let (ime_pos, ime_size) = snapshot_to_ime_area(&snapshot, self.gpu.size);
+            window.set_ime_cursor_area(ime_pos, ime_size);
+        }
+        if let Err(err) = self.gpu.render(&snapshot) {
+            tracing::error!(error = %err, "render error");
+            target.exit();
+        }
+    }
+}
+
 pub fn run_gpu_window_live_with_events_and_window<F, E, W>(
     mut next_snapshot: F,
     mut on_event: E,
@@ -134,8 +266,6 @@ where
             ));
         #[cfg(target_os = "linux")]
         {
-            // Keep X11/Wayland app identity stable so desktop launchers and
-            // running windows are grouped as a single application in docks.
             use winit::platform::wayland::WindowBuilderExtWayland;
             use winit::platform::x11::WindowBuilderExtX11;
             builder = WindowBuilderExtX11::with_name(builder, "teletipo", "teletipo");
@@ -160,129 +290,32 @@ where
     let base_font_size = config.font.font_size;
     let mut config = config;
     config.font.font_size *= window.scale_factor() as f32;
-
-    let mut state =
-        pollster::block_on(GpuState::new(window, &config)).map_err(RenderError::gpu_init)?;
-    #[cfg(target_os = "macos")]
-    let mut last_titlebar_bg = initial.theme.terminal_bg;
-    let mut last_title: String = format_window_title(&initial.title_cwd);
+    let gpu = pollster::block_on(GpuState::new(window, &config)).map_err(RenderError::gpu_init)?;
 
     // Fire an initial resize event so the caller can size the terminal grid to match
     // the actual window dimensions and font metrics before the first frame is drawn.
-    {
-        let sz = window.inner_size();
-        on_event(AppWindowEvent::Resized {
-            width: sz.width,
-            height: sz.height,
-            scale_factor: window.scale_factor(),
-            cell_w: state.cell_w_px,
-            cell_h: state.cell_h_px,
-        });
-    }
+    let sz = window.inner_size();
+    on_event(AppWindowEvent::Resized {
+        width: sz.width,
+        height: sz.height,
+        scale_factor: window.scale_factor(),
+        cell_w: gpu.cell_w_px,
+        cell_h: gpu.cell_h_px,
+    });
+
+    let mut loop_state = LoopState {
+        gpu,
+        on_event,
+        next_snapshot,
+        base_font_size,
+        last_title: format_window_title(&initial.title_cwd),
+        #[cfg(target_os = "macos")]
+        last_titlebar_bg: initial.theme.terminal_bg,
+    };
 
     #[allow(deprecated)]
     event_loop
-        .run(move |event, target| {
-            target.set_control_flow(ControlFlow::Poll);
-            match event {
-                Event::WindowEvent { event, window_id } if window_id == window.id() => {
-                    match event {
-                        WindowEvent::CloseRequested => {
-                            on_event(AppWindowEvent::CloseRequested);
-                            target.exit();
-                        }
-                        WindowEvent::Moved(pos) => {
-                            on_event(AppWindowEvent::WindowMoved { x: pos.x, y: pos.y });
-                        }
-                        WindowEvent::Resized(size) => {
-                            state.resize(size);
-                            on_event(AppWindowEvent::Resized {
-                                width: size.width,
-                                height: size.height,
-                                scale_factor: window.scale_factor(),
-                                cell_w: state.cell_w_px,
-                                cell_h: state.cell_h_px,
-                            });
-                        }
-                        WindowEvent::ScaleFactorChanged { .. } => {
-                            let size = window.inner_size();
-                            state.resize(size);
-                            let sf = window.scale_factor();
-                            state.rescale_font(base_font_size, sf);
-                            on_event(AppWindowEvent::Resized {
-                                width: size.width,
-                                height: size.height,
-                                scale_factor: sf,
-                                cell_w: state.cell_w_px,
-                                cell_h: state.cell_h_px,
-                            });
-                        }
-                        WindowEvent::Focused(focused) => {
-                            on_event(AppWindowEvent::WindowFocused(focused));
-                        }
-                        WindowEvent::ModifiersChanged(mods) => {
-                            on_event(AppWindowEvent::ModifiersChanged(mods.state()));
-                        }
-                        WindowEvent::CursorMoved { position, .. } => {
-                            on_event(AppWindowEvent::CursorMoved {
-                                x: position.x,
-                                y: position.y,
-                            });
-                        }
-                        WindowEvent::MouseInput { state, button, .. } => {
-                            on_event(AppWindowEvent::MouseInput { state, button });
-                        }
-                        WindowEvent::MouseWheel { delta, .. } => {
-                            let dy = match delta {
-                                MouseScrollDelta::LineDelta(_, y) => y,
-                                MouseScrollDelta::PixelDelta(pos) => (pos.y as f32) / 20.0,
-                            };
-                            if dy != 0.0 {
-                                on_event(AppWindowEvent::MouseWheel { delta_lines: dy });
-                            }
-                        }
-                        WindowEvent::KeyboardInput { event, .. } => {
-                            on_event(AppWindowEvent::KeyboardInput(event));
-                        }
-                        WindowEvent::Ime(Ime::Commit(text)) => {
-                            on_event(AppWindowEvent::ImeCommit(text));
-                        }
-                        WindowEvent::DroppedFile(path) => {
-                            on_event(AppWindowEvent::DroppedFile(path));
-                        }
-                        WindowEvent::RedrawRequested => {
-                            let snapshot = next_snapshot();
-                            if snapshot.request_exit {
-                                target.exit();
-                                return;
-                            }
-                            #[cfg(target_os = "macos")]
-                            if snapshot.theme.terminal_bg != last_titlebar_bg {
-                                last_titlebar_bg = snapshot.theme.terminal_bg;
-                                apply_titlebar_color(window, last_titlebar_bg);
-                            }
-                            let new_title = format_window_title(&snapshot.title_cwd);
-                            if new_title != last_title {
-                                last_title = new_title.clone();
-                                window.set_title(&new_title);
-                            }
-                            if snapshot.editor_focused {
-                                let (ime_pos, ime_size) =
-                                    snapshot_to_ime_area(&snapshot, state.size);
-                                window.set_ime_cursor_area(ime_pos, ime_size);
-                            }
-                            if let Err(err) = state.render(&snapshot) {
-                                tracing::error!(error = %err, "render error");
-                                target.exit();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                Event::AboutToWait => window.request_redraw(),
-                _ => {}
-            }
-        })
+        .run(move |event, target| loop_state.dispatch(event, window, target))
         .context("run event loop")
         .map_err(RenderError::event_loop)
 }

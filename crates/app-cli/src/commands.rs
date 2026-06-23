@@ -94,31 +94,8 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
         CommandId::JumpToNextPrompt => state.jump_to_next_prompt(),
         CommandId::OpenSettings => state.open_settings_modal(),
         CommandId::OpenKeybindings => crate::keybindings_ui::open_keybindings_panel(state),
-        CommandId::OpenConfigInEditor => {
-            if let Some(path) = crate::config::config_path() {
-                #[cfg(target_os = "macos")]
-                let _ = std::process::Command::new("open")
-                    .arg("-t")
-                    .arg(&path)
-                    .spawn();
-                #[cfg(not(target_os = "macos"))]
-                {
-                    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-                }
-            }
-        }
-        CommandId::RevealConfigInFinder => {
-            if let Some(path) = crate::config::config_path() {
-                #[cfg(target_os = "macos")]
-                let _ = std::process::Command::new("open")
-                    .args([std::ffi::OsStr::new("-R"), path.as_os_str()])
-                    .spawn();
-                #[cfg(not(target_os = "macos"))]
-                if let Some(parent) = path.parent() {
-                    let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
-                }
-            }
-        }
+        CommandId::OpenConfigInEditor => open_config_in_editor(),
+        CommandId::RevealConfigInFinder => reveal_config_in_finder(),
         CommandId::RestartNow => {
             if matches!(
                 state.overlays.pending_update,
@@ -133,6 +110,41 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
         CommandId::ZoomIn => crate::input::keyboard::execute_zoom(state, 1.0),
         CommandId::ZoomOut => crate::input::keyboard::execute_zoom(state, -1.0),
         CommandId::OpenCommandPalette => crate::input::keyboard::open_command_palette(state),
+        CommandId::CopyCwd
+        | CommandId::OpenCwdInFinder
+        | CommandId::RepeatLastCommand
+        | CommandId::ClearScrollback
+        | CommandId::CopyLastOutput => execute_dev_command(state, cmd),
+    }
+}
+
+fn open_config_in_editor() {
+    if let Some(path) = crate::config::config_path() {
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open")
+            .arg("-t")
+            .arg(&path)
+            .spawn();
+        #[cfg(not(target_os = "macos"))]
+        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+    }
+}
+
+fn reveal_config_in_finder() {
+    if let Some(path) = crate::config::config_path() {
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open")
+            .args([std::ffi::OsStr::new("-R"), path.as_os_str()])
+            .spawn();
+        #[cfg(not(target_os = "macos"))]
+        if let Some(parent) = path.parent() {
+            let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+        }
+    }
+}
+
+fn execute_dev_command(state: &mut GpuRuntimeState, cmd: CommandId) {
+    match cmd {
         CommandId::CopyCwd => {
             let cwd = state.tab().cwd.clone();
             if cwd.is_empty() {
@@ -167,27 +179,7 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
             state.send_terminal_input(b"\x1b[3J\x0c");
         }
         CommandId::CopyLastOutput => {
-            let output: String = {
-                let tab = &state.tabs[state.active_tab];
-                let zones = tab.app.terminal.command_zones();
-                let last_output_start = zones.last().and_then(|z| z.output_start_row);
-                let current_prompt = tab.app.terminal.current_zone_prompt_row();
-                if let Some(output_start) = last_output_start {
-                    let full_text = tab.app.terminal.snapshot_text_with_scrollback();
-                    let total_lines = full_text.lines().count();
-                    let output_end = current_prompt.unwrap_or(total_lines);
-                    full_text
-                        .lines()
-                        .skip(output_start)
-                        .take(output_end.saturating_sub(output_start))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                        .trim_end()
-                        .to_owned()
-                } else {
-                    String::new()
-                }
-            };
+            let output = extract_last_output(state);
             if output.is_empty() {
                 state.push_toast("No command output available", crate::state::ToastKind::Warn);
             } else {
@@ -195,7 +187,28 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
                 state.push_toast("Output copied", crate::state::ToastKind::Success);
             }
         }
+        _ => {}
     }
+}
+
+fn extract_last_output(state: &GpuRuntimeState) -> String {
+    let tab = &state.tabs[state.active_tab];
+    let zones = tab.app.terminal.command_zones();
+    let Some(output_start) = zones.last().and_then(|z| z.output_start_row) else {
+        return String::new();
+    };
+    let current_prompt = tab.app.terminal.current_zone_prompt_row();
+    let full_text = tab.app.terminal.snapshot_text_with_scrollback();
+    let total_lines = full_text.lines().count();
+    let output_end = current_prompt.unwrap_or(total_lines);
+    full_text
+        .lines()
+        .skip(output_start)
+        .take(output_end.saturating_sub(output_start))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_owned()
 }
 
 /// Build the stable, shared command palette entries sourced from `CommandId`.
@@ -228,7 +241,10 @@ pub(crate) fn palette_commands(state: &GpuRuntimeState) -> Vec<(String, CommandI
             "Reveal Working Directory in Finder".to_owned(),
             CommandId::OpenCwdInFinder,
         ),
-        ("Repeat Last Command".to_owned(), CommandId::RepeatLastCommand),
+        (
+            "Repeat Last Command".to_owned(),
+            CommandId::RepeatLastCommand,
+        ),
         ("Clear Scrollback".to_owned(), CommandId::ClearScrollback),
         ("Copy Last Output".to_owned(), CommandId::CopyLastOutput),
     ]);

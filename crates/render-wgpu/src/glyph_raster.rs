@@ -5,7 +5,9 @@
 //! Split out of `pipeline.rs` to keep the renderer constructor focused on
 //! resource wiring.
 
-use crate::atlas::{CachedGlyph, load_emoji_font_bytes, pack_emoji_glyph, pack_glyph};
+use crate::atlas::{
+    AtlasAllocState, CachedGlyph, load_emoji_font_bytes, pack_emoji_glyph, pack_glyph,
+};
 use crate::pipeline::GpuState;
 
 impl<'a> GpuState<'a> {
@@ -70,15 +72,18 @@ impl<'a> GpuState<'a> {
         };
         let Some(font) = font else { return };
         let (metrics, bitmap) = font.rasterize_indexed(glyph_id, self.font_size);
+        let cell_h_px = self.cell_h_px;
         let cached = pack_glyph(
-            &self.queue,
-            &self.atlas_texture,
-            &mut self.atlas_alloc_x,
-            &mut self.atlas_alloc_y,
-            &mut self.atlas_row_h,
+            &mut AtlasAllocState {
+                queue: &self.queue,
+                texture: &self.atlas_texture,
+                alloc_x: &mut self.atlas_alloc_x,
+                alloc_y: &mut self.atlas_alloc_y,
+                row_h: &mut self.atlas_row_h,
+            },
             &metrics,
             &bitmap,
-            self.cell_h_px,
+            cell_h_px,
         );
         self.shaped_glyph_cache.insert(key, cached);
     }
@@ -144,11 +149,13 @@ impl<'a> GpuState<'a> {
             let target_px = self.cell_h_px as u32;
             let emoji_result = if let Some(bytes) = self.emoji_font_bytes.as_deref() {
                 pack_emoji_glyph(
-                    &self.queue,
-                    &self.atlas_texture,
-                    &mut self.atlas_alloc_x,
-                    &mut self.atlas_alloc_y,
-                    &mut self.atlas_row_h,
+                    &mut AtlasAllocState {
+                        queue: &self.queue,
+                        texture: &self.atlas_texture,
+                        alloc_x: &mut self.atlas_alloc_x,
+                        alloc_y: &mut self.atlas_alloc_y,
+                        row_h: &mut self.atlas_row_h,
+                    },
                     bytes,
                     ch,
                     target_px,
@@ -169,11 +176,13 @@ impl<'a> GpuState<'a> {
         }
 
         let cached = pack_glyph(
-            &self.queue,
-            &self.atlas_texture,
-            &mut self.atlas_alloc_x,
-            &mut self.atlas_alloc_y,
-            &mut self.atlas_row_h,
+            &mut AtlasAllocState {
+                queue: &self.queue,
+                texture: &self.atlas_texture,
+                alloc_x: &mut self.atlas_alloc_x,
+                alloc_y: &mut self.atlas_alloc_y,
+                row_h: &mut self.atlas_row_h,
+            },
             &final_metrics,
             &final_bitmap,
             cell_h_px,

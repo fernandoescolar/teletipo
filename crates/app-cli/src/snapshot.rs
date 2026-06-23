@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::GpuRuntimeState;
 use crate::coords::{
-    current_line_prefix, cursor_at_line_end, cursor_to_terminal_cell, detect_terminal_links,
-    read_child_cwd, shorten_cwd_label,
+    TerminalLayout, current_line_prefix, cursor_at_line_end, cursor_to_terminal_cell,
+    detect_terminal_links, read_child_cwd, shorten_cwd_label,
 };
 use crate::settings::build_settings_overlay;
 use crate::theme;
@@ -90,8 +90,174 @@ pub(crate) fn theme_from_config(theme_file: Option<&theme::ThemeFile>) -> ColorT
 }
 
 /// Build a complete `RenderSnapshot` from the current state for the frame closure.
-#[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // gathers every layer's view of the world into one struct
 pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
+    tick_frame_housekeeping(state);
+
+    let active = state.active_tab;
+    let scroll_offset = state.tabs[active].scroll_offset;
+
+    let (
+        terminal_rows,
+        terminal_damage,
+        terminal_text,
+        terminal_fg_colors,
+        terminal_bg_colors,
+        terminal_styles,
+        term_cols,
+        editor_disabled,
+    ) = build_terminal_content(state, active, scroll_offset);
+
+    let (search_panel, search_highlights, search_current_highlight) =
+        build_search_section(state, active);
+
+    let terminal_links =
+        build_terminal_links(state, active, &terminal_text, term_cols, scroll_offset);
+
+    let editor_text = state.tabs[active].app.editor_snapshot();
+    let editor_line_count = editor_text.lines().count().max(1);
+    let editor_cursor_offset = state.tabs[active].app.editor_cursor_offset();
+    let editor_suggestion =
+        build_editor_suggestion(state, active, &editor_text, editor_cursor_offset);
+    let suggestion_dropdown =
+        build_suggestion_dropdown(state, active, &editor_text, editor_cursor_offset);
+
+    let resize_overlay = build_resize_overlay(state);
+    let selection = adjust_selection_for_scroll(
+        state.tabs[active].selection_anchor,
+        state.tabs[active].selection_end,
+        state.tabs[active].selection_anchor_scroll,
+        state.tabs[active].selection_end_scroll,
+        state.tabs[active].scroll_offset,
+    );
+    let (tab_labels, tab_drag_insert_before) = build_tab_bar(state);
+    let context_menu = build_context_menu(state);
+    let toast_stack = collect_toasts(state);
+    let command_palette = build_command_palette_snapshot(state);
+
+    assemble_snapshot(
+        state,
+        active,
+        scroll_offset,
+        editor_text,
+        editor_line_count,
+        editor_cursor_offset,
+        editor_suggestion,
+        editor_disabled,
+        terminal_rows,
+        terminal_damage,
+        terminal_text,
+        terminal_fg_colors,
+        terminal_bg_colors,
+        terminal_styles,
+        search_panel,
+        search_highlights,
+        search_current_highlight,
+        terminal_links,
+        resize_overlay,
+        selection,
+        tab_labels,
+        tab_drag_insert_before,
+        context_menu,
+        toast_stack,
+        suggestion_dropdown,
+        command_palette,
+    )
+}
+
+/// Assemble the final `RenderSnapshot` from all pre-computed parts.
+#[allow(clippy::too_many_arguments)] // all arguments are distinct computed parts
+fn assemble_snapshot(
+    state: &GpuRuntimeState,
+    active: usize,
+    scroll_offset: usize,
+    editor_text: String,
+    editor_line_count: usize,
+    editor_cursor_offset: usize,
+    editor_suggestion: String,
+    editor_disabled: bool,
+    terminal_rows: Vec<RenderRow>,
+    terminal_damage: Arc<DamageRegion>,
+    terminal_text: String,
+    terminal_fg_colors: Vec<Option<[f32; 3]>>,
+    terminal_bg_colors: Vec<Option<[f32; 3]>>,
+    terminal_styles: Vec<u8>,
+    search_panel: Option<SearchPanel>,
+    search_highlights: Vec<(usize, usize, usize)>,
+    search_current_highlight: Option<(usize, usize, usize)>,
+    terminal_links: Vec<TerminalLink>,
+    resize_overlay: Option<String>,
+    selection: Option<(usize, usize, usize, usize)>,
+    tab_labels: Vec<String>,
+    tab_drag_insert_before: Option<usize>,
+    context_menu: Option<ContextMenu>,
+    toast_stack: Vec<Toast>,
+    suggestion_dropdown: Option<SuggestionDropdown>,
+    command_palette: Option<CommandPalette>,
+) -> RenderSnapshot {
+    let theme = {
+        let tf = state
+            .themes_fonts
+            .active_theme_idx
+            .map(|i| &state.themes_fonts.available_themes[i]);
+        theme_from_config(tf)
+    };
+    RenderSnapshot {
+        terminal_rows,
+        terminal_damage,
+        terminal_text,
+        terminal_fg_colors,
+        terminal_bg_colors,
+        terminal_styles,
+        editor_text: editor_text.clone(),
+        editor_cursor_offset,
+        scroll_offset,
+        scrollback_lines: state.tabs[active].app.scrollback_len(),
+        editor_focused: true,
+        editor_disabled,
+        split_ratio: state.tabs[active].split_ratio,
+        resize_overlay,
+        editor_line_count,
+        editor_scroll_offset: state.tabs[active].editor_scroll_offset,
+        editor_horizontal_scroll_offset: state.tabs[active].editor_horizontal_scroll_offset,
+        editor_selection: state.tabs[active].app.editor_selection(),
+        selection,
+        search_highlights,
+        search_current_highlight,
+        tab_labels,
+        active_tab: active,
+        context_menu,
+        tab_drag_from: state.drag.tab_drag,
+        tab_drag_insert_before,
+        theme,
+        padding_h: state.user_config.padding.horizontal,
+        padding_v: state.user_config.padding.vertical,
+        settings_overlay: build_settings_overlay(state),
+        keybindings_overlay: crate::keybindings_ui::build_keybindings_overlay(state),
+        title_cwd: build_title_cwd(state),
+        editor_suggestion,
+        search_panel,
+        terminal_links,
+        request_exit: state.should_exit,
+        cursor_shape: state.tabs[active].app.cursor_shape(),
+        bell_active: state
+            .overlays
+            .bell_flash_until
+            .is_some_and(|t| t > std::time::Instant::now()),
+        cursor_blink_on: state.overlays.cursor_blink_phase,
+        terminal_cursor_row: state.tabs[active].app.terminal_cursor_pos().0,
+        terminal_cursor_col: state.tabs[active].app.terminal_cursor_pos().1,
+        terminal_fullscreen: state.tabs[active].was_terminal_fullscreen,
+        terminal_screen_version: state.tabs[active].app.terminal_screen_version(),
+        toast_stack,
+        suggestion_dropdown,
+        font_size: state.user_config.font.size,
+        command_palette,
+    }
+}
+
+/// Per-frame housekeeping: polls update channel, autosaves session, handles deferred
+/// resize, pumps PTYs, advances cursor blink, and resets per-tab read indicators.
+fn tick_frame_housekeeping(state: &mut GpuRuntimeState) {
     // Clear one-shot just_saved flag after it has been shown for a frame.
     if state.settings.just_saved {
         state.settings.just_saved = false;
@@ -112,7 +278,6 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 state.update_rx = None;
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                // Thread exited without finding an update (rate-gate or error).
                 state.update_rx = None;
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -137,12 +302,8 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         state.update_rx = Some(crate::updater::spawn_update());
         state.update_last_checked = std::time::Instant::now();
     }
-    // shows the update banner for testing without needing to run the background thread or build an actual update:
-    // state.overlays.pending_update.get_or_insert(crate::UpdateBanner::Available("TEST".to_owned()));
 
-    // Apply deferred resize (visual + PTY) once window resizing has been
-    // idle for ≥ 150 ms. The grid is frozen during the resize gesture so the
-    // shell only ever receives a single SIGWINCH per resize operation.
+    // Apply deferred resize once window resizing has been idle for ≥ 150 ms.
     if state
         .overlays
         .pending_pty_resize
@@ -156,7 +317,6 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     if had_data {
         let active = state.active_tab;
         state.tabs[active].scroll_offset = 0;
-        // Reset cursor blink to visible whenever terminal output arrives.
         state.overlays.cursor_blink_last = std::time::Instant::now();
         state.overlays.cursor_blink_phase = true;
     }
@@ -178,9 +338,26 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             crate::state::ToastKind::Error,
         );
     }
+}
 
-    let active = state.active_tab;
-    let scroll_offset = state.tabs[active].scroll_offset;
+/// Render the active tab's terminal content into rows and a damage region.
+///
+/// Returns `(rows, damage, text, fg_colors, bg_colors, styles, term_cols, editor_disabled)`.
+#[allow(clippy::type_complexity)]
+fn build_terminal_content(
+    state: &mut GpuRuntimeState,
+    active: usize,
+    scroll_offset: usize,
+) -> (
+    Vec<RenderRow>,
+    Arc<DamageRegion>,
+    String,
+    Vec<Option<[f32; 3]>>,
+    Vec<Option<[f32; 3]>>,
+    Vec<u8>,
+    usize,
+    bool,
+) {
     let active_palette: Option<[[f32; 3]; 16]> = state
         .themes_fonts
         .active_theme_idx
@@ -244,151 +421,163 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             }
         }
     }
-    let terminal_damage = Arc::new(damage);
     state.tabs[active].last_terminal_text = terminal_text.clone();
     state.tabs[active].term_row_count = terminal_text.lines().count().max(1);
+    (
+        terminal_rows,
+        Arc::new(damage),
+        terminal_text,
+        terminal_fg_colors,
+        terminal_bg_colors,
+        terminal_styles,
+        term_cols,
+        editor_disabled,
+    )
+}
 
+/// `(panel, all_highlights, current_highlight)` for [`build_search_section`].
+type SearchSection = (
+    Option<SearchPanel>,
+    Vec<(usize, usize, usize)>,
+    Option<(usize, usize, usize)>,
+);
+
+/// Build the search panel and highlight lists for the active tab.
+fn build_search_section(state: &mut GpuRuntimeState, active: usize) -> SearchSection {
     if state.tabs[active].search.active {
         crate::search::refresh_search(&mut state.tabs[active]);
     }
-
-    let (search_panel, search_highlights, search_current_highlight) =
-        if state.tabs[active].search.active {
-            let tab = &state.tabs[active];
-            let visible_rows = tab.term_row_count.max(1);
-            let total_rows = tab.search.total_rows.max(visible_rows);
-            let window_start = total_rows
-                .saturating_sub(visible_rows)
-                .saturating_sub(tab.scroll_offset.min(tab.app.scrollback_len()));
-            let window_end = window_start.saturating_add(visible_rows);
-
-            let highlights: Vec<(usize, usize, usize)> = tab
-                .search
-                .matches
-                .iter()
-                .filter_map(|m| {
-                    if m.abs_row >= window_start && m.abs_row < window_end {
-                        Some((m.abs_row - window_start, m.col_start, m.col_end))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            let current = tab.search.matches.get(tab.search.current).and_then(|m| {
-                if m.abs_row >= window_start && m.abs_row < window_end {
-                    Some((m.abs_row - window_start, m.col_start, m.col_end))
-                } else {
-                    None
-                }
-            });
-
-            let current_match = if tab.search.matches.is_empty() {
-                0
+    if !state.tabs[active].search.active {
+        return (None, Vec::new(), None);
+    }
+    let tab = &state.tabs[active];
+    let visible_rows = tab.term_row_count.max(1);
+    let total_rows = tab.search.total_rows.max(visible_rows);
+    let window_start = total_rows
+        .saturating_sub(visible_rows)
+        .saturating_sub(tab.scroll_offset.min(tab.app.scrollback_len()));
+    let window_end = window_start.saturating_add(visible_rows);
+    let highlights: Vec<(usize, usize, usize)> = tab
+        .search
+        .matches
+        .iter()
+        .filter_map(|m| {
+            if m.abs_row >= window_start && m.abs_row < window_end {
+                Some((m.abs_row - window_start, m.col_start, m.col_end))
             } else {
-                tab.search.current + 1
-            };
-
-            (
-                Some(SearchPanel {
-                    query: tab.search.query.clone(),
-                    match_count: tab.search.matches.len(),
-                    current_match,
-                    regex_mode: tab.search.regex_mode,
-                    case_sensitive: tab.search.case_sensitive,
-                    error: tab.search.error.clone(),
-                    cursor_char: tab.search.cursor_char_index(),
-                    sel_char_range: tab.search.sel_char_range(),
-                }),
-                highlights,
-                current,
-            )
-        } else {
-            (None, Vec::new(), None)
-        };
-    // Underline only the link the cursor is currently hovering over.
-    let terminal_links: Vec<TerminalLink> = {
-        // Pattern-detected links (URLs, file paths) from the rendered text.
-        let mut all_links = detect_terminal_links(&terminal_text, term_cols);
-
-        // OSC 8 explicit hyperlinks from the terminal cell data.  These are
-        // authoritative: if a cell range has an OSC 8 link ID we prefer it
-        // over any pattern-detected link that overlaps the same cells.
-        let osc8 = state.tabs[active]
-            .app
-            .terminal
-            .hyperlink_spans(scroll_offset);
-        if !osc8.is_empty() {
-            for (row, cs, ce, id) in &osc8 {
-                if let Some(uri) = state.tabs[active].app.terminal.hyperlink_uri(*id) {
-                    // Remove any pattern links that overlap this OSC 8 span.
-                    all_links.retain(|(r, lcs, lce, _)| *r != *row || *lce <= *cs || *lcs >= *ce);
-                    all_links.push((*row, *cs, *ce, uri.to_owned()));
-                }
+                None
             }
-        }
-
-        if all_links.is_empty() {
-            Vec::new()
+        })
+        .collect();
+    let current = tab.search.matches.get(tab.search.current).and_then(|m| {
+        if m.abs_row >= window_start && m.abs_row < window_end {
+            Some((m.abs_row - window_start, m.col_start, m.col_end))
         } else {
-            let split_ratio = state.tabs[active].split_ratio;
-            let tab_bar_h = state.tab_bar_h();
-            let pad_h = state.user_config.padding.horizontal as f32;
-            let pad_v = state.user_config.padding.vertical as f32;
-            let term_row_count = state.tabs[active].term_row_count;
-            if let Some((hover_row, hover_col)) = cursor_to_terminal_cell(
-                state.cursor.cursor_x,
-                state.cursor.cursor_y,
-                state.layout.window_width,
-                state.layout.window_height,
-                split_ratio,
-                state.layout.cell_w,
-                state.layout.cell_h,
-                term_row_count,
-                tab_bar_h,
-                pad_h,
-                pad_v,
-            ) {
-                // Find which URL the cursor is hovering over.
-                let hovered_url = all_links
-                    .iter()
-                    .find(|(r, cs, ce, _)| *r == hover_row && hover_col >= *cs && hover_col < *ce)
-                    .map(|(_, _, _, url)| url.clone());
-                if let Some(url) = hovered_url {
-                    // Return ALL segments that belong to the same URL (multi-line).
-                    all_links
-                        .into_iter()
-                        .filter(|(_, _, _, u)| *u == url)
-                        .map(|(row, col_start, col_end, target)| TerminalLink {
-                            row,
-                            col_start,
-                            col_end,
-                            target,
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            }
+            None
         }
+    });
+    let current_match = if tab.search.matches.is_empty() {
+        0
+    } else {
+        tab.search.current + 1
     };
-    let editor_text = state.tabs[active].app.editor_snapshot();
-    let editor_line_count = editor_text.lines().count().max(1);
-    let editor_cursor_offset = state.tabs[active].app.editor_cursor_offset();
+    (
+        Some(SearchPanel {
+            query: tab.search.query.clone(),
+            match_count: tab.search.matches.len(),
+            current_match,
+            regex_mode: tab.search.regex_mode,
+            case_sensitive: tab.search.case_sensitive,
+            error: tab.search.error.clone(),
+            cursor_char: tab.search.cursor_char_index(),
+            sel_char_range: tab.search.sel_char_range(),
+        }),
+        highlights,
+        current,
+    )
+}
 
-    // Ghost-text suggestion: the suffix of the most-recently-used history
-    // entry (case-insensitive prefix match) that extends the current editor
-    // text.  Not shown while Tab-cycling is active — the editor content
-    // already shows the selected match in that case.
-    let editor_suggestion = if let Some(idx) = state.tabs[active].suggestion_index {
-        // Cycling in progress: the editor holds the prefix; display the selected
-        // match's completion as gray ghost text so the user sees a live preview.
+/// Detect terminal links and return only the hovered URL's segments (if any).
+fn build_terminal_links(
+    state: &GpuRuntimeState,
+    active: usize,
+    terminal_text: &str,
+    term_cols: usize,
+    scroll_offset: usize,
+) -> Vec<TerminalLink> {
+    // Pattern-detected links (URLs, file paths) from the rendered text.
+    let mut all_links = detect_terminal_links(terminal_text, term_cols);
+
+    // OSC 8 explicit hyperlinks — authoritative over pattern-detected links.
+    let osc8 = state.tabs[active]
+        .app
+        .terminal
+        .hyperlink_spans(scroll_offset);
+    for (row, cs, ce, id) in &osc8 {
+        if let Some(uri) = state.tabs[active].app.terminal.hyperlink_uri(*id) {
+            all_links.retain(|(r, lcs, lce, _)| *r != *row || *lce <= *cs || *lcs >= *ce);
+            all_links.push((*row, *cs, *ce, uri.to_owned()));
+        }
+    }
+
+    if all_links.is_empty() {
+        return Vec::new();
+    }
+    let split_ratio = state.tabs[active].split_ratio;
+    let tab_bar_h = state.tab_bar_h();
+    let pad_h = state.user_config.padding.horizontal as f32;
+    let pad_v = state.user_config.padding.vertical as f32;
+    let term_row_count = state.tabs[active].term_row_count;
+    let Some((hover_row, hover_col)) = cursor_to_terminal_cell(
+        state.cursor.cursor_x,
+        state.cursor.cursor_y,
+        state.layout.window_width,
+        state.layout.window_height,
+        &TerminalLayout {
+            split_ratio,
+            cell_w_px: state.layout.cell_w,
+            cell_h_px: state.layout.cell_h,
+            term_row_count,
+            tab_bar_h,
+            pad_h,
+            pad_v,
+        },
+    ) else {
+        return Vec::new();
+    };
+    let hovered_url = all_links
+        .iter()
+        .find(|(r, cs, ce, _)| *r == hover_row && hover_col >= *cs && hover_col < *ce)
+        .map(|(_, _, _, url)| url.clone());
+    let Some(url) = hovered_url else {
+        return Vec::new();
+    };
+    // Return ALL segments that belong to the same URL (multi-line).
+    all_links
+        .into_iter()
+        .filter(|(_, _, _, u)| *u == url)
+        .map(|(row, col_start, col_end, target)| TerminalLink {
+            row,
+            col_start,
+            col_end,
+            target,
+        })
+        .collect()
+}
+
+/// Compute the ghost-text editor suggestion (history prefix match or cycling preview).
+fn build_editor_suggestion(
+    state: &GpuRuntimeState,
+    active: usize,
+    editor_text: &str,
+    editor_cursor_offset: usize,
+) -> String {
+    if let Some(idx) = state.tabs[active].suggestion_index {
+        // Cycling in progress: display the selected match's completion as ghost text.
         let prefix = state.tabs[active]
             .suggestion_prefix
             .as_deref()
-            .unwrap_or_else(|| current_line_prefix(&editor_text, editor_cursor_offset));
+            .unwrap_or_else(|| current_line_prefix(editor_text, editor_cursor_offset));
         let matches = crate::suggestion_matches_frecency(
             &state.tabs[active].history,
             &state.tabs[active].history_entries,
@@ -400,8 +589,8 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             .get(idx)
             .map(|full| truncate_display(&full[prefix.len()..], 80))
             .unwrap_or_default()
-    } else if cursor_at_line_end(&editor_text, editor_cursor_offset) {
-        let prefix = current_line_prefix(&editor_text, editor_cursor_offset);
+    } else if cursor_at_line_end(editor_text, editor_cursor_offset) {
+        let prefix = current_line_prefix(editor_text, editor_cursor_offset);
         if prefix.is_empty() {
             String::new()
         } else {
@@ -419,69 +608,63 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         }
     } else {
         String::new()
-    };
+    }
+}
 
-    let scrollback_lines = state.tabs[active].app.scrollback_len();
-    let editor_scroll_offset = state.tabs[active].editor_scroll_offset;
-    let editor_selection = state.tabs[active].app.editor_selection();
-    let split_ratio = state.tabs[active].split_ratio;
-    let selection_anchor = state.tabs[active].selection_anchor;
-    let selection_anchor_scroll = state.tabs[active].selection_anchor_scroll;
-    let selection_end = state.tabs[active].selection_end;
-    let selection_end_scroll = state.tabs[active].selection_end_scroll;
-    let current_scroll = state.tabs[active].scroll_offset;
-
-    let resize_overlay = if let Some(ref banner) = state.overlays.pending_update {
-        Some(match banner {
+/// Build the transient overlay label shown in the top-right corner (resize, PTY status, etc.).
+fn build_resize_overlay(state: &mut GpuRuntimeState) -> Option<String> {
+    if let Some(ref banner) = state.overlays.pending_update {
+        return Some(match banner {
             crate::UpdateBanner::Available(v) => {
                 format!("Update ready v{v} \u{2014} click to restart")
             }
             crate::UpdateBanner::Failed(err) => format!("Update failed: {err}"),
-        })
-    } else if let Some((ref t, ref message)) = state.overlays.pty_status {
+        });
+    }
+    if let Some((ref t, ref message)) = state.overlays.pty_status {
         if t.elapsed().as_secs_f32() < 2.5 {
-            Some(message.clone())
-        } else {
-            state.overlays.pty_status = None;
-            None
+            return Some(message.clone());
         }
-    } else if let Some((ref t, cols, rows)) = state.overlays.last_resize {
+        state.overlays.pty_status = None;
+    }
+    if let Some((ref t, cols, rows)) = state.overlays.last_resize {
         if t.elapsed().as_secs_f32() < 1.0 {
-            Some(format!("{cols}\u{d7}{rows}"))
-        } else {
-            state.overlays.last_resize = None;
-            None
+            return Some(format!("{cols}\u{d7}{rows}"));
         }
-    } else if let Some((ref t, ref label)) = state.overlays.last_cmd_duration {
+        state.overlays.last_resize = None;
+    }
+    if let Some((ref t, ref label)) = state.overlays.last_cmd_duration {
         if t.elapsed().as_secs_f32() < 4.0 {
-            Some(label.clone())
-        } else {
-            state.overlays.last_cmd_duration = None;
-            None
+            return Some(label.clone());
         }
+        state.overlays.last_cmd_duration = None;
+    }
+    None
+}
+
+/// Translate stored selection anchor/end to current-scroll-relative coordinates.
+fn adjust_selection_for_scroll(
+    selection_anchor: Option<(usize, usize)>,
+    selection_end: Option<(usize, usize)>,
+    selection_anchor_scroll: usize,
+    selection_end_scroll: usize,
+    current_scroll: usize,
+) -> Option<(usize, usize, usize, usize)> {
+    let (a, e) = (selection_anchor?, selection_end?);
+    let delta_a = current_scroll as i64 - selection_anchor_scroll as i64;
+    let delta_e = current_scroll as i64 - selection_end_scroll as i64;
+    let ar = (a.0 as i64 + delta_a).max(0) as usize;
+    let er = (e.0 as i64 + delta_e).max(0) as usize;
+    let (sr, sc, er_final, ec) = if (ar, a.1) <= (er, e.1) {
+        (ar, a.1, er, e.1)
     } else {
-        None
+        (er, e.1, ar, a.1)
     };
+    Some((sr, sc, er_final, ec))
+}
 
-    let selection = match (selection_anchor, selection_end) {
-        (Some(a), Some(e)) => {
-            // Adjust stored rows to the current scroll offset.  When
-            // scroll_offset increases (user scrolled back further), visible
-            // content moves down, so the row number increases by the delta.
-            let delta_a = current_scroll as i64 - selection_anchor_scroll as i64;
-            let delta_e = current_scroll as i64 - selection_end_scroll as i64;
-            let ar = (a.0 as i64 + delta_a).max(0) as usize;
-            let er = (e.0 as i64 + delta_e).max(0) as usize;
-            let (sr, sc, er_final, ec) = if (ar, a.1) <= (er, e.1) {
-                (ar, a.1, er, e.1)
-            } else {
-                (er, e.1, ar, a.1)
-            };
-            Some((sr, sc, er_final, ec))
-        }
-        _ => None,
-    };
-
+/// Refresh CWD labels, compute tab button labels, and compute drag insert position.
+fn build_tab_bar(state: &mut GpuRuntimeState) -> (Vec<String>, Option<usize>) {
     // Refresh cwd labels from child process (best-effort; silent on failure).
     let n_tabs = state.tabs.len();
     for i in 0..n_tabs {
@@ -531,8 +714,6 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     } else {
         Vec::new()
     };
-    let active_tab = state.active_tab;
-
     let tab_drag_insert_before = state.drag.tab_drag.and_then(|_| {
         if state.tabs.len() <= 1 {
             return None;
@@ -547,19 +728,14 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             None
         }
     });
+    (tab_labels, tab_drag_insert_before)
+}
 
-    let context_menu = state.overlays.context_menu.as_ref().map(|m| ContextMenu {
-        x_px: m.x_px as f32,
-        y_px: m.y_px as f32,
-        items: m.items.clone(),
-        enabled_items: m.enabled_items.clone(),
-        hovered_item: m.hovered_item,
-    });
-
-    // GC expired toasts.
+/// GC expired toasts and convert them to the renderer's `Toast` type.
+fn collect_toasts(state: &mut GpuRuntimeState) -> Vec<Toast> {
     let now = std::time::Instant::now();
     state.overlays.toasts.retain(|t| t.expires_at > now);
-    let toast_stack: Vec<Toast> = state
+    state
         .overlays
         .toasts
         .iter()
@@ -572,138 +748,100 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
                 crate::state::ToastKind::Error => ToastKind::Error,
             },
         })
-        .collect();
+        .collect()
+}
 
-    RenderSnapshot {
-        terminal_rows,
-        terminal_damage,
-        terminal_text,
-        terminal_fg_colors,
-        terminal_bg_colors,
-        terminal_styles,
-        editor_text: editor_text.clone(),
-        editor_cursor_offset,
-        scroll_offset,
-        scrollback_lines,
-        editor_focused: true,
-        editor_disabled,
-        split_ratio,
-        resize_overlay,
-        editor_line_count,
-        editor_scroll_offset,
-        editor_horizontal_scroll_offset: state.tabs[active].editor_horizontal_scroll_offset,
-        editor_selection,
-        selection,
-        search_highlights,
-        search_current_highlight,
-        tab_labels,
-        active_tab,
-        context_menu,
-        tab_drag_from: state.drag.tab_drag,
-        tab_drag_insert_before,
-        theme: {
-            let tf = state
-                .themes_fonts
-                .active_theme_idx
-                .map(|i| &state.themes_fonts.available_themes[i]);
-            theme_from_config(tf)
-        },
-        padding_h: state.user_config.padding.horizontal,
-        padding_v: state.user_config.padding.vertical,
-        settings_overlay: build_settings_overlay(state),
-        keybindings_overlay: crate::keybindings_ui::build_keybindings_overlay(state),
-        title_cwd: {
-            // OSC 0/2 window title takes priority; fall back to CWD path.
-            if let Some(title) = state.tabs[state.active_tab].app.window_title() {
-                title.to_owned()
-            } else {
-                let home = std::env::var("HOME").unwrap_or_default();
-                let cwd = &state.tabs[state.active_tab].cwd;
-                if !home.is_empty() && cwd.starts_with(&home) {
-                    format!("~{}", &cwd[home.len()..])
-                } else {
-                    cwd.clone()
-                }
-            }
-        },
-        editor_suggestion,
-        search_panel,
-        terminal_links,
-        request_exit: state.should_exit,
-        cursor_shape: state.tabs[active].app.cursor_shape(),
-        bell_active: state
-            .overlays
-            .bell_flash_until
-            .is_some_and(|t| t > std::time::Instant::now()),
-        cursor_blink_on: state.overlays.cursor_blink_phase,
-        terminal_cursor_row: state.tabs[active].app.terminal_cursor_pos().0,
-        terminal_cursor_col: state.tabs[active].app.terminal_cursor_pos().1,
-        terminal_fullscreen: state.tabs[active].was_terminal_fullscreen,
-        terminal_screen_version: state.tabs[active].app.terminal_screen_version(),
-        toast_stack,
-        suggestion_dropdown: {
-            if let Some(idx) = state.tabs[active].suggestion_index {
-                let prefix = state.tabs[active]
-                    .suggestion_prefix
-                    .as_deref()
-                    .unwrap_or_else(|| current_line_prefix(&editor_text, editor_cursor_offset));
-                let items = crate::suggestion_matches_frecency(
-                    &state.tabs[active].history,
-                    &state.tabs[active].history_entries,
-                    prefix,
-                    &state.tabs[active].cwd,
-                    &state.shell,
-                );
-                if items.len() >= 2 {
-                    let display: Vec<String> = items
-                        .into_iter()
-                        .map(|s| truncate_display(&s, 50))
-                        .collect();
-                    let scroll_offset = idx
-                        .saturating_sub(crate::consts::SUGGESTION_DROPDOWN_MAX_VISIBLE - 1)
-                        .min(
-                            display
-                                .len()
-                                .saturating_sub(crate::consts::SUGGESTION_DROPDOWN_MAX_VISIBLE),
-                        );
-                    Some(SuggestionDropdown {
-                        items: display,
-                        selected: idx,
-                        scroll_offset,
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        },
-        font_size: state.user_config.font.size,
-        command_palette: state.command_palette.as_ref().map(|cp| {
-            let sub_prompt_label = cp.sub_prompt.as_ref().map(|sp| match sp {
-                crate::state::SubPrompt::Ssh => "SSH → New connection (user@host):".to_owned(),
-            });
-            let items: Vec<String> = if sub_prompt_label.is_some() {
-                vec![]
-            } else {
-                cp.filtered
-                    .iter()
-                    .map(|&i| cp.all_items[i].label.clone())
-                    .collect()
-            };
-            let cursor_char = cp.query[..cp.cursor_byte.min(cp.query.len())]
-                .chars()
-                .count();
-            CommandPalette {
-                query: cp.query.clone(),
-                cursor_char,
-                items,
-                selected: cp.selected,
-                scroll_offset: cp.scroll_offset,
-                sub_prompt_label,
-            }
-        }),
+/// Build the suggestion dropdown if a Tab-cycle is in progress.
+fn build_suggestion_dropdown(
+    state: &GpuRuntimeState,
+    active: usize,
+    editor_text: &str,
+    editor_cursor_offset: usize,
+) -> Option<SuggestionDropdown> {
+    let idx = state.tabs[active].suggestion_index?;
+    let prefix = state.tabs[active]
+        .suggestion_prefix
+        .as_deref()
+        .unwrap_or_else(|| current_line_prefix(editor_text, editor_cursor_offset));
+    let items = crate::suggestion_matches_frecency(
+        &state.tabs[active].history,
+        &state.tabs[active].history_entries,
+        prefix,
+        &state.tabs[active].cwd,
+        &state.shell,
+    );
+    if items.len() < 2 {
+        return None;
     }
+    let display: Vec<String> = items
+        .into_iter()
+        .map(|s| truncate_display(&s, 50))
+        .collect();
+    let scroll_offset = idx
+        .saturating_sub(crate::consts::SUGGESTION_DROPDOWN_MAX_VISIBLE - 1)
+        .min(
+            display
+                .len()
+                .saturating_sub(crate::consts::SUGGESTION_DROPDOWN_MAX_VISIBLE),
+        );
+    Some(SuggestionDropdown {
+        items: display,
+        selected: idx,
+        scroll_offset,
+    })
+}
+
+/// Build the window title string (OSC 0/2 if set; otherwise CWD with `~` abbreviation).
+fn build_title_cwd(state: &GpuRuntimeState) -> String {
+    if let Some(title) = state.tabs[state.active_tab].app.window_title() {
+        return title.to_owned();
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let cwd = &state.tabs[state.active_tab].cwd;
+    if !home.is_empty() && cwd.starts_with(&home) {
+        format!("~{}", &cwd[home.len()..])
+    } else {
+        cwd.clone()
+    }
+}
+
+/// Snapshot the context menu overlay (if open).
+fn build_context_menu(state: &GpuRuntimeState) -> Option<ContextMenu> {
+    state.overlays.context_menu.as_ref().map(|m| ContextMenu {
+        x_px: m.x_px as f32,
+        y_px: m.y_px as f32,
+        items: m.items.clone(),
+        enabled_items: m.enabled_items.clone(),
+        hovered_item: m.hovered_item,
+    })
+}
+
+/// Snapshot the command palette overlay (if open).
+fn build_command_palette_snapshot(state: &GpuRuntimeState) -> Option<CommandPalette> {
+    state.command_palette.as_ref().map(|cp| {
+        let sub_prompt_label = cp.sub_prompt.as_ref().map(|sp| match sp {
+            crate::state::SubPrompt::Ssh => "SSH → New connection (user@host):".to_owned(),
+        });
+        let items: Vec<String> = if sub_prompt_label.is_some() {
+            vec![]
+        } else {
+            cp.filtered
+                .iter()
+                .map(|&i| cp.all_items[i].label.clone())
+                .collect()
+        };
+        let cursor_char = cp.query[..cp.cursor_byte.min(cp.query.len())]
+            .chars()
+            .count();
+        CommandPalette {
+            query: cp.query.clone(),
+            cursor_char,
+            items,
+            selected: cp.selected,
+            scroll_offset: cp.scroll_offset,
+            sub_prompt_label,
+        }
+    })
 }
 
 #[cfg(test)]

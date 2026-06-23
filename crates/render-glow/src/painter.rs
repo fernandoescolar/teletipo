@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use font8x8::UnicodeFonts;
 use glow::HasContext;
-use render_wgpu::{RenderSnapshot, SCROLLBAR_W_PX, shell_highlight::highlight_shell};
+use render_wgpu::{
+    ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay,
+    shell_highlight::highlight_shell,
+};
 use winit::dpi::PhysicalSize;
 
 use crate::font::CpuFontRasterizer;
@@ -12,7 +15,8 @@ use crate::shaders::{compile_atlas_program, compile_color_atlas_program, compile
 use crate::types::{
     ATLAS_TEX_SIZE, AtlasGlyph, COLOR_ATLAS_TEX_SIZE, ColorAtlasEntry, FrameLayout, GlyphBitmap,
     PALETTE_MAX_VISIBLE, SEPARATOR_PX, SETTINGS_MAX_VISIBLE_SEARCH, STYLE_BOLD, STYLE_DIM,
-    STYLE_ITALIC, STYLE_STRIKE, ShapedLines, ShapedTerminalCache, TAB_H_MULT,
+    STYLE_ITALIC, STYLE_STRIKE, ShapedLines, ShapedTerminalCache, TAB_H_MULT, clamp_color,
+    mix_color,
 };
 use crate::util::{
     char_col_width, editor_offset_to_row_col, hash_text, is_icon_like, normalize_rect_selection,
@@ -61,6 +65,58 @@ pub(crate) struct GlPainter {
     color_char_atlas: HashMap<char, ColorAtlasEntry>,
     rasterizer: CpuFontRasterizer,
     shaped_terminal_cache: Option<ShapedTerminalCache>,
+}
+
+struct GlyphCell {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    color: [f32; 4],
+    style: u8,
+}
+
+struct SettingsPanelGeom {
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    title_h: f32,
+    row_h: f32,
+    edit_h: f32,
+    footer_h: f32,
+    key_col: f32,
+    val_col: f32,
+}
+
+struct SettingsPanelColors {
+    bg: [f32; 4],
+    border: [f32; 4],
+    title: [f32; 4],
+    section: [f32; 4],
+    select: [f32; 4],
+    edit: [f32; 4],
+}
+
+struct KeybindingsPanelGeom {
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    title_h: f32,
+    row_h: f32,
+    footer_h: f32,
+    key_col: f32,
+    bind_col: f32,
+}
+
+struct KeybindingsPanelColors {
+    bg: [f32; 4],
+    row_alt: [f32; 4],
+    select: [f32; 4],
+    record: [f32; 4],
+    border: [f32; 4],
+    title: [f32; 4],
 }
 
 impl GlPainter {
@@ -371,7 +427,6 @@ impl GlPainter {
         Some(shaped)
     }
 
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub(crate) fn render(
         &mut self,
         gl: &glow::Context,
@@ -380,6 +435,45 @@ impl GlPainter {
         cell_w_px: f32,
         cell_h_px: f32,
     ) {
+        let layout = Self::compute_frame_layout(snapshot, size, cell_w_px, cell_h_px);
+
+        self.vertices.clear();
+        self.atlas_vertices.clear();
+        self.warm_atlas(gl, snapshot);
+
+        self.render_pane_backgrounds(snapshot, &layout);
+        self.draw_tab_bar(snapshot, &layout);
+        self.draw_terminal_highlights(snapshot, &layout);
+        self.draw_editor_selection(snapshot, &layout);
+        self.draw_terminal_text(snapshot, &layout);
+        self.draw_editor_text(snapshot, &layout);
+        self.draw_editor_suggestion(snapshot, &layout);
+        self.draw_cursor(snapshot, &layout);
+        self.draw_scrollbar(snapshot, &layout);
+
+        // Flush main-content passes before drawing overlays so that overlay
+        // backgrounds (drawn without blending) completely cover terminal text.
+        self.flush_passes(gl, layout.width, layout.height);
+
+        self.draw_search_panel(snapshot, &layout);
+        self.draw_suggestion_dropdown(snapshot, &layout);
+        self.draw_context_menu(snapshot, &layout);
+        self.draw_settings_overlay(snapshot, &layout);
+        self.draw_keybindings_overlay(snapshot, &layout);
+        self.draw_command_palette(snapshot, &layout);
+        self.draw_toasts(snapshot, &layout);
+        self.draw_resize_overlay(snapshot, &layout);
+        self.draw_scroll_indicator(snapshot, &layout);
+
+        self.flush_passes(gl, layout.width, layout.height);
+    }
+
+    fn compute_frame_layout(
+        snapshot: &RenderSnapshot,
+        size: PhysicalSize<u32>,
+        cell_w_px: f32,
+        cell_h_px: f32,
+    ) -> FrameLayout {
         let width = size.width.max(1) as f32;
         let height = size.height.max(1) as f32;
         let tab_bar_h = if snapshot.tab_labels.is_empty() {
@@ -388,9 +482,6 @@ impl GlPainter {
             (cell_h_px * TAB_H_MULT).max(1.0)
         };
         let available_h = (height - tab_bar_h).max(1.0);
-        // When the terminal is in fullscreen / alternate-screen mode (e.g. vim,
-        // htop) honour split_ratio=1.0 exactly so the editor pane disappears.
-        // For normal use, clamp to [0.05, 0.95] to keep both panes usable.
         let split_ratio = if snapshot.terminal_fullscreen {
             1.0_f32
         } else {
@@ -405,7 +496,7 @@ impl GlPainter {
         let terminal_text_top =
             tab_bar_h + snapshot.padding_v as f32 + (effective_term_h - content_h_px).max(0.0);
         let terminal_text_bottom = terminal_h - snapshot.padding_v as f32;
-        let layout = FrameLayout {
+        FrameLayout {
             width,
             height,
             tab_bar_h,
@@ -417,14 +508,10 @@ impl GlPainter {
             padding_v: snapshot.padding_v as f32,
             cell_w_px,
             cell_h_px,
-        };
+        }
+    }
 
-        self.vertices.clear();
-        self.atlas_vertices.clear();
-
-        // Pre-populate atlas with every glyph that appears in this frame.
-        self.warm_atlas(gl, snapshot);
-
+    fn render_pane_backgrounds(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
         self.push_rect(
             0.0,
             layout.tab_bar_h,
@@ -456,7 +543,6 @@ impl GlPainter {
                 snapshot.theme.separator
             },
         );
-
         if snapshot.bell_active {
             self.push_rect(
                 0.0,
@@ -466,31 +552,6 @@ impl GlPainter {
                 [0.60, 0.20, 0.20, 0.15],
             );
         }
-
-        self.draw_tab_bar(snapshot, &layout);
-        self.draw_terminal_highlights(snapshot, &layout);
-        self.draw_editor_selection(snapshot, &layout);
-        self.draw_terminal_text(snapshot, &layout);
-        self.draw_editor_text(snapshot, &layout);
-        self.draw_editor_suggestion(snapshot, &layout);
-        self.draw_cursor(snapshot, &layout);
-        self.draw_scrollbar(snapshot, &layout);
-
-        // Flush main-content passes before drawing overlays so that overlay
-        // backgrounds (drawn without blending) completely cover terminal text.
-        self.flush_passes(gl, layout.width, layout.height);
-
-        self.draw_search_panel(snapshot, &layout);
-        self.draw_suggestion_dropdown(snapshot, &layout);
-        self.draw_context_menu(snapshot, &layout);
-        self.draw_settings_overlay(snapshot, &layout);
-        self.draw_keybindings_overlay(snapshot, &layout);
-        self.draw_command_palette(snapshot, &layout);
-        self.draw_toasts(snapshot, &layout);
-        self.draw_resize_overlay(snapshot, &layout);
-        self.draw_scroll_indicator(snapshot, &layout);
-
-        self.flush_passes(gl, layout.width, layout.height);
     }
 
     /// Flush accumulated flat-colour vertices then atlas-textured glyph quads
@@ -699,34 +760,40 @@ impl GlPainter {
                         if !self.push_color_emoji(sg.source_char, x, y, w, layout.cell_h_px) {
                             self.push_glyph_styled(
                                 sg.source_char,
-                                x,
-                                y,
-                                w,
-                                layout.cell_h_px,
-                                fg,
-                                style,
+                                &GlyphCell {
+                                    x,
+                                    y,
+                                    w,
+                                    h: layout.cell_h_px,
+                                    color: fg,
+                                    style,
+                                },
                             );
                         }
                     } else if !self.push_shaped_glyph(
                         sg.source_char,
                         sg.glyph_id,
-                        x,
-                        y,
-                        w,
-                        layout.cell_h_px,
-                        fg,
-                        style,
+                        &GlyphCell {
+                            x,
+                            y,
+                            w,
+                            h: layout.cell_h_px,
+                            color: fg,
+                            style,
+                        },
                         sg.x_offset_px,
                         sg.y_offset_px,
                     ) {
                         self.push_glyph_styled(
                             sg.source_char,
-                            x,
-                            y,
-                            w,
-                            layout.cell_h_px,
-                            fg,
-                            style,
+                            &GlyphCell {
+                                x,
+                                y,
+                                w,
+                                h: layout.cell_h_px,
+                                color: fg,
+                                style,
+                            },
                         );
                     }
                 }
@@ -757,7 +824,17 @@ impl GlPainter {
                             }
                         });
 
-                    self.push_glyph_styled(ch, x, y, layout.cell_w_px, layout.cell_h_px, fg, style);
+                    self.push_glyph_styled(
+                        ch,
+                        &GlyphCell {
+                            x,
+                            y,
+                            w: layout.cell_w_px,
+                            h: layout.cell_h_px,
+                            color: fg,
+                            style,
+                        },
+                    );
                 }
             }
 
@@ -842,7 +919,6 @@ impl GlPainter {
     }
 
     fn draw_tab_bar(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
-        use crate::types::{clamp_color, mix_color};
         if snapshot.tab_labels.is_empty() || layout.tab_bar_h <= 0.0 {
             return;
         }
@@ -950,7 +1026,6 @@ impl GlPainter {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     fn draw_terminal_highlights(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
         let hl = [0.40, 0.55, 0.85, 0.35];
         let current = [0.85, 0.65, 0.20, 0.45];
@@ -1279,83 +1354,72 @@ impl GlPainter {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn draw_settings_overlay(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
-        use crate::types::{clamp_color, mix_color};
-        let Some(overlay) = &snapshot.settings_overlay else {
-            return;
-        };
+    fn settings_item_display_val<'a>(
+        item: &'a render_wgpu::SettingsItem,
+        overlay: &'a SettingsOverlay,
+        is_focused: bool,
+    ) -> std::borrow::Cow<'a, str> {
+        if item.is_searchable && is_focused && overlay.search_buf.is_some() {
+            let sbuf = overlay.search_buf.as_deref().unwrap_or("");
+            return format!("/ {}\u{258e}", sbuf).into();
+        }
+        if item.is_searchable {
+            return format!("{} /", item.value).into();
+        }
+        if item.is_selectable && !item.is_action && !(is_focused && overlay.editing.is_some()) {
+            return format!("\u{2190} {} \u{2192}", item.value).into();
+        }
+        if !item.is_selectable && is_focused && overlay.editing.is_none() {
+            return format!("{}\u{258e}", item.value).into();
+        }
+        if is_focused && let Some(ref buf) = overlay.editing {
+            return buf.as_str().into();
+        }
+        item.value.as_str().into()
+    }
 
-        // Semi-transparent scrim so content behind is dimmed but still visible.
-        self.push_rect(0.0, 0.0, layout.width, layout.height, [0.0, 0.0, 0.0, 0.68]);
-
-        let title_h = layout.cell_h_px * 2.2;
-        let row_h = layout.cell_h_px * 1.7;
-        let footer_h = layout.cell_h_px * 1.9;
-        let edit_h = if overlay.editing.is_some() {
-            layout.cell_h_px * 1.8
-        } else {
-            0.0
-        };
-        let panel_h = title_h + overlay.items.len() as f32 * row_h + edit_h + footer_h;
-        let panel_w = (layout.cell_w_px * 72.0)
-            .min(layout.width * 0.92)
-            .max(layout.cell_w_px * 40.0);
-        let x0 = (layout.width - panel_w) * 0.5;
-        let y0 = (layout.height - panel_h) * 0.5;
-        let x1 = x0 + panel_w;
-        let y1 = y0 + panel_h;
-
-        let ov_bg = clamp_color(snapshot.theme.terminal_bg, 0.01);
-        let ov_border = snapshot.theme.separator_focused;
-        let ov_title = clamp_color(snapshot.theme.terminal_bg, -0.01);
-        let ov_section = clamp_color(snapshot.theme.terminal_bg, 0.04);
-        let ov_select = mix_color(
-            clamp_color(snapshot.theme.terminal_bg, 0.08),
-            snapshot.theme.separator_focused,
-            0.20,
+    fn draw_settings_panel_bg(
+        &mut self,
+        overlay: &SettingsOverlay,
+        geom: &SettingsPanelGeom,
+        colors: &SettingsPanelColors,
+    ) -> usize {
+        self.push_rect(
+            geom.x0 - 2.0,
+            geom.y0 - 2.0,
+            geom.x1 + 2.0,
+            geom.y1 + 2.0,
+            colors.border,
         );
-        let ov_edit = mix_color(
-            clamp_color(snapshot.theme.terminal_bg, 0.08),
-            snapshot.theme.separator_focused,
-            0.28,
+        self.push_rect(geom.x0, geom.y0, geom.x1, geom.y1, colors.bg);
+        self.push_rect(
+            geom.x0,
+            geom.y0,
+            geom.x1,
+            geom.y0 + geom.title_h,
+            colors.title,
         );
-
-        self.push_rect(x0 - 2.0, y0 - 2.0, x1 + 2.0, y1 + 2.0, ov_border);
-        self.push_rect(x0, y0, x1, y1, ov_bg);
-        self.push_rect(x0, y0, x1, y0 + title_h, ov_title);
-
-        // --- Row highlight backgrounds ---
         let mut editable_idx = 0usize;
         for (i, item) in overlay.items.iter().enumerate() {
-            let ry = y0 + title_h + i as f32 * row_h;
+            let ry = geom.y0 + geom.title_h + i as f32 * geom.row_h;
             if item.is_header {
-                self.push_rect(x0, ry, x1, ry + row_h, ov_section);
+                self.push_rect(geom.x0, ry, geom.x1, ry + geom.row_h, colors.section);
             } else {
                 if editable_idx == overlay.cursor {
-                    self.push_rect(
-                        x0,
-                        ry,
-                        x1,
-                        ry + row_h,
-                        if overlay.editing.is_some() {
-                            ov_edit
-                        } else {
-                            ov_select
-                        },
-                    );
+                    let c = if overlay.editing.is_some() {
+                        colors.edit
+                    } else {
+                        colors.select
+                    };
+                    self.push_rect(geom.x0, ry, geom.x1, ry + geom.row_h, c);
                 }
                 editable_idx += 1;
             }
         }
-
-        // Edit-mode input row background (below all items).
         if overlay.editing.is_some() {
-            let ey = y0 + title_h + overlay.items.len() as f32 * row_h;
-            self.push_rect(x0, ey, x1, ey + edit_h, ov_edit);
+            let ey = geom.y0 + geom.title_h + overlay.items.len() as f32 * geom.row_h;
+            self.push_rect(geom.x0, ey, geom.x1, ey + geom.edit_h, colors.edit);
         }
-
-        // Search-dropdown background (rendered above everything else so it occludes rows below).
         let focused_flat = {
             let mut ec = 0usize;
             let mut fi = 0usize;
@@ -1376,46 +1440,52 @@ impl GlPainter {
                 .len()
                 .saturating_sub(overlay.search_scroll_offset)
                 .clamp(1, SETTINGS_MAX_VISIBLE_SEARCH);
-            let dy = y0 + title_h + (focused_flat + 1) as f32 * row_h;
-            let dh = row_h * visible as f32;
+            let dy = geom.y0 + geom.title_h + (focused_flat + 1) as f32 * geom.row_h;
+            let dh = geom.row_h * visible as f32;
             self.push_rect(
-                x0 - 1.0,
+                geom.x0 - 1.0,
                 dy - 1.0,
-                x1 + 1.0,
+                geom.x1 + 1.0,
                 dy + dh + 1.0,
                 [0.35, 0.50, 0.82, 1.0],
             );
-            self.push_rect(x0, dy, x1, dy + dh, [0.15, 0.19, 0.30, 1.0]);
+            self.push_rect(geom.x0, dy, geom.x1, dy + dh, [0.15, 0.19, 0.30, 1.0]);
             let vis_sel = overlay
                 .search_selected
                 .saturating_sub(overlay.search_scroll_offset);
             if !overlay.search_matches.is_empty() && vis_sel < visible {
-                let sy0 = dy + vis_sel as f32 * row_h;
-                self.push_rect(x0, sy0, x1, sy0 + row_h, [0.22, 0.34, 0.62, 1.0]);
+                let sy0 = dy + vis_sel as f32 * geom.row_h;
+                self.push_rect(
+                    geom.x0,
+                    sy0,
+                    geom.x1,
+                    sy0 + geom.row_h,
+                    [0.22, 0.34, 0.62, 1.0],
+                );
             }
         }
+        focused_flat
+    }
 
-        // --- Title text ---
+    fn draw_settings_rows_text(
+        &mut self,
+        overlay: &SettingsOverlay,
+        geom: &SettingsPanelGeom,
+        focused_flat: usize,
+        layout: &FrameLayout,
+        th: &ColorTheme,
+    ) -> usize {
         let title_text = if overlay.just_saved {
             "  SETTINGS  \u{2713} Saved"
         } else {
             "  SETTINGS  (Cmd+,)"
         };
-        let th = &snapshot.theme;
-        let ty = y0 + (title_h - layout.cell_h_px) * 0.5;
-        let mut tx = x0;
+        let ty = geom.y0 + (geom.title_h - layout.cell_h_px) * 0.5;
+        let mut tx = geom.x0;
         for ch in title_text.chars() {
             self.push_glyph(ch, tx, ty, layout.cell_w_px, layout.cell_h_px, th.text);
             tx += layout.cell_w_px;
         }
-
-        // --- Row text (two columns: key left, value right) ---
-        let key_col = x0 + layout.cell_w_px * 1.5;
-        let val_col = x0 + panel_w * 0.50;
-
-        // Index of the focused item in terms of total (flat) overlay.items position,
-        // used to determine which rows are obscured by the search dropdown.
-        let pre_focused_flat = focused_flat;
         const SEARCH_MAX_VISIBLE: usize = 8;
         let search_cover_end = if overlay.search_buf.is_some() {
             let n_vis = overlay
@@ -1423,21 +1493,22 @@ impl GlPainter {
                 .len()
                 .saturating_sub(overlay.search_scroll_offset)
                 .min(SEARCH_MAX_VISIBLE);
-            pre_focused_flat + n_vis
+            focused_flat + n_vis
         } else {
             0
         };
-
         let mut editable_idx = 0usize;
         let mut focused_flat_idx = 0usize;
         for (i, item) in overlay.items.iter().enumerate() {
-            let row_y = y0 + title_h + i as f32 * row_h + (row_h - layout.cell_h_px) / 2.0;
+            let row_y = geom.y0
+                + geom.title_h
+                + i as f32 * geom.row_h
+                + (geom.row_h - layout.cell_h_px) / 2.0;
             if item.is_header {
-                // Skip header rows visually covered by the search dropdown.
-                if overlay.search_buf.is_some() && i > pre_focused_flat && i <= search_cover_end {
+                if overlay.search_buf.is_some() && i > focused_flat && i <= search_cover_end {
                     continue;
                 }
-                let mut kx = key_col;
+                let mut kx = geom.key_col;
                 for ch in item.key.chars() {
                     self.push_glyph(
                         ch,
@@ -1455,8 +1526,7 @@ impl GlPainter {
                     focused_flat_idx = i;
                 }
                 editable_idx += 1;
-                // Skip rows hidden under the search dropdown.
-                if overlay.search_buf.is_some() && i > pre_focused_flat && i <= search_cover_end {
+                if overlay.search_buf.is_some() && i > focused_flat && i <= search_cover_end {
                     continue;
                 }
                 let [r, g, b, _] = th.text;
@@ -1469,78 +1539,36 @@ impl GlPainter {
                         [cr * 0.75, cg * 0.85, cb * 0.85, 0.85_f32],
                     )
                 };
-                // Key column.
-                let mut kx = key_col;
+                let mut kx = geom.key_col;
                 for ch in item.key.chars() {
                     self.push_glyph(ch, kx, row_y, layout.cell_w_px, layout.cell_h_px, key_color);
                     kx += layout.cell_w_px;
                 }
-                // Determine value string to display.
-                let search_val_buf: Option<String> =
-                    if item.is_searchable && is_focused && overlay.search_buf.is_some() {
-                        let sbuf = overlay.search_buf.as_deref().unwrap_or("");
-                        Some(format!("/ {}\u{258e}", sbuf))
-                    } else {
-                        None
-                    };
-                let searchable_hint: Option<String> =
-                    if item.is_searchable && search_val_buf.is_none() {
-                        Some(format!("{} /", item.value))
-                    } else {
-                        None
-                    };
-                let arrows_buf: Option<String> = if item.is_selectable
-                    && !item.is_searchable
-                    && !item.is_action
-                    && search_val_buf.is_none()
-                    && !(is_focused && overlay.editing.is_some())
-                {
-                    Some(format!("\u{2190} {} \u{2192}", item.value))
-                } else {
-                    None
-                };
-                let freetext_hint: Option<String> = if !item.is_selectable
-                    && !item.is_searchable
-                    && is_focused
-                    && overlay.editing.is_none()
-                {
-                    Some(format!("{}\u{258e}", item.value))
-                } else {
-                    None
-                };
-                let display_val: &str = if let Some(ref s) = search_val_buf {
-                    s.as_str()
-                } else if let Some(ref s) = searchable_hint {
-                    s.as_str()
-                } else if let Some(ref s) = arrows_buf {
-                    s.as_str()
-                } else if let Some(ref s) = freetext_hint {
-                    s.as_str()
-                } else if is_focused {
-                    if let Some(ref buf) = overlay.editing {
-                        buf.as_str()
-                    } else {
-                        &item.value
-                    }
-                } else {
-                    &item.value
-                };
-                // Value column.
-                let mut vx = val_col;
+                let display_val = Self::settings_item_display_val(item, overlay, is_focused);
+                let mut vx = geom.val_col;
                 for ch in display_val.chars() {
                     self.push_glyph(ch, vx, row_y, layout.cell_w_px, layout.cell_h_px, val_color);
                     vx += layout.cell_w_px;
                 }
             }
         }
+        focused_flat_idx
+    }
 
-        // --- Footer help text ---
+    fn draw_settings_footer_dropdown(
+        &mut self,
+        overlay: &SettingsOverlay,
+        geom: &SettingsPanelGeom,
+        focused_flat_idx: usize,
+        layout: &FrameLayout,
+        th: &ColorTheme,
+    ) {
         if overlay.search_buf.is_none() {
-            let footer_y = y0
-                + title_h
-                + overlay.items.len() as f32 * row_h
-                + edit_h
-                + (footer_h - layout.cell_h_px) / 2.0;
+            let footer_y = geom.y0
+                + geom.title_h
+                + overlay.items.len() as f32 * geom.row_h
+                + geom.edit_h
+                + (geom.footer_h - layout.cell_h_px) / 2.0;
             let footer_text = if overlay.editing.is_some() {
                 "  Enter: confirm   Esc: cancel"
             } else {
@@ -1548,7 +1576,7 @@ impl GlPainter {
             };
             let [r, g, b, _] = th.text;
             let foot_color = [r * 0.55, g * 0.55, b * 0.55, 0.90_f32];
-            let mut fx = x0;
+            let mut fx = geom.x0;
             for ch in footer_text.chars() {
                 self.push_glyph(
                     ch,
@@ -1560,10 +1588,8 @@ impl GlPainter {
                 );
                 fx += layout.cell_w_px;
             }
-        }
-
-        // --- Search dropdown text ---
-        if overlay.search_buf.is_some() {
+        } else {
+            const SEARCH_MAX_VISIBLE: usize = 8;
             let n_visible = overlay
                 .search_matches
                 .len()
@@ -1573,12 +1599,12 @@ impl GlPainter {
             let vis_sel = overlay
                 .search_selected
                 .saturating_sub(overlay.search_scroll_offset);
-            let drop_top_px = y0 + title_h + (focused_flat_idx + 1) as f32 * row_h;
+            let drop_top_px = geom.y0 + geom.title_h + (focused_flat_idx + 1) as f32 * geom.row_h;
             if overlay.search_matches.is_empty() {
-                let item_y = drop_top_px + (row_h - layout.cell_h_px) / 2.0;
+                let item_y = drop_top_px + (geom.row_h - layout.cell_h_px) / 2.0;
                 let [r, g, b, _] = th.text;
                 let c = [r * 0.45, g * 0.45, b * 0.45, 0.70];
-                let mut sx = key_col;
+                let mut sx = geom.key_col;
                 for ch in "(no results)".chars() {
                     self.push_glyph(ch, sx, item_y, layout.cell_w_px, layout.cell_h_px, c);
                     sx += layout.cell_w_px;
@@ -1589,7 +1615,8 @@ impl GlPainter {
                     .iter()
                     .enumerate()
                 {
-                    let item_y = drop_top_px + i as f32 * row_h + (row_h - layout.cell_h_px) / 2.0;
+                    let item_y =
+                        drop_top_px + i as f32 * geom.row_h + (geom.row_h - layout.cell_h_px) / 2.0;
                     let is_sel = i == vis_sel;
                     let [r, g, b, _] = th.text;
                     let color = if is_sel {
@@ -1602,7 +1629,7 @@ impl GlPainter {
                     } else {
                         format!("  {}", match_str)
                     };
-                    let mut sx = key_col;
+                    let mut sx = geom.key_col;
                     for ch in labeled.chars() {
                         self.push_glyph(ch, sx, item_y, layout.cell_w_px, layout.cell_h_px, color);
                         sx += layout.cell_w_px;
@@ -1612,80 +1639,84 @@ impl GlPainter {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn draw_keybindings_overlay(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
-        use crate::types::{clamp_color, mix_color};
-        let Some(overlay) = &snapshot.keybindings_overlay else {
+    fn draw_settings_overlay(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
+        let Some(overlay) = &snapshot.settings_overlay else {
             return;
         };
+        self.push_rect(0.0, 0.0, layout.width, layout.height, [0.0, 0.0, 0.0, 0.68]);
 
-        let n_rows = overlay.rows.len();
-        let visible = overlay.visible_rows.min(n_rows);
-
-        // Panel geometry
-        let row_h = layout.cell_h_px * 1.7;
         let title_h = layout.cell_h_px * 2.2;
-        let footer_h = layout.cell_h_px * 2.0;
-        let panel_h = title_h + visible as f32 * row_h + footer_h;
+        let row_h = layout.cell_h_px * 1.7;
+        let footer_h = layout.cell_h_px * 1.9;
+        let edit_h = if overlay.editing.is_some() {
+            layout.cell_h_px * 1.8
+        } else {
+            0.0
+        };
+        let panel_h = title_h + overlay.items.len() as f32 * row_h + edit_h + footer_h;
         let panel_w = (layout.cell_w_px * 72.0)
             .min(layout.width * 0.92)
-            .max(layout.cell_w_px * 44.0);
+            .max(layout.cell_w_px * 40.0);
         let x0 = (layout.width - panel_w) * 0.5;
         let y0 = (layout.height - panel_h) * 0.5;
-        let x1 = x0 + panel_w;
-        let y1 = y0 + panel_h;
-
-        // Colours
-        let th = &snapshot.theme;
-        let ov_bg = clamp_color(th.terminal_bg, 0.01);
-        let ov_border = th.separator_focused;
-        let ov_title_bg = clamp_color(th.terminal_bg, -0.01);
-        let ov_row_alt = clamp_color(th.terminal_bg, 0.03);
-        let ov_select = mix_color(
-            clamp_color(th.terminal_bg, 0.08),
-            th.separator_focused,
-            0.22,
-        );
-        let ov_record = mix_color(
-            clamp_color(th.terminal_bg, 0.06),
-            [0.9, 0.5, 0.1, 1.0],
-            0.20,
-        );
-
-        // Scrim + panel background
-        self.push_rect(0.0, 0.0, layout.width, layout.height, [0.0, 0.0, 0.0, 0.65]);
-        self.push_rect(x0 - 2.0, y0 - 2.0, x1 + 2.0, y1 + 2.0, ov_border);
-        self.push_rect(x0, y0, x1, y1, ov_bg);
-        self.push_rect(x0, y0, x1, y0 + title_h, ov_title_bg);
-
-        // Title
-        let title = if overlay.just_saved {
-            "  KEYBINDINGS  \u{2713} Saved"
-        } else if overlay.recording {
-            "  KEYBINDINGS  \u{25cf} Press key combo..."
-        } else {
-            "  KEYBINDINGS"
+        let geom = SettingsPanelGeom {
+            x0,
+            y0,
+            x1: x0 + panel_w,
+            y1: y0 + panel_h,
+            title_h,
+            row_h,
+            edit_h,
+            footer_h,
+            key_col: x0 + layout.cell_w_px * 1.5,
+            val_col: x0 + panel_w * 0.50,
         };
-        let ty = y0 + (title_h - layout.cell_h_px) * 0.5;
-        let mut tx = x0;
-        for ch in title.chars() {
-            self.push_glyph(ch, tx, ty, layout.cell_w_px, layout.cell_h_px, th.text);
-            tx += layout.cell_w_px;
-        }
+        let colors = SettingsPanelColors {
+            bg: clamp_color(snapshot.theme.terminal_bg, 0.01),
+            border: snapshot.theme.separator_focused,
+            title: clamp_color(snapshot.theme.terminal_bg, -0.01),
+            section: clamp_color(snapshot.theme.terminal_bg, 0.04),
+            select: mix_color(
+                clamp_color(snapshot.theme.terminal_bg, 0.08),
+                snapshot.theme.separator_focused,
+                0.20,
+            ),
+            edit: mix_color(
+                clamp_color(snapshot.theme.terminal_bg, 0.08),
+                snapshot.theme.separator_focused,
+                0.28,
+            ),
+        };
+        let focused_flat = self.draw_settings_panel_bg(overlay, &geom, &colors);
+        let focused_flat_idx =
+            self.draw_settings_rows_text(overlay, &geom, focused_flat, layout, &snapshot.theme);
+        self.draw_settings_footer_dropdown(
+            overlay,
+            &geom,
+            focused_flat_idx,
+            layout,
+            &snapshot.theme,
+        );
+    }
 
-        // Row backgrounds + text
-        let label_col = x0 + layout.cell_w_px * 2.0;
-        let binding_col = x0 + panel_w * 0.55;
-
+    fn draw_keybindings_rows(
+        &mut self,
+        overlay: &KeybindingsOverlay,
+        geom: &KeybindingsPanelGeom,
+        layout: &FrameLayout,
+        th: &ColorTheme,
+        colors: &KeybindingsPanelColors,
+    ) {
+        let (ov_bg, ov_row_alt, ov_select, ov_record) =
+            (colors.bg, colors.row_alt, colors.select, colors.record);
+        let n_rows = overlay.rows.len();
+        let visible = overlay.visible_rows.min(n_rows);
         let scroll = overlay.scroll_offset;
         let visible_rows = &overlay.rows[scroll..(scroll + visible).min(n_rows)];
-
         for (i, row) in visible_rows.iter().enumerate() {
             let flat_idx = scroll + i;
-            let ry = y0 + title_h + i as f32 * row_h;
+            let ry = geom.y0 + geom.title_h + i as f32 * geom.row_h;
             let is_cursor = flat_idx == overlay.cursor;
-
-            // Row background
             let row_bg = if is_cursor {
                 if overlay.recording {
                     ov_record
@@ -1697,9 +1728,8 @@ impl GlPainter {
             } else {
                 ov_bg
             };
-            self.push_rect(x0, ry, x1, ry + row_h, row_bg);
-
-            let text_y = ry + (row_h - layout.cell_h_px) * 0.5;
+            self.push_rect(geom.x0, ry, geom.x1, ry + geom.row_h, row_bg);
+            let text_y = ry + (geom.row_h - layout.cell_h_px) * 0.5;
             let [r, g, b, _] = th.text;
             let label_color = if is_cursor {
                 th.text
@@ -1707,17 +1737,15 @@ impl GlPainter {
                 [r * 0.85, g * 0.85, b * 0.85, 1.0]
             };
             let binding_color = if is_cursor && overlay.recording {
-                [1.0, 0.70, 0.25, 1.0_f32] // orange pulse while recording
+                [1.0, 0.70, 0.25, 1.0_f32]
             } else if row.binding.is_some() && !row.is_default {
-                th.cursor // user-defined binding: accent colour
+                th.cursor
             } else if row.is_default {
-                [r * 0.65, g * 0.65, b * 0.65, 1.0] // default: medium-dim
+                [r * 0.65, g * 0.65, b * 0.65, 1.0]
             } else {
-                [r * 0.40, g * 0.40, b * 0.40, 1.0] // unbound: very dim
+                [r * 0.40, g * 0.40, b * 0.40, 1.0]
             };
-
-            // Action label (left column)
-            let mut lx = label_col;
+            let mut lx = geom.key_col;
             for ch in row.label.chars() {
                 self.push_glyph(
                     ch,
@@ -1729,8 +1757,6 @@ impl GlPainter {
                 );
                 lx += layout.cell_w_px;
             }
-
-            // Binding (right column)
             let binding_str: std::borrow::Cow<str> = if is_cursor && overlay.recording {
                 "\u{25cf} press combo\u{2026}".into()
             } else if let Some(ref b) = row.binding {
@@ -1742,7 +1768,7 @@ impl GlPainter {
             } else {
                 "(not bound)".into()
             };
-            let mut bx = binding_col;
+            let mut bx = geom.bind_col;
             for ch in binding_str.chars() {
                 self.push_glyph(
                     ch,
@@ -1755,27 +1781,37 @@ impl GlPainter {
                 bx += layout.cell_w_px;
             }
         }
+    }
 
-        // Scrollbar indicator (right edge)
+    fn draw_keybindings_footer(
+        &mut self,
+        overlay: &KeybindingsOverlay,
+        geom: &KeybindingsPanelGeom,
+        layout: &FrameLayout,
+        th: &ColorTheme,
+        colors: &KeybindingsPanelColors,
+    ) {
+        let ov_border = colors.border;
+        let n_rows = overlay.rows.len();
+        let visible = overlay.visible_rows.min(n_rows);
+        let scroll = overlay.scroll_offset;
         if n_rows > visible {
-            let sb_x = x1 - layout.cell_w_px * 0.4;
+            let sb_x = geom.x1 - layout.cell_w_px * 0.4;
             let sb_w = layout.cell_w_px * 0.25;
-            let track_h = visible as f32 * row_h;
-            let thumb_h = (track_h * visible as f32 / n_rows as f32).max(row_h * 0.5);
+            let track_h = visible as f32 * geom.row_h;
+            let thumb_h = (track_h * visible as f32 / n_rows as f32).max(geom.row_h * 0.5);
             let thumb_frac = scroll as f32 / (n_rows - visible) as f32;
-            let thumb_y = y0 + title_h + thumb_frac * (track_h - thumb_h);
+            let thumb_y = geom.y0 + geom.title_h + thumb_frac * (track_h - thumb_h);
             self.push_rect(
                 sb_x,
-                y0 + title_h,
+                geom.y0 + geom.title_h,
                 sb_x + sb_w,
-                y0 + title_h + track_h,
+                geom.y0 + geom.title_h + track_h,
                 [0.3, 0.3, 0.3, 0.3],
             );
             self.push_rect(sb_x, thumb_y, sb_x + sb_w, thumb_y + thumb_h, ov_border);
         }
-
-        // Footer hint
-        let footer_y = y1 - footer_h + (footer_h - layout.cell_h_px) * 0.5;
+        let footer_y = geom.y1 - geom.footer_h + (geom.footer_h - layout.cell_h_px) * 0.5;
         let footer_text = if overlay.recording {
             "  Esc \u{2192} cancel"
         } else {
@@ -1783,7 +1819,7 @@ impl GlPainter {
         };
         let [r, g, b, _] = th.text;
         let hint_color = [r * 0.55, g * 0.55, b * 0.55, 1.0_f32];
-        let mut fx = x0;
+        let mut fx = geom.x0;
         for ch in footer_text.chars() {
             self.push_glyph(
                 ch,
@@ -1795,6 +1831,83 @@ impl GlPainter {
             );
             fx += layout.cell_w_px;
         }
+    }
+
+    fn draw_keybindings_overlay(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
+        let Some(overlay) = &snapshot.keybindings_overlay else {
+            return;
+        };
+
+        let n_rows = overlay.rows.len();
+        let visible = overlay.visible_rows.min(n_rows);
+        let row_h = layout.cell_h_px * 1.7;
+        let title_h = layout.cell_h_px * 2.2;
+        let footer_h = layout.cell_h_px * 2.0;
+        let panel_h = title_h + visible as f32 * row_h + footer_h;
+        let panel_w = (layout.cell_w_px * 72.0)
+            .min(layout.width * 0.92)
+            .max(layout.cell_w_px * 44.0);
+        let x0 = (layout.width - panel_w) * 0.5;
+        let y0 = (layout.height - panel_h) * 0.5;
+        let th = &snapshot.theme;
+        let colors = KeybindingsPanelColors {
+            bg: clamp_color(th.terminal_bg, 0.01),
+            border: th.separator_focused,
+            title: clamp_color(th.terminal_bg, -0.01),
+            row_alt: clamp_color(th.terminal_bg, 0.03),
+            select: mix_color(
+                clamp_color(th.terminal_bg, 0.08),
+                th.separator_focused,
+                0.22,
+            ),
+            record: mix_color(
+                clamp_color(th.terminal_bg, 0.06),
+                [0.9, 0.5, 0.1, 1.0],
+                0.20,
+            ),
+        };
+        let geom = KeybindingsPanelGeom {
+            x0,
+            y0,
+            x1: x0 + panel_w,
+            y1: y0 + panel_h,
+            title_h,
+            row_h,
+            footer_h,
+            key_col: x0 + layout.cell_w_px * 2.0,
+            bind_col: x0 + panel_w * 0.55,
+        };
+        self.push_rect(0.0, 0.0, layout.width, layout.height, [0.0, 0.0, 0.0, 0.65]);
+        self.push_rect(
+            geom.x0 - 2.0,
+            geom.y0 - 2.0,
+            geom.x1 + 2.0,
+            geom.y1 + 2.0,
+            colors.border,
+        );
+        self.push_rect(geom.x0, geom.y0, geom.x1, geom.y1, colors.bg);
+        self.push_rect(
+            geom.x0,
+            geom.y0,
+            geom.x1,
+            geom.y0 + geom.title_h,
+            colors.title,
+        );
+        let title_str = if overlay.just_saved {
+            "  KEYBINDINGS  \u{2713} Saved"
+        } else if overlay.recording {
+            "  KEYBINDINGS  \u{25cf} Press key combo..."
+        } else {
+            "  KEYBINDINGS"
+        };
+        let ty = geom.y0 + (geom.title_h - layout.cell_h_px) * 0.5;
+        let mut tx = geom.x0;
+        for ch in title_str.chars() {
+            self.push_glyph(ch, tx, ty, layout.cell_w_px, layout.cell_h_px, th.text);
+            tx += layout.cell_w_px;
+        }
+        self.draw_keybindings_rows(overlay, &geom, layout, th, &colors);
+        self.draw_keybindings_footer(overlay, &geom, layout, th, &colors);
     }
 
     fn draw_command_palette(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
@@ -2410,20 +2523,22 @@ impl GlPainter {
 
     /// Emit a single textured quad (two triangles) for an atlas-backed glyph.
     /// Strikethrough is rendered separately by the caller if needed.
-    #[allow(clippy::too_many_arguments)]
     fn push_atlas_quad(
         &mut self,
         source_char: char,
         ag: AtlasGlyph,
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        color: [f32; 4],
-        style: u8,
+        cell: &GlyphCell,
         x_off: f32,
         y_off: f32,
     ) {
+        let GlyphCell {
+            x,
+            y,
+            w,
+            h,
+            color,
+            style,
+        } = *cell;
         let gw = ag.source_gw;
         let gh = ag.source_gh;
         let adv_w = ag.advance_width.max(gw).max(1.0);
@@ -2520,42 +2635,48 @@ impl GlPainter {
     }
 
     fn push_glyph(&mut self, ch: char, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
-        self.push_glyph_styled(ch, x, y, w, h, color, 0);
+        self.push_glyph_styled(
+            ch,
+            &GlyphCell {
+                x,
+                y,
+                w,
+                h,
+                color,
+                style: 0,
+            },
+        );
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn push_glyph_styled(
-        &mut self,
-        ch: char,
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        color: [f32; 4],
-        style: u8,
-    ) {
+    fn push_glyph_styled(&mut self, ch: char, cell: &GlyphCell) {
         if ch == ' ' || ch == '\0' {
             return;
         }
 
-        if self.push_raster_glyph(ch, x, y, w, h, color, style) {
-            if style & STYLE_STRIKE != 0 {
-                let strike_h = (h * 0.08).max(1.0);
-                let strike_y = y + h * 0.55;
-                self.push_rect(x, strike_y, x + w, strike_y + strike_h, color);
+        if self.push_raster_glyph(ch, cell) {
+            if cell.style & STYLE_STRIKE != 0 {
+                let strike_h = (cell.h * 0.08).max(1.0);
+                let strike_y = cell.y + cell.h * 0.55;
+                self.push_rect(
+                    cell.x,
+                    strike_y,
+                    cell.x + cell.w,
+                    strike_y + strike_h,
+                    cell.color,
+                );
             }
             return;
         }
 
         if let Some(bitmap) = font8x8::BASIC_FONTS.get(ch) {
-            let px_w = w / 8.0;
-            let px_h = h / 8.0;
+            let px_w = cell.w / 8.0;
+            let px_h = cell.h / 8.0;
             for (gy, bits) in bitmap.iter().enumerate() {
                 for gx in 0..8 {
                     if (bits >> gx) & 1 == 1 {
-                        let x0 = x + gx as f32 * px_w;
-                        let y0 = y + gy as f32 * px_h;
-                        self.push_rect(x0, y0, x0 + px_w, y0 + px_h, color);
+                        let x0 = cell.x + gx as f32 * px_w;
+                        let y0 = cell.y + gy as f32 * px_h;
+                        self.push_rect(x0, y0, x0 + px_w, y0 + px_h, cell.color);
                     }
                 }
             }
@@ -2565,40 +2686,24 @@ impl GlPainter {
         // Drawing a box placeholder is more confusing than blank space.
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn push_raster_glyph(
-        &mut self,
-        ch: char,
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        color: [f32; 4],
-        style: u8,
-    ) -> bool {
-        let style_key = style & (STYLE_BOLD | STYLE_ITALIC);
+    fn push_raster_glyph(&mut self, ch: char, cell: &GlyphCell) -> bool {
+        let style_key = cell.style & (STYLE_BOLD | STYLE_ITALIC);
         if let Some(ag) = self.char_atlas.get(&(ch, style_key)).copied() {
-            self.push_atlas_quad(ch, ag, x, y, w, h, color, style, 0.0, 0.0);
+            self.push_atlas_quad(ch, ag, cell, 0.0, 0.0);
             return true;
         }
         // Atlas miss (warm_atlas didn't cover this glyph): fall back to pixel rects.
-        let Some(glyph) = self.rasterizer.glyph(ch, style) else {
+        let Some(glyph) = self.rasterizer.glyph(ch, cell.style) else {
             return false;
         };
-        self.push_bitmap_glyph(&glyph, ch, x, y, w, h, color, style, 0.0, 0.0)
+        self.push_bitmap_glyph(&glyph, ch, cell, 0.0, 0.0)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn push_shaped_glyph(
         &mut self,
         source_char: char,
         glyph_id: u16,
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        color: [f32; 4],
-        style: u8,
+        cell: &GlyphCell,
         x_offset_px: f32,
         y_offset_px: f32,
     ) -> bool {
@@ -2607,51 +2712,23 @@ impl GlPainter {
             // Return false so the caller falls back to character-based rendering.
             return false;
         }
-        let style_key = style & STYLE_BOLD;
+        let style_key = cell.style & STYLE_BOLD;
         if let Some(ag) = self.glyph_id_atlas.get(&(glyph_id, style_key)).copied() {
-            self.push_atlas_quad(
-                source_char,
-                ag,
-                x,
-                y,
-                w,
-                h,
-                color,
-                style,
-                x_offset_px,
-                y_offset_px,
-            );
+            self.push_atlas_quad(source_char, ag, cell, x_offset_px, y_offset_px);
             return true;
         }
         // Atlas miss: fall back to pixel rects.
-        let Some(glyph) = self.rasterizer.glyph_indexed(glyph_id, style) else {
+        let Some(glyph) = self.rasterizer.glyph_indexed(glyph_id, cell.style) else {
             return false;
         };
-        self.push_bitmap_glyph(
-            &glyph,
-            source_char,
-            x,
-            y,
-            w,
-            h,
-            color,
-            style,
-            x_offset_px,
-            y_offset_px,
-        )
+        self.push_bitmap_glyph(&glyph, source_char, cell, x_offset_px, y_offset_px)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn push_bitmap_glyph(
         &mut self,
         glyph: &GlyphBitmap,
         source_char: char,
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        color: [f32; 4],
-        style: u8,
+        cell: &GlyphCell,
         x_offset_px: f32,
         y_offset_px: f32,
     ) -> bool {
@@ -2659,6 +2736,14 @@ impl GlPainter {
             return false;
         }
 
+        let GlyphCell {
+            x,
+            y,
+            w,
+            h,
+            color,
+            style,
+        } = *cell;
         let gw = glyph.width as f32;
         let gh = glyph.height as f32;
         let adv_w = glyph.advance_width.max(gw).max(1.0);

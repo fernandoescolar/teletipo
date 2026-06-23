@@ -15,6 +15,128 @@ fn format_cmd_duration(ms: u64, success: bool) -> String {
     }
 }
 
+/// Per-tab result returned by [`pump_single_tab`].
+struct PumpSingleTabResult {
+    /// The active tab received new (non-suppressed) PTY data this frame.
+    active_had_data: bool,
+    /// The terminal emitted a BEL character (caller decides whether to flash).
+    bell_fired: bool,
+    /// An OSC 133 exit code was reported by the shell; caller records history.
+    exit_code: Option<i32>,
+    /// The PTY child process has exited.
+    is_dead: bool,
+    /// The fullscreen (alternate-screen) state flipped; caller must resize.
+    fullscreen_changed: bool,
+}
+
+/// Pump one tab's PTY, update its internal state, and return a result the
+/// caller uses to drive cross-cutting concerns (bell flash, accessibility,
+/// dead-tab cleanup, etc.).
+///
+/// `tab_idx` is the index of `tab` within the tabs vec; `active_tab` is the
+/// currently active tab index; `max_split_ratio` is the computed layout ceiling.
+fn pump_single_tab(
+    tab: &mut crate::tab::TabState,
+    tab_idx: usize,
+    active_tab: usize,
+    max_split_ratio: f32,
+) -> PumpSingleTabResult {
+    let Some(mut pty) = tab.pty.take() else {
+        return PumpSingleTabResult {
+            active_had_data: false,
+            bell_fired: false,
+            exit_code: None,
+            is_dead: false,
+            fullscreen_changed: false,
+        };
+    };
+
+    // Clear the suppress window once it has expired.
+    if tab.suppress_until.is_some_and(|t| Instant::now() >= t) {
+        tab.suppress_until = None;
+    }
+
+    let suppressing = tab.suppress_until.is_some();
+    let had_data = if suppressing {
+        // Drain PTY output without feeding it to the screen so the
+        // shell's SIGWINCH-triggered prompt redraw stays invisible.
+        tab.app
+            .drain_pty_output(&mut pty)
+            .map(|n| n > 0)
+            .unwrap_or(false)
+    } else {
+        tab.app
+            .pump_pty_once(&mut pty)
+            .map(|n| n > 0)
+            .unwrap_or(false)
+    };
+    // Send any pending DSR responses (e.g. \x1b[row;colR) back to the PTY.
+    if !suppressing {
+        for response in tab.app.drain_pending_responses() {
+            if let Err(err) = tab.app.send_pty_input(&mut pty, response.as_bytes()) {
+                warn!(error = %err, response = %response, "failed to send pending response to pty");
+            }
+        }
+    }
+    let is_dead = match pty.try_wait() {
+        Ok(status) => status.is_some(),
+        Err(err) => {
+            debug!(error = %err, "failed to query pty child status");
+            false
+        }
+    };
+    tab.pty = Some(pty);
+
+    let active_had_data = tab_idx == active_tab && had_data && !suppressing;
+    if tab_idx != active_tab && had_data && !suppressing {
+        tab.unread_output = true;
+    }
+
+    // Refresh the command-running flag via a cheap `tcgetpgrp` on
+    // the PTY master.  True when the shell has spawned a foreground
+    // child (vim, sudo, a script, …) and is waiting for it to exit.
+    if let Some(ref pty_ref) = tab.pty {
+        let was_running = tab.command_running;
+        tab.command_running = pty_ref.foreground_child_running();
+        if was_running && !tab.command_running {
+            if tab.editor_unlocked {
+                tab.app.editor_clear();
+            }
+            tab.editor_unlocked = false;
+        }
+    } else {
+        tab.command_running = false;
+        tab.editor_unlocked = false;
+    }
+
+    let bell_fired = tab.app.take_bell();
+
+    let now_fullscreen = tab.app.is_alternate_screen();
+    let fullscreen_changed = now_fullscreen != tab.was_terminal_fullscreen;
+    if fullscreen_changed {
+        tab.was_terminal_fullscreen = now_fullscreen;
+        if now_fullscreen {
+            tab.pre_fullscreen_split_ratio = tab.split_ratio;
+            tab.split_ratio = 1.0;
+            tab.scroll_offset = 0;
+            tab.is_selecting = false;
+            tab.is_selecting_editor = false;
+        } else {
+            tab.split_ratio = tab.pre_fullscreen_split_ratio.clamp(0.2, max_split_ratio);
+        }
+    }
+
+    let exit_code = tab.app.take_last_exit_code();
+
+    PumpSingleTabResult {
+        active_had_data,
+        bell_fired,
+        exit_code,
+        is_dead,
+        fullscreen_changed,
+    }
+}
+
 use crate::config::UserConfig;
 use crate::input;
 use crate::launch::{build_app, spawn_pty};
@@ -168,106 +290,33 @@ impl GpuRuntimeState {
     }
 
     /// Pump PTY output for ALL tabs; returns `true` if the active tab received data.
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // sequential housekeeping over every tab
     pub(crate) fn pump_all_ptys(&mut self) -> bool {
         let mut active_had_data = false;
         let active = self.active_tab;
         let mut dead_tabs: Vec<usize> = Vec::new();
         let mut exit_codes: Vec<(usize, i32)> = Vec::new();
         let mut resize_tabs: Vec<usize> = Vec::new();
-        let tab_bar_h = self.tab_bar_h();
-        let available_h = self.layout.window_height as f32 - tab_bar_h;
-        let pad_v = self.user_config.padding.vertical as f32;
-        let cell_h = self.layout.cell_h;
-        let max_split_ratio = (1.0 - (cell_h + 2.0 * pad_v) / available_h.max(1.0)).max(0.2);
-        for (i, tab) in self.tabs.iter_mut().enumerate() {
-            let Some(mut pty) = tab.pty.take() else {
-                continue;
-            };
-
-            // Clear the suppress window once it has expired.
-            if tab.suppress_until.is_some_and(|t| Instant::now() >= t) {
-                tab.suppress_until = None;
-            }
-
-            let suppressing = tab.suppress_until.is_some();
-            let had_data = if suppressing {
-                // Drain PTY output without feeding it to the screen so the
-                // shell's SIGWINCH-triggered prompt redraw stays invisible.
-                tab.app
-                    .drain_pty_output(&mut pty)
-                    .map(|n| n > 0)
-                    .unwrap_or(false)
-            } else {
-                tab.app
-                    .pump_pty_once(&mut pty)
-                    .map(|n| n > 0)
-                    .unwrap_or(false)
-            };
-            // Send any pending DSR responses (e.g. \x1b[row;colR) back to the PTY.
-            if !suppressing {
-                for response in tab.app.drain_pending_responses() {
-                    if let Err(err) = tab.app.send_pty_input(&mut pty, response.as_bytes()) {
-                        warn!(error = %err, response = %response, "failed to send pending response to pty");
-                    }
-                }
-            }
-            let is_dead = match pty.try_wait() {
-                Ok(status) => status.is_some(),
-                Err(err) => {
-                    debug!(error = %err, "failed to query pty child status");
-                    false
-                }
-            };
-            tab.pty = Some(pty);
-            if i == active && had_data && !suppressing {
+        let max_split_ratio = self.compute_max_split_ratio();
+        for i in 0..self.tabs.len() {
+            let result = pump_single_tab(&mut self.tabs[i], i, active, max_split_ratio);
+            if result.active_had_data {
                 active_had_data = true;
             }
-            if i != active && had_data && !suppressing {
-                tab.unread_output = true;
-            }
-            // Refresh the command-running flag via a cheap `tcgetpgrp` on
-            // the PTY master.  True when the shell has spawned a foreground
-            // child (vim, sudo, a script, …) and is waiting for it to exit.
-            if let Some(ref pty_ref) = tab.pty {
-                let was_running = tab.command_running;
-                tab.command_running = pty_ref.foreground_child_running();
-                if was_running && !tab.command_running {
-                    if tab.editor_unlocked {
-                        tab.app.editor_clear();
-                    }
-                    tab.editor_unlocked = false;
-                }
-            } else {
-                tab.command_running = false;
-                tab.editor_unlocked = false;
-            }
-            if tab.app.take_bell() && self.user_config.terminal.bell {
+            if result.bell_fired && self.user_config.terminal.bell {
                 self.overlays.bell_flash_until =
                     Some(Instant::now() + std::time::Duration::from_millis(150));
                 if i != active {
-                    tab.bell_pending = true;
+                    self.tabs[i].bell_pending = true;
                 }
             }
-            let now_fullscreen = tab.app.is_alternate_screen();
-            if now_fullscreen != tab.was_terminal_fullscreen {
-                tab.was_terminal_fullscreen = now_fullscreen;
-                if now_fullscreen {
-                    tab.pre_fullscreen_split_ratio = tab.split_ratio;
-                    tab.split_ratio = 1.0;
-                    tab.scroll_offset = 0;
-                    tab.is_selecting = false;
-                    tab.is_selecting_editor = false;
-                } else {
-                    tab.split_ratio = tab.pre_fullscreen_split_ratio.clamp(0.2, max_split_ratio);
-                }
-                resize_tabs.push(i);
-            }
-            if let Some(code) = tab.app.take_last_exit_code() {
+            if let Some(code) = result.exit_code {
                 exit_codes.push((i, code));
             }
-            if is_dead {
+            if result.is_dead {
                 dead_tabs.push(i);
+            }
+            if result.fullscreen_changed {
+                resize_tabs.push(i);
             }
         }
         // Commit pending commands for every shell-reported exit code so failed
@@ -295,6 +344,14 @@ impl GpuRuntimeState {
         }
 
         active_had_data
+    }
+
+    fn compute_max_split_ratio(&self) -> f32 {
+        let tab_bar_h = self.tab_bar_h();
+        let available_h = self.layout.window_height as f32 - tab_bar_h;
+        let pad_v = self.user_config.padding.vertical as f32;
+        let cell_h = self.layout.cell_h;
+        (1.0 - (cell_h + 2.0 * pad_v) / available_h.max(1.0)).max(0.2)
     }
 
     fn apply_fullscreen_resize_tabs(&mut self, resize_tabs: Vec<usize>) {

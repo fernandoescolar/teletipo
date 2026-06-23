@@ -61,103 +61,10 @@ impl Parser {
         actions
     }
 
-    #[allow(clippy::too_many_lines)]
     fn feed_byte(&mut self, byte: u8, actions: &mut Vec<Action>) {
         match self.state {
-            ParserState::Ground => match byte {
-                0x1b => {
-                    self.utf8_len = 0; // discard any incomplete sequence
-                    self.state = ParserState::Escape;
-                }
-                b'\n' => actions.push(Action::Linefeed),
-                b'\r' => actions.push(Action::CarriageReturn),
-                0x07 => actions.push(Action::Bell),
-                0x08 => actions.push(Action::Backspace),
-                0x09 => actions.push(Action::HorizontalTab),
-                0x20..=0x7e => actions.push(Action::Print(byte as char)),
-                // Multi-byte UTF-8 lead byte: start a new sequence.
-                0xc0..=0xf7 => {
-                    self.utf8_buf[0] = byte;
-                    self.utf8_len = 1;
-                }
-                // UTF-8 continuation byte.
-                0x80..=0xbf => {
-                    if self.utf8_len > 0 && self.utf8_len < 4 {
-                        let idx = self.utf8_len as usize;
-                        self.utf8_buf[idx] = byte;
-                        self.utf8_len += 1;
-                        let expected = utf8_seq_len(self.utf8_buf[0]);
-                        if self.utf8_len == expected {
-                            let slice = &self.utf8_buf[..expected as usize];
-                            if let Ok(s) = std::str::from_utf8(slice)
-                                && let Some(ch) = s.chars().next()
-                            {
-                                actions.push(Action::Print(ch));
-                            }
-                            self.utf8_len = 0;
-                        }
-                    } else {
-                        self.utf8_len = 0; // stray continuation, reset
-                    }
-                }
-                _ => {}
-            },
-            ParserState::Escape => match byte {
-                b'[' => {
-                    self.csi_buf.clear();
-                    self.state = ParserState::Csi;
-                }
-                b']' => {
-                    self.osc_esc_seen = false;
-                    self.osc_buf.clear();
-                    self.state = ParserState::Osc;
-                }
-                b'7' => {
-                    actions.push(Action::SaveCursor);
-                    self.state = ParserState::Ground;
-                }
-                b'8' => {
-                    actions.push(Action::RestoreCursor);
-                    self.state = ParserState::Ground;
-                }
-                // ESC M — reverse index (scroll up / RI)
-                b'M' => {
-                    actions.push(Action::ReverseIndex);
-                    self.state = ParserState::Ground;
-                }
-                // ESC D — index (IND, same as linefeed)
-                b'D' => {
-                    actions.push(Action::Linefeed);
-                    self.state = ParserState::Ground;
-                }
-                // ESC E — next line (NEL)
-                b'E' => {
-                    actions.push(Action::CarriageReturn);
-                    actions.push(Action::Linefeed);
-                    self.state = ParserState::Ground;
-                }
-                // ESC c — full reset (RIS) — treat as clear screen + home
-                b'c' => {
-                    actions.push(Action::EraseInDisplay(2));
-                    actions.push(Action::CursorPosition { row: 1, col: 1 });
-                    self.state = ParserState::Ground;
-                }
-                // ESC = / ESC > — application/normal keypad mode (ignored)
-                b'=' | b'>' => {
-                    self.state = ParserState::Ground;
-                }
-                // ESC ( ESC ) ESC * ESC + — charset designation sequences.
-                // The following byte is the designator (e.g. 'B' for ASCII,
-                // '0' for DEC special graphics). We don't implement character
-                // set switching but must consume the extra byte so it is not
-                // printed as a literal character.
-                b'(' | b')' | b'*' | b'+' => {
-                    self.state = ParserState::EscIntermediate;
-                }
-                _ => {
-                    self.state = ParserState::Ground;
-                }
-            },
+            ParserState::Ground => self.feed_byte_ground(byte, actions),
+            ParserState::Escape => self.feed_byte_escape(byte, actions),
             ParserState::EscIntermediate => {
                 // Consume the charset designator byte and return to Ground.
                 self.state = ParserState::Ground;
@@ -185,6 +92,106 @@ impl Parser {
                     self.osc_esc_seen = false;
                     self.osc_buf.push(byte);
                 }
+            }
+        }
+    }
+
+    fn feed_byte_ground(&mut self, byte: u8, actions: &mut Vec<Action>) {
+        match byte {
+            0x1b => {
+                self.utf8_len = 0; // discard any incomplete sequence
+                self.state = ParserState::Escape;
+            }
+            b'\n' => actions.push(Action::Linefeed),
+            b'\r' => actions.push(Action::CarriageReturn),
+            0x07 => actions.push(Action::Bell),
+            0x08 => actions.push(Action::Backspace),
+            0x09 => actions.push(Action::HorizontalTab),
+            0x20..=0x7e => actions.push(Action::Print(byte as char)),
+            // Multi-byte UTF-8 lead byte: start a new sequence.
+            0xc0..=0xf7 => {
+                self.utf8_buf[0] = byte;
+                self.utf8_len = 1;
+            }
+            // UTF-8 continuation byte.
+            0x80..=0xbf => {
+                if self.utf8_len > 0 && self.utf8_len < 4 {
+                    let idx = self.utf8_len as usize;
+                    self.utf8_buf[idx] = byte;
+                    self.utf8_len += 1;
+                    let expected = utf8_seq_len(self.utf8_buf[0]);
+                    if self.utf8_len == expected {
+                        let slice = &self.utf8_buf[..expected as usize];
+                        if let Ok(s) = std::str::from_utf8(slice)
+                            && let Some(ch) = s.chars().next()
+                        {
+                            actions.push(Action::Print(ch));
+                        }
+                        self.utf8_len = 0;
+                    }
+                } else {
+                    self.utf8_len = 0; // stray continuation, reset
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn feed_byte_escape(&mut self, byte: u8, actions: &mut Vec<Action>) {
+        match byte {
+            b'[' => {
+                self.csi_buf.clear();
+                self.state = ParserState::Csi;
+            }
+            b']' => {
+                self.osc_esc_seen = false;
+                self.osc_buf.clear();
+                self.state = ParserState::Osc;
+            }
+            b'7' => {
+                actions.push(Action::SaveCursor);
+                self.state = ParserState::Ground;
+            }
+            b'8' => {
+                actions.push(Action::RestoreCursor);
+                self.state = ParserState::Ground;
+            }
+            // ESC M — reverse index (scroll up / RI)
+            b'M' => {
+                actions.push(Action::ReverseIndex);
+                self.state = ParserState::Ground;
+            }
+            // ESC D — index (IND, same as linefeed)
+            b'D' => {
+                actions.push(Action::Linefeed);
+                self.state = ParserState::Ground;
+            }
+            // ESC E — next line (NEL)
+            b'E' => {
+                actions.push(Action::CarriageReturn);
+                actions.push(Action::Linefeed);
+                self.state = ParserState::Ground;
+            }
+            // ESC c — full reset (RIS) — treat as clear screen + home
+            b'c' => {
+                actions.push(Action::EraseInDisplay(2));
+                actions.push(Action::CursorPosition { row: 1, col: 1 });
+                self.state = ParserState::Ground;
+            }
+            // ESC = / ESC > — application/normal keypad mode (ignored)
+            b'=' | b'>' => {
+                self.state = ParserState::Ground;
+            }
+            // ESC ( ESC ) ESC * ESC + — charset designation sequences.
+            // The following byte is the designator (e.g. 'B' for ASCII,
+            // '0' for DEC special graphics). We don't implement character
+            // set switching but must consume the extra byte so it is not
+            // printed as a literal character.
+            b'(' | b')' | b'*' | b'+' => {
+                self.state = ParserState::EscIntermediate;
+            }
+            _ => {
+                self.state = ParserState::Ground;
             }
         }
     }
@@ -340,10 +347,8 @@ mod tests {
         expected: Vec<Action>,
     }
 
-    #[allow(clippy::too_many_lines)] // long-but-flat fixture table
     fn fixture_matrix() -> Vec<Fixture> {
         let mut out = Vec::new();
-
         out.push(Fixture {
             name: "plain_text",
             input: b"abc".to_vec(),
@@ -359,7 +364,15 @@ mod tests {
                 Action::HorizontalTab,
             ],
         });
+        out.extend(fixtures_cursor_motion());
+        out.extend(fixtures_erase_and_position());
+        out.extend(fixtures_dec_modes_and_sgr());
+        out.extend(fixtures_edit_ops());
+        out
+    }
 
+    fn fixtures_cursor_motion() -> Vec<Fixture> {
+        let mut out = Vec::new();
         for n in 1..=10u16 {
             out.push(Fixture {
                 name: "cursor_up",
@@ -407,7 +420,11 @@ mod tests {
                 expected: vec![Action::CursorVerticalAbsolute(n)],
             });
         }
+        out
+    }
 
+    fn fixtures_erase_and_position() -> Vec<Fixture> {
+        let mut out = Vec::new();
         for n in 0..=3u16 {
             out.push(Fixture {
                 name: "erase_in_display",
@@ -420,7 +437,6 @@ mod tests {
                 expected: vec![Action::EraseInLine(n)],
             });
         }
-
         for (row, col) in &[(1, 1), (2, 5), (10, 20), (24, 80), (40, 120)] {
             out.push(Fixture {
                 name: "cursor_position",
@@ -431,7 +447,26 @@ mod tests {
                 }],
             });
         }
+        out.push(Fixture {
+            name: "save_restore_esc",
+            input: b"\x1b7\x1b8".to_vec(),
+            expected: vec![Action::SaveCursor, Action::RestoreCursor],
+        });
+        out.push(Fixture {
+            name: "save_restore_csi",
+            input: b"\x1b[s\x1b[u".to_vec(),
+            expected: vec![Action::SaveCursor, Action::RestoreCursor],
+        });
+        out.push(Fixture {
+            name: "scroll_region",
+            input: b"\x1b[2;12r".to_vec(),
+            expected: vec![Action::SetScrollRegion { top: 2, bottom: 12 }],
+        });
+        out
+    }
 
+    fn fixtures_dec_modes_and_sgr() -> Vec<Fixture> {
+        let mut out = Vec::new();
         for mode in &[1049u16, 1000u16, 25u16, 2004u16] {
             out.push(Fixture {
                 name: "dec_private_set",
@@ -444,7 +479,6 @@ mod tests {
                 expected: vec![Action::DecPrivateModeReset(*mode)],
             });
         }
-
         for sgr in &[
             vec![0u16],
             vec![1u16],
@@ -463,23 +497,11 @@ mod tests {
                 expected: vec![Action::SetGraphicsRendition(sgr.clone())],
             });
         }
+        out
+    }
 
-        out.push(Fixture {
-            name: "save_restore_esc",
-            input: b"\x1b7\x1b8".to_vec(),
-            expected: vec![Action::SaveCursor, Action::RestoreCursor],
-        });
-        out.push(Fixture {
-            name: "save_restore_csi",
-            input: b"\x1b[s\x1b[u".to_vec(),
-            expected: vec![Action::SaveCursor, Action::RestoreCursor],
-        });
-        out.push(Fixture {
-            name: "scroll_region",
-            input: b"\x1b[2;12r".to_vec(),
-            expected: vec![Action::SetScrollRegion { top: 2, bottom: 12 }],
-        });
-
+    fn fixtures_edit_ops() -> Vec<Fixture> {
+        let mut out = Vec::new();
         for n in 1..=5u16 {
             out.push(Fixture {
                 name: "insert_chars",
@@ -502,7 +524,6 @@ mod tests {
                 expected: vec![Action::DeleteLines(n)],
             });
         }
-
         out
     }
 

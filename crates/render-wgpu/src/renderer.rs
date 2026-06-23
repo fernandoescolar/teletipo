@@ -141,7 +141,6 @@ mod tests {
     };
     use winit::dpi::PhysicalSize;
 
-    #[allow(dead_code)]
     fn blank_snapshot() -> RenderSnapshot {
         RenderSnapshot {
             terminal_rows: vec![],

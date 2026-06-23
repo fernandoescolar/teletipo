@@ -1275,150 +1275,14 @@ fn is_paste_shortcut(state: &GpuRuntimeState, key: &str) -> bool {
 
 /// Build and open the command palette with all available items.
 pub(crate) fn open_command_palette(state: &mut GpuRuntimeState) {
-    use crate::state::{CommandPaletteState, PaletteAction, PaletteItem};
+    use crate::state::CommandPaletteState;
 
-    // ── Primary: unique, specific actions (shown when query is empty) ─────────
-    let mut primary: Vec<PaletteItem> = crate::commands::palette_commands(state)
-        .into_iter()
-        .map(|(label, cmd)| PaletteItem {
-            label,
-            action: PaletteAction::Command(cmd),
-        })
-        .collect();
-
-    primary.push(PaletteItem {
-        label: "SSH → New connection…".to_owned(),
-        action: PaletteAction::OpenSshPrompt,
-    });
-
-    // Category headers — shown in default view, open a prefixed search on select.
-    let active = state.active_tab;
-    let has_tabs = state.tabs.len() > 1;
-    let has_history = !state.tabs[active].history_entries.is_empty();
-    let has_ssh_hosts = !state.ssh_hosts.is_empty();
-    let has_themes = !state.themes_fonts.available_themes.is_empty();
-    let has_fonts = !state.themes_fonts.available_fonts.is_empty();
-    let has_shells = crate::settings::shell_options()
-        .iter()
-        .any(|s| s.command.is_some());
-
-    if has_themes {
-        primary.push(PaletteItem {
-            label: "Set Theme…".to_owned(),
-            action: PaletteAction::FilterByPrefix("Set Theme: ".to_owned()),
-        });
-    }
-    if has_fonts {
-        primary.push(PaletteItem {
-            label: "Set Font…".to_owned(),
-            action: PaletteAction::FilterByPrefix("Set Font: ".to_owned()),
-        });
-    }
-    if has_shells {
-        primary.push(PaletteItem {
-            label: "New Tab (shell)…".to_owned(),
-            action: PaletteAction::FilterByPrefix("New Tab (".to_owned()),
-        });
-    }
-    if has_ssh_hosts {
-        primary.push(PaletteItem {
-            label: "SSH → host…".to_owned(),
-            action: PaletteAction::FilterByPrefix("SSH → ".to_owned()),
-        });
-    }
-    if has_tabs {
-        primary.push(PaletteItem {
-            label: "Switch Tab…".to_owned(),
-            action: PaletteAction::FilterByPrefix("Tab ".to_owned()),
-        });
-    }
-    if has_history {
-        primary.push(PaletteItem {
-            label: "History…".to_owned(),
-            action: PaletteAction::FilterByPrefix("History: ".to_owned()),
-        });
-    }
-
+    let mut primary = build_palette_primary(state);
     primary.sort_by_key(|item| item.label.to_lowercase());
 
-    // ── Secondary: all category items (only reachable via search) ─────────────
-    let mut secondary: Vec<PaletteItem> = Vec::new();
-
-    for (i, theme) in state.themes_fonts.available_themes.iter().enumerate() {
-        secondary.push(PaletteItem {
-            label: format!("Set Theme: {}", theme.name),
-            action: PaletteAction::SetTheme(i),
-        });
-    }
-
-    for (i, font) in state.themes_fonts.available_fonts.iter().enumerate() {
-        secondary.push(PaletteItem {
-            label: format!("Set Font: {}", font.family),
-            action: PaletteAction::SetFont(i),
-        });
-    }
-
-    for shell in crate::settings::shell_options() {
-        if let Some(command) = shell.command {
-            secondary.push(PaletteItem {
-                label: format!("New Tab ({})", shell.label),
-                action: PaletteAction::NewTabWithShell(command),
-            });
-        }
-    }
-
-    for host in &state.ssh_hosts {
-        secondary.push(PaletteItem {
-            label: format!("SSH → {}", host.name),
-            action: PaletteAction::NewSshTab(host.ssh_command()),
-        });
-    }
-
-    for (i, tab) in state.tabs.iter().enumerate() {
-        if i == active {
-            continue;
-        }
-        let label = if tab.cwd.is_empty() {
-            format!("Tab {}", i + 1)
-        } else {
-            format!("Tab {}: {}", i + 1, tab.cwd)
-        };
-        secondary.push(PaletteItem {
-            label,
-            action: PaletteAction::SwitchToTab(i),
-        });
-    }
-
-    // Command history: frecency-sorted, deduped, capped at 100.
-    {
-        let tab = &state.tabs[active];
-        let mut history_scored: Vec<(&str, u64)> = tab
-            .history_entries
-            .iter()
-            .map(|e| {
-                (
-                    e.cmd.as_str(),
-                    (e.count as u64).saturating_mul(1_000_000).saturating_add(e.last_used_secs),
-                )
-            })
-            .collect();
-        history_scored.sort_by(|a, b| b.1.cmp(&a.1));
-
-        let mut seen = std::collections::HashSet::new();
-        for (cmd, _) in history_scored.into_iter().take(100) {
-            if seen.insert(cmd) {
-                secondary.push(PaletteItem {
-                    label: format!("History: {cmd}"),
-                    action: PaletteAction::InsertHistoryCommand(cmd.to_owned()),
-                });
-            }
-        }
-    }
-
+    let mut secondary = build_palette_secondary(state);
     secondary.sort_by_key(|item| item.label.to_lowercase());
 
-    // Build the full item list: primary first, then secondary.
-    // `default_filtered` covers only the primary section.
     let primary_len = primary.len();
     let mut items = primary;
     items.extend(secondary);
@@ -1436,6 +1300,136 @@ pub(crate) fn open_command_palette(state: &mut GpuRuntimeState) {
         scroll_offset: 0,
         sub_prompt: None,
     });
+}
+
+fn build_palette_primary(state: &GpuRuntimeState) -> Vec<crate::state::PaletteItem> {
+    use crate::state::{PaletteAction, PaletteItem};
+
+    let mut items: Vec<PaletteItem> = crate::commands::palette_commands(state)
+        .into_iter()
+        .map(|(label, cmd)| PaletteItem {
+            label,
+            action: PaletteAction::Command(cmd),
+        })
+        .collect();
+
+    items.push(PaletteItem {
+        label: "SSH → New connection…".to_owned(),
+        action: PaletteAction::OpenSshPrompt,
+    });
+
+    let active = state.active_tab;
+    let headers: &[(&str, &str, bool)] = &[
+        (
+            "Set Theme…",
+            "Set Theme: ",
+            !state.themes_fonts.available_themes.is_empty(),
+        ),
+        (
+            "Set Font…",
+            "Set Font: ",
+            !state.themes_fonts.available_fonts.is_empty(),
+        ),
+        (
+            "New Tab (shell)…",
+            "New Tab (",
+            crate::settings::shell_options()
+                .iter()
+                .any(|s| s.command.is_some()),
+        ),
+        ("SSH → host…", "SSH → ", !state.ssh_hosts.is_empty()),
+        ("Switch Tab…", "Tab ", state.tabs.len() > 1),
+        (
+            "History…",
+            "History: ",
+            !state.tabs[active].history_entries.is_empty(),
+        ),
+    ];
+    for &(label, prefix, enabled) in headers {
+        if enabled {
+            items.push(PaletteItem {
+                label: label.to_owned(),
+                action: PaletteAction::FilterByPrefix(prefix.to_owned()),
+            });
+        }
+    }
+
+    items
+}
+
+fn build_palette_secondary(state: &GpuRuntimeState) -> Vec<crate::state::PaletteItem> {
+    use crate::state::{PaletteAction, PaletteItem};
+    use std::cmp::Reverse;
+
+    let active = state.active_tab;
+    let mut items: Vec<PaletteItem> = Vec::new();
+
+    for (i, theme) in state.themes_fonts.available_themes.iter().enumerate() {
+        items.push(PaletteItem {
+            label: format!("Set Theme: {}", theme.name),
+            action: PaletteAction::SetTheme(i),
+        });
+    }
+    for (i, font) in state.themes_fonts.available_fonts.iter().enumerate() {
+        items.push(PaletteItem {
+            label: format!("Set Font: {}", font.family),
+            action: PaletteAction::SetFont(i),
+        });
+    }
+    for shell in crate::settings::shell_options() {
+        if let Some(command) = shell.command {
+            items.push(PaletteItem {
+                label: format!("New Tab ({})", shell.label),
+                action: PaletteAction::NewTabWithShell(command),
+            });
+        }
+    }
+    for host in &state.ssh_hosts {
+        items.push(PaletteItem {
+            label: format!("SSH → {}", host.name),
+            action: PaletteAction::NewSshTab(host.ssh_command()),
+        });
+    }
+    for (i, tab) in state.tabs.iter().enumerate() {
+        if i == active {
+            continue;
+        }
+        let label = if tab.cwd.is_empty() {
+            format!("Tab {}", i + 1)
+        } else {
+            format!("Tab {}: {}", i + 1, tab.cwd)
+        };
+        items.push(PaletteItem {
+            label,
+            action: PaletteAction::SwitchToTab(i),
+        });
+    }
+
+    // Command history: frecency-sorted, deduped, capped at 100.
+    let tab = &state.tabs[active];
+    let mut history_scored: Vec<(&str, u64)> = tab
+        .history_entries
+        .iter()
+        .map(|e| {
+            let score = (e.count as u64)
+                .saturating_mul(1_000_000)
+                .saturating_add(e.last_used_secs);
+            (e.cmd.as_str(), score)
+        })
+        .collect();
+    history_scored.sort_by_key(|&(_, score)| Reverse(score));
+
+    let mut seen = std::collections::HashSet::new();
+    for (cmd, _) in history_scored.into_iter().take(100) {
+        if seen.insert(cmd) {
+            items.push(PaletteItem {
+                label: format!("History: {cmd}"),
+                action: PaletteAction::InsertHistoryCommand(cmd.to_owned()),
+            });
+        }
+    }
+
+    items
 }
 
 /// Handle keyboard input while the command palette is open.

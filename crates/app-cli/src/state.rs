@@ -145,7 +145,6 @@ pub(crate) struct ContextMenuState {
     pub(crate) enabled_items: Vec<bool>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ToastKind {
     Info,

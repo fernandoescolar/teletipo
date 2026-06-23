@@ -326,6 +326,15 @@ pub(crate) fn build_initial_state(
 }
 
 #[allow(clippy::too_many_lines)]
+/// Parameters bundle for building a single tab, factored out to avoid a
+/// too-many-arguments violation.
+struct TabBuildParams<'a> {
+    effective_shell: &'a str,
+    exec: Option<&'a str>,
+    shared_history: &'a [String],
+    shared_entries: &'a [HistoryEntry],
+}
+
 fn build_tabs(
     saved_tabs: Vec<TabSession>,
     rows: usize,
@@ -336,19 +345,17 @@ fn build_tabs(
     // Process shared history and entries across all tabs
     let (shared_history, shared_entries) = process_shared_tab_data(&saved_tabs);
 
+    let params = TabBuildParams {
+        effective_shell,
+        exec,
+        shared_history: &shared_history,
+        shared_entries: &shared_entries,
+    };
+
     // Apply shared data to each tab
     let mut tabs: Vec<TabState> = Vec::new();
     for (i, saved) in saved_tabs.into_iter().enumerate() {
-        let tab_state = build_single_tab(
-            i,
-            &saved,
-            rows,
-            cols,
-            effective_shell,
-            exec,
-            &shared_history,
-            &shared_entries,
-        )?;
+        let tab_state = build_single_tab(i, &saved, rows, cols, &params)?;
         tabs.push(tab_state);
     }
 
@@ -392,16 +399,12 @@ fn process_shared_tab_data(saved_tabs: &[TabSession]) -> (Vec<String>, Vec<Histo
 }
 
 /// Build a single tab with its associated PTY and application state
-#[allow(clippy::too_many_arguments)]
 fn build_single_tab(
     index: usize,
     saved: &TabSession,
     rows: usize,
     cols: usize,
-    effective_shell: &str,
-    exec: Option<&str>,
-    shared_history: &[String],
-    shared_entries: &[HistoryEntry],
+    params: &TabBuildParams<'_>,
 ) -> anyhow::Result<TabState> {
     let mut app = build_app(rows, cols)?;
 
@@ -428,7 +431,13 @@ fn build_single_tab(
 
     // Spawn PTY session
     let (pty, integration) = if index == 0 {
-        match spawn_pty(effective_shell, rows as u16, cols as u16, exec, restore_cwd) {
+        match spawn_pty(
+            params.effective_shell,
+            rows as u16,
+            cols as u16,
+            params.exec,
+            restore_cwd,
+        ) {
             Ok((p, integ)) => (Some(p), integ),
             Err(err) => {
                 app.feed_terminal(format!("PTY unavailable: {err}\n").as_bytes());
@@ -436,9 +445,15 @@ fn build_single_tab(
             }
         }
     } else {
-        spawn_pty(effective_shell, rows as u16, cols as u16, None, restore_cwd)
-            .map(|(p, integ)| (Some(p), integ))
-            .unwrap_or((None, false))
+        spawn_pty(
+            params.effective_shell,
+            rows as u16,
+            cols as u16,
+            None,
+            restore_cwd,
+        )
+        .map(|(p, integ)| (Some(p), integ))
+        .unwrap_or((None, false))
     };
 
     // Build and return the tab state
@@ -448,7 +463,7 @@ fn build_single_tab(
         scroll_offset: 0,
         editor_scroll_offset: 0,
         editor_horizontal_scroll_offset: 0,
-        history: shared_history.to_vec(),
+        history: params.shared_history.to_vec(),
         history_index: None,
         saved_input: String::new(),
         split_ratio: saved.split_ratio,
@@ -479,7 +494,7 @@ fn build_single_tab(
                 })
                 .collect()
         } else {
-            shared_entries.to_vec()
+            params.shared_entries.to_vec()
         },
         pending_cmd: None,
         shell_integration: integration,

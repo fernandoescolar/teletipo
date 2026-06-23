@@ -116,10 +116,7 @@ pub fn apply_titlebar_color(window: &Window, [r, g, b, a]: [f32; 4]) {
 /// of the codebase can reference it unconditionally.
 #[derive(Default)]
 pub struct MacOSAccessibility {
-    /// Retained previous tree to diff against on the next `update_tree` call.
-    /// Only `CommandZone` nodes with new output are re-announced to avoid
-    /// flooding the screen reader.
-    #[allow(dead_code)]
+    #[cfg(target_os = "macos")]
     previous_zone_count: usize,
 }
 

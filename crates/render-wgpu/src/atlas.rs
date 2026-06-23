@@ -447,6 +447,35 @@ pub(crate) fn load_bold_font_bytes(db: &fontdb::Database, config: &FontConfig) -
     query_bold_monospace_bytes(db)
 }
 
+fn query_font_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
+    let query = fontdb::Query {
+        families: &[fontdb::Family::Name(family)],
+        ..fontdb::Query::default()
+    };
+    let id = db.query(&query)?;
+    db.with_face_data(id, |data, _| data.to_vec())
+}
+
+fn load_font_from_path(path: &str) -> Option<fontdue::Font> {
+    let bytes = std::fs::read(path).ok()?;
+    fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+}
+
+fn load_path_fallbacks<'a>(
+    candidates: &[(&'a str, &str)],
+    loaded_families: &mut std::collections::HashSet<&'a str>,
+    fonts: &mut Vec<fontdue::Font>,
+) {
+    for (family, path) in candidates {
+        if !loaded_families.contains(family)
+            && let Some(font) = load_font_from_path(path)
+        {
+            fonts.push(font);
+            loaded_families.insert(family);
+        }
+    }
+}
+
 /// Load all available Unicode fallback fonts in priority order.
 ///
 /// Multiple fonts are needed because no single system font covers every
@@ -457,22 +486,7 @@ pub(crate) fn load_bold_font_bytes(db: &fontdb::Database, config: &FontConfig) -
 ///   - "Zapf Dingbats" covers Dingbats (U+2700–U+27BF) including ❯ (U+276F)
 ///   - "Menlo" covers a broad range including many chars missing from symbol fonts
 ///   - "Arial Unicode MS" covers a very wide range as a catch-all
-#[allow(clippy::too_many_lines)]
 pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
-    fn query_bytes(db: &fontdb::Database, family: &str) -> Option<Vec<u8>> {
-        let query = fontdb::Query {
-            families: &[fontdb::Family::Name(family)],
-            ..fontdb::Query::default()
-        };
-        let id = db.query(&query)?;
-        db.with_face_data(id, |data, _| data.to_vec())
-    }
-
-    fn load_from_path(path: &str) -> Option<fontdue::Font> {
-        let bytes = std::fs::read(path).ok()?;
-        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
-    }
-
     let families: &[&str] = &[
         "Apple Symbols",    // macOS – broad symbol coverage (math, misc symbols)
         "Apple Braille",    // macOS – Braille Patterns (U+2800–U+28FF)
@@ -489,7 +503,7 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
     let mut fonts: Vec<fontdue::Font> = families
         .iter()
         .filter_map(|family| {
-            let bytes = query_bytes(db, family)?;
+            let bytes = query_font_bytes(db, family)?;
             let font =
                 fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
                     .ok()?;
@@ -502,41 +516,29 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
     // scan paths or naming differences. Only loaded if fontdb didn't already find
     // the family by name.
     #[cfg(target_os = "macos")]
-    {
-        let candidates = [
-            ("Zapf Dingbats", r"/System/Library/Fonts/ZapfDingbats.ttf"),
-            ("Menlo", r"/System/Library/Fonts/Menlo.ttc"),
-        ];
-        for (family, path) in candidates {
-            if !loaded_families.contains(family)
-                && let Some(font) = load_from_path(path)
-            {
-                fonts.push(font);
-                loaded_families.insert(family);
-            }
-        }
-    }
+    load_path_fallbacks(
+        &[
+            ("Zapf Dingbats", "/System/Library/Fonts/ZapfDingbats.ttf"),
+            ("Menlo", "/System/Library/Fonts/Menlo.ttc"),
+        ],
+        &mut loaded_families,
+        &mut fonts,
+    );
 
     #[cfg(target_os = "windows")]
-    {
-        let candidates = [
+    load_path_fallbacks(
+        &[
             ("Segoe UI Symbol", r"C:\Windows\Fonts\seguisym.ttf"),
             ("Arial Unicode MS", r"C:\Windows\Fonts\ARIALUNI.TTF"),
             ("Arial", r"C:\Windows\Fonts\arial.ttf"),
-        ];
-        for (family, path) in candidates {
-            if !loaded_families.contains(family)
-                && let Some(font) = load_from_path(path)
-            {
-                fonts.push(font);
-                loaded_families.insert(family);
-            }
-        }
-    }
+        ],
+        &mut loaded_families,
+        &mut fonts,
+    );
 
     #[cfg(target_os = "linux")]
-    {
-        let candidates = [
+    load_path_fallbacks(
+        &[
             (
                 "DejaVu Sans",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -559,30 +561,28 @@ pub(crate) fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue:
                 "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
             ),
             ("FreeSans", "/usr/share/fonts/freefont/FreeSans.ttf"),
-        ];
-        for (family, path) in candidates.iter() {
-            if !loaded_families.contains(family)
-                && let Some(font) = load_from_path(path)
-            {
-                fonts.push(font);
-                loaded_families.insert(family);
-            }
-        }
-    }
+        ],
+        &mut loaded_families,
+        &mut fonts,
+    );
 
     fonts
 }
 
 pub(crate) const TEXT_ATLAS_SIZE: u32 = 1024;
 
+/// Bundled mutable atlas-allocation state passed to the `pack_*` functions.
+pub(crate) struct AtlasAllocState<'a> {
+    pub queue: &'a wgpu::Queue,
+    pub texture: &'a wgpu::Texture,
+    pub alloc_x: &'a mut u32,
+    pub alloc_y: &'a mut u32,
+    pub row_h: &'a mut u32,
+}
+
 /// Rasterizes one glyph into the atlas and returns its cached descriptor.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn pack_glyph(
-    queue: &wgpu::Queue,
-    atlas_texture: &wgpu::Texture,
-    alloc_x: &mut u32,
-    alloc_y: &mut u32,
-    row_h: &mut u32,
+    alloc: &mut AtlasAllocState<'_>,
     metrics: &fontdue::Metrics,
     bitmap: &[u8],
     cell_h_px: f32,
@@ -592,25 +592,25 @@ pub(crate) fn pack_glyph(
     if gw == 0 || gh == 0 || bitmap.is_empty() {
         return CachedGlyph::default();
     }
-    if *alloc_x + gw + 1 > TEXT_ATLAS_SIZE {
-        *alloc_y += *row_h + 1;
-        *alloc_x = 0;
-        *row_h = 0;
+    if *alloc.alloc_x + gw + 1 > TEXT_ATLAS_SIZE {
+        *alloc.alloc_y += *alloc.row_h + 1;
+        *alloc.alloc_x = 0;
+        *alloc.row_h = 0;
     }
-    if *alloc_y + gh + 1 > TEXT_ATLAS_SIZE {
+    if *alloc.alloc_y + gh + 1 > TEXT_ATLAS_SIZE {
         tracing::warn!("glyph atlas full");
         return CachedGlyph::default();
     }
-    let dest_x = *alloc_x;
-    let dest_y = *alloc_y;
+    let dest_x = *alloc.alloc_x;
+    let dest_y = *alloc.alloc_y;
     // Convert coverage (1 byte/px) to RGBA8 (white with coverage in alpha).
     let rgba: Vec<u8> = bitmap
         .iter()
         .flat_map(|&cov| [255u8, 255, 255, cov])
         .collect();
-    queue.write_texture(
+    alloc.queue.write_texture(
         wgpu::ImageCopyTexture {
-            texture: atlas_texture,
+            texture: alloc.texture,
             mip_level: 0,
             origin: wgpu::Origin3d {
                 x: dest_x,
@@ -631,8 +631,8 @@ pub(crate) fn pack_glyph(
             depth_or_array_layers: 1,
         },
     );
-    *row_h = (*row_h).max(gh);
-    *alloc_x += gw + 1;
+    *alloc.row_h = (*alloc.row_h).max(gh);
+    *alloc.alloc_x += gw + 1;
     let af = TEXT_ATLAS_SIZE as f32;
     let u0 = dest_x as f32 / af;
     let v0 = dest_y as f32 / af;
@@ -657,13 +657,8 @@ pub(crate) fn pack_glyph(
 
 /// Writes a pre-decoded RGBA8 image (e.g. a colour emoji) into the atlas.
 /// `rgba_pixels` must be exactly `glyph_w * glyph_h * 4` bytes.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn pack_color_glyph(
-    queue: &wgpu::Queue,
-    atlas_texture: &wgpu::Texture,
-    alloc_x: &mut u32,
-    alloc_y: &mut u32,
-    row_h: &mut u32,
+    alloc: &mut AtlasAllocState<'_>,
     rgba_pixels: &[u8],
     glyph_w: u32,
     glyph_h: u32,
@@ -671,20 +666,20 @@ pub(crate) fn pack_color_glyph(
     if glyph_w == 0 || glyph_h == 0 || rgba_pixels.is_empty() {
         return CachedGlyph::default();
     }
-    if *alloc_x + glyph_w + 1 > TEXT_ATLAS_SIZE {
-        *alloc_y += *row_h + 1;
-        *alloc_x = 0;
-        *row_h = 0;
+    if *alloc.alloc_x + glyph_w + 1 > TEXT_ATLAS_SIZE {
+        *alloc.alloc_y += *alloc.row_h + 1;
+        *alloc.alloc_x = 0;
+        *alloc.row_h = 0;
     }
-    if *alloc_y + glyph_h + 1 > TEXT_ATLAS_SIZE {
+    if *alloc.alloc_y + glyph_h + 1 > TEXT_ATLAS_SIZE {
         tracing::warn!("glyph atlas full (colour glyph)");
         return CachedGlyph::default();
     }
-    let dest_x = *alloc_x;
-    let dest_y = *alloc_y;
-    queue.write_texture(
+    let dest_x = *alloc.alloc_x;
+    let dest_y = *alloc.alloc_y;
+    alloc.queue.write_texture(
         wgpu::ImageCopyTexture {
-            texture: atlas_texture,
+            texture: alloc.texture,
             mip_level: 0,
             origin: wgpu::Origin3d {
                 x: dest_x,
@@ -705,8 +700,8 @@ pub(crate) fn pack_color_glyph(
             depth_or_array_layers: 1,
         },
     );
-    *row_h = (*row_h).max(glyph_h);
-    *alloc_x += glyph_w + 1;
+    *alloc.row_h = (*alloc.row_h).max(glyph_h);
+    *alloc.alloc_x += glyph_w + 1;
     let af = TEXT_ATLAS_SIZE as f32;
     let u0 = dest_x as f32 / af;
     let v0 = dest_y as f32 / af;
@@ -786,13 +781,8 @@ pub(crate) fn load_emoji_font_bytes(db: Option<&fontdb::Database>) -> Option<Vec
 /// Extracts an emoji glyph from a colour font via the SBIX/CBDT raster image tables,
 /// decodes the embedded PNG/JPEG, scales it to `target_px × target_px`, and writes
 /// it into the atlas as RGBA8.  Returns `None` if the glyph cannot be found or decoded.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn pack_emoji_glyph(
-    queue: &wgpu::Queue,
-    atlas_texture: &wgpu::Texture,
-    alloc_x: &mut u32,
-    alloc_y: &mut u32,
-    row_h: &mut u32,
+    alloc: &mut AtlasAllocState<'_>,
     emoji_font_bytes: &[u8],
     ch: char,
     target_px: u32,
@@ -807,14 +797,5 @@ pub(crate) fn pack_emoji_glyph(
     let resized = img.resize(target_px, target_px, image::imageops::FilterType::Triangle);
     let rgba8 = resized.to_rgba8();
     let (w, h) = rgba8.dimensions();
-    Some(pack_color_glyph(
-        queue,
-        atlas_texture,
-        alloc_x,
-        alloc_y,
-        row_h,
-        rgba8.as_raw(),
-        w,
-        h,
-    ))
+    Some(pack_color_glyph(alloc, rgba8.as_raw(), w, h))
 }
