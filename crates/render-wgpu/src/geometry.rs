@@ -1132,7 +1132,106 @@ pub(crate) fn build_command_palette_bg_verts(
 /// Returns background geometry for the settings overlay only.
 /// Must be drawn **after** all terminal/editor text so the panel sits on top.
 /// Returns an empty `Vec` when there is no active overlay.
-#[allow(clippy::too_many_lines)] // settings overlay layout: long flat row-list
+fn color_add(c: [f32; 4], d: f32) -> [f32; 4] {
+    [(c[0] + d).clamp(0.0, 1.0), (c[1] + d).clamp(0.0, 1.0), (c[2] + d).clamp(0.0, 1.0), c[3]]
+}
+
+fn color_mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t, a[3]+(b[3]-a[3])*t]
+}
+
+struct SettingsOvGeom {
+    x0: f32, x1: f32, px_x: f32, px_y: f32,
+    panel_x0: f32, panel_y0: f32, panel_w: f32,
+    title_h: f32, row_h: f32, edit_h: f32,
+    n_items: f32,
+}
+
+struct SettingsOvColors {
+    dim: [f32; 4], bg: [f32; 4], border: [f32; 4], title: [f32; 4],
+    section: [f32; 4], select: [f32; 4], edit: [f32; 4],
+}
+
+fn append_ov_row_highlights(
+    g: &SettingsOvGeom,
+    c: &SettingsOvColors,
+    overlay: &crate::types::SettingsOverlay,
+    verts: &mut Vec<f32>,
+) {
+    let mut editable_idx = 0usize;
+    for (i, item) in overlay.items.iter().enumerate() {
+        let item_y_top_px = g.panel_y0 + g.title_h + i as f32 * g.row_h;
+        let iy_top = 1.0 - item_y_top_px * g.px_y;
+        let iy_bot = 1.0 - (item_y_top_px + g.row_h) * g.px_y;
+        if item.is_header {
+            verts.extend_from_slice(&quad_verts(g.x0, iy_bot, g.x1, iy_top, c.section));
+        } else {
+            if editable_idx == overlay.cursor {
+                let color = if overlay.editing.is_some() { c.edit } else { c.select };
+                verts.extend_from_slice(&quad_verts(g.x0, iy_bot, g.x1, iy_top, color));
+            }
+            editable_idx += 1;
+        }
+    }
+    if overlay.editing.is_some() {
+        let edit_y_top_px = g.panel_y0 + g.title_h + g.n_items * g.row_h;
+        let ey_top = 1.0 - edit_y_top_px * g.px_y;
+        let ey_bot = 1.0 - (edit_y_top_px + g.edit_h) * g.px_y;
+        verts.extend_from_slice(&quad_verts(g.x0, ey_bot, g.x1, ey_top, c.edit));
+    }
+}
+
+fn append_ov_search_dropdown(
+    g: &SettingsOvGeom,
+    overlay: &crate::types::SettingsOverlay,
+    cell_w_px: f32,
+    theme: &crate::types::ColorTheme,
+    verts: &mut Vec<f32>,
+) {
+    const SEARCH_MAX_VISIBLE: usize = 8;
+    const SEARCH_BG: [f32; 4] = [0.15, 0.19, 0.30, 1.0];
+    const SEARCH_BORDER: [f32; 4] = [0.35, 0.50, 0.82, 1.0];
+    const SEARCH_SEL: [f32; 4] = [0.22, 0.34, 0.62, 1.0];
+
+    let focused_flat = {
+        let mut ec = 0usize;
+        let mut fi = 0usize;
+        for (i, item) in overlay.items.iter().enumerate() {
+            if !item.is_header {
+                if ec == overlay.cursor { fi = i; break; }
+                ec += 1;
+            }
+        }
+        fi
+    };
+    let n_visible = overlay.search_matches.len()
+        .saturating_sub(overlay.search_scroll_offset)
+        .clamp(1, SEARCH_MAX_VISIBLE);
+    let drop_h = n_visible as f32 * g.row_h;
+    let drop_top_px = g.panel_y0 + g.title_h + (focused_flat + 1) as f32 * g.row_h;
+    let dy_top = 1.0 - drop_top_px * g.px_y;
+    let dy_bot = 1.0 - (drop_top_px + drop_h) * g.px_y;
+    verts.extend_from_slice(&quad_verts(g.x0 - g.px_x, dy_bot - g.px_y, g.x1 + g.px_x, dy_top + g.px_y, SEARCH_BORDER));
+    verts.extend_from_slice(&quad_verts(g.x0, dy_bot, g.x1, dy_top, SEARCH_BG));
+    let vis_sel = overlay.search_selected.saturating_sub(overlay.search_scroll_offset);
+    if !overlay.search_matches.is_empty() && vis_sel < n_visible {
+        let sel_top_px = drop_top_px + vis_sel as f32 * g.row_h;
+        verts.extend_from_slice(&quad_verts(g.x0, 1.0 - (sel_top_px + g.row_h) * g.px_y, g.x1, 1.0 - sel_top_px * g.px_y, SEARCH_SEL));
+    }
+    let total = overlay.search_matches.len();
+    if total > SEARCH_MAX_VISIBLE {
+        let sb_w_px = (cell_w_px * 0.35).max(3.0);
+        let sb_x0 = (g.panel_x0 + g.panel_w - sb_w_px).max(g.panel_x0) * g.px_x - 1.0;
+        let sb_x1 = sb_x0 + sb_w_px * g.px_x;
+        let track_c = color_add(color_mix(theme.terminal_bg, theme.separator_focused, 0.15), 0.12);
+        verts.extend_from_slice(&quad_verts(sb_x0, dy_bot, sb_x1, dy_top, track_c));
+        let thumb_h_px = drop_h * (n_visible as f32 / total as f32);
+        let scroll_frac = overlay.search_scroll_offset as f32 / (total - n_visible) as f32;
+        let thumb_t_px = drop_top_px + scroll_frac * (drop_h - thumb_h_px);
+        verts.extend_from_slice(&quad_verts(sb_x0, 1.0 - (thumb_t_px + thumb_h_px) * g.px_y, sb_x1, 1.0 - thumb_t_px * g.px_y, SEARCH_BORDER));
+    }
+}
+
 pub(crate) fn build_settings_overlay_bg_verts(
     size: PhysicalSize<u32>,
     snapshot: &RenderSnapshot,
@@ -1141,205 +1240,42 @@ pub(crate) fn build_settings_overlay_bg_verts(
 ) -> Vec<f32> {
     let mut verts = Vec::new();
     let ctx = LayoutContext::new(size, snapshot, cell_w_px, cell_h_px);
-    let Some(ref overlay) = snapshot.settings_overlay else {
-        return verts;
-    };
-    if !ctx.has_grid() {
-        return verts;
-    }
-
-    // Settings overlay colours derived from the active theme.
-    let add_c = |a: [f32; 4], d: f32| -> [f32; 4] {
-        [
-            (a[0] + d).clamp(0.0, 1.0),
-            (a[1] + d).clamp(0.0, 1.0),
-            (a[2] + d).clamp(0.0, 1.0),
-            a[3],
-        ]
-    };
-    let mix_c = |a: [f32; 4], b: [f32; 4], t: f32| -> [f32; 4] {
-        [
-            a[0] + (b[0] - a[0]) * t,
-            a[1] + (b[1] - a[1]) * t,
-            a[2] + (b[2] - a[2]) * t,
-            a[3] + (b[3] - a[3]) * t,
-        ]
-    };
+    let Some(ref overlay) = snapshot.settings_overlay else { return verts; };
+    if !ctx.has_grid() { return verts; }
     let theme = &snapshot.theme;
-    let dim = [0.0_f32, 0.0, 0.0, 0.68];
-    let ov_bg = add_c(theme.terminal_bg, 0.01);
-    let ov_border = theme.separator_focused;
-    let ov_title = add_c(theme.terminal_bg, -0.01);
-    let ov_section = add_c(theme.terminal_bg, 0.04);
-    let ov_select = mix_c(
-        add_c(theme.terminal_bg, 0.08),
-        theme.separator_focused,
-        0.20,
-    );
-    let ov_edit = mix_c(
-        add_c(theme.terminal_bg, 0.08),
-        theme.separator_focused,
-        0.28,
-    );
-
-    let px_x = ctx.px_x();
-    let px_y = ctx.px_y();
-    let win_w = ctx.window_width();
-    let win_h = ctx.window_height();
-
-    // Full-screen dim.
-    verts.extend_from_slice(&quad_verts(-1.0, -1.0, 1.0, 1.0, dim));
-
-    let title_h = cell_h_px * 2.2;
-    let row_h = cell_h_px * 1.7;
-    let footer_h = cell_h_px * 1.9;
-    let edit_h = if overlay.editing.is_some() {
-        cell_h_px * 1.8
-    } else {
-        0.0
+    let colors = SettingsOvColors {
+        dim:     [0.0, 0.0, 0.0, 0.68],
+        bg:      color_add(theme.terminal_bg, 0.01),
+        border:  theme.separator_focused,
+        title:   color_add(theme.terminal_bg, -0.01),
+        section: color_add(theme.terminal_bg, 0.04),
+        select:  color_mix(color_add(theme.terminal_bg, 0.08), theme.separator_focused, 0.20),
+        edit:    color_mix(color_add(theme.terminal_bg, 0.08), theme.separator_focused, 0.28),
     };
+    let (px_x, px_y) = (ctx.px_x(), ctx.px_y());
+    let (win_w, win_h) = (ctx.window_width(), ctx.window_height());
+    let title_h = cell_h_px * 2.2;
+    let row_h   = cell_h_px * 1.7;
+    let footer_h = cell_h_px * 1.9;
+    let edit_h  = if overlay.editing.is_some() { cell_h_px * 1.8 } else { 0.0 };
     let n_items = overlay.items.len() as f32;
     let panel_h = title_h + n_items * row_h + edit_h + footer_h;
     let panel_w = (cell_w_px * 72.0).min(win_w * 0.92).max(cell_w_px * 40.0);
-
     let panel_x0 = (win_w - panel_w) / 2.0;
     let panel_y0 = (win_h - panel_h) / 2.0;
-
     let x0 = panel_x0 * px_x - 1.0;
     let x1 = (panel_x0 + panel_w) * px_x - 1.0;
     let y_top = 1.0 - panel_y0 * px_y;
     let y_bot = 1.0 - (panel_y0 + panel_h) * px_y;
-
-    // 2-pixel border.
-    verts.extend_from_slice(&quad_verts(
-        x0 - 2.0 * px_x,
-        y_bot - 2.0 * px_y,
-        x1 + 2.0 * px_x,
-        y_top + 2.0 * px_y,
-        ov_border,
-    ));
-    // Main background.
-    verts.extend_from_slice(&quad_verts(x0, y_bot, x1, y_top, ov_bg));
-    // Title bar.
-    let title_top_ndc = y_top;
-    let title_bot_ndc = 1.0 - (panel_y0 + title_h) * px_y;
-    verts.extend_from_slice(&quad_verts(x0, title_bot_ndc, x1, title_top_ndc, ov_title));
-
-    // Per-item row highlights.
-    let mut editable_idx = 0usize;
-    for (i, item) in overlay.items.iter().enumerate() {
-        let item_y_top_px = panel_y0 + title_h + i as f32 * row_h;
-        let iy_top = 1.0 - item_y_top_px * px_y;
-        let iy_bot = 1.0 - (item_y_top_px + row_h) * px_y;
-        if item.is_header {
-            verts.extend_from_slice(&quad_verts(x0, iy_bot, x1, iy_top, ov_section));
-        } else {
-            if editable_idx == overlay.cursor {
-                let color = if overlay.editing.is_some() {
-                    ov_edit
-                } else {
-                    ov_select
-                };
-                verts.extend_from_slice(&quad_verts(x0, iy_bot, x1, iy_top, color));
-            }
-            editable_idx += 1;
-        }
-    }
-
-    // Edit-mode input row.
-    if overlay.editing.is_some() {
-        let edit_y_top_px = panel_y0 + title_h + n_items * row_h;
-        let ey_top = 1.0 - edit_y_top_px * px_y;
-        let ey_bot = 1.0 - (edit_y_top_px + edit_h) * px_y;
-        verts.extend_from_slice(&quad_verts(x0, ey_bot, x1, ey_top, ov_edit));
-    }
-
-    // Search dropdown: a floating list below the focused item when search mode is active.
+    let geom = SettingsOvGeom { x0, x1, px_x, px_y, panel_x0, panel_y0, panel_w, title_h, row_h, edit_h, n_items };
+    verts.extend_from_slice(&quad_verts(-1.0, -1.0, 1.0, 1.0, colors.dim));
+    verts.extend_from_slice(&quad_verts(x0 - 2.0*px_x, y_bot - 2.0*px_y, x1 + 2.0*px_x, y_top + 2.0*px_y, colors.border));
+    verts.extend_from_slice(&quad_verts(x0, y_bot, x1, y_top, colors.bg));
+    verts.extend_from_slice(&quad_verts(x0, 1.0 - (panel_y0 + title_h) * px_y, x1, y_top, colors.title));
+    append_ov_row_highlights(&geom, &colors, overlay, &mut verts);
     if overlay.search_buf.is_some() {
-        const SEARCH_MAX_VISIBLE: usize = 8;
-        const SEARCH_BG: [f32; 4] = [0.15, 0.19, 0.30, 1.0]; // fully opaque, clearly distinct
-        const SEARCH_BORDER: [f32; 4] = [0.35, 0.50, 0.82, 1.0];
-        const SEARCH_SEL: [f32; 4] = [0.22, 0.34, 0.62, 1.0];
-
-        // Find the flat item index of the focused editable field.
-        let focused_flat = {
-            let mut ec = 0usize;
-            let mut fi = 0usize;
-            for (i, item) in overlay.items.iter().enumerate() {
-                if !item.is_header {
-                    if ec == overlay.cursor {
-                        fi = i;
-                        break;
-                    }
-                    ec += 1;
-                }
-            }
-            fi
-        };
-
-        // Show at least 1 row even when there are no matches (for "(no results)" hint).
-        let n_visible = overlay
-            .search_matches
-            .len()
-            .saturating_sub(overlay.search_scroll_offset)
-            .clamp(1, SEARCH_MAX_VISIBLE);
-        {
-            let drop_row_h = row_h;
-            let drop_h = n_visible as f32 * drop_row_h;
-            // Position dropdown flush below the focused item.
-            let drop_top_px = panel_y0 + title_h + (focused_flat + 1) as f32 * row_h;
-
-            let dx0 = x0;
-            let dx1 = x1;
-            let dy_top = 1.0 - drop_top_px * px_y;
-            let dy_bot = 1.0 - (drop_top_px + drop_h) * px_y;
-
-            // Border.
-            verts.extend_from_slice(&quad_verts(
-                dx0 - px_x,
-                dy_bot - px_y,
-                dx1 + px_x,
-                dy_top + px_y,
-                SEARCH_BORDER,
-            ));
-            // Background.
-            verts.extend_from_slice(&quad_verts(dx0, dy_bot, dx1, dy_top, SEARCH_BG));
-
-            // Highlight selected row (only when there are actual matches).
-            let vis_sel = overlay
-                .search_selected
-                .saturating_sub(overlay.search_scroll_offset);
-            if !overlay.search_matches.is_empty() && vis_sel < n_visible {
-                let sel_top_px = drop_top_px + vis_sel as f32 * drop_row_h;
-                let sy_top = 1.0 - sel_top_px * px_y;
-                let sy_bot = 1.0 - (sel_top_px + drop_row_h) * px_y;
-                verts.extend_from_slice(&quad_verts(dx0, sy_bot, dx1, sy_top, SEARCH_SEL));
-            }
-
-            // Scrollbar (when there are more real results than the visible window).
-            let total = overlay.search_matches.len();
-            if total > SEARCH_MAX_VISIBLE {
-                let sb_w_px = (cell_w_px * 0.35).max(3.0);
-                let sb_x0_px = (panel_x0 + panel_w - sb_w_px).max(panel_x0);
-                let sb_x0 = sb_x0_px * px_x - 1.0;
-                let sb_x1 = (sb_x0_px + sb_w_px) * px_x - 1.0;
-                let track_c = add_c(
-                    mix_c(theme.terminal_bg, theme.separator_focused, 0.15),
-                    0.12,
-                );
-                verts.extend_from_slice(&quad_verts(sb_x0, dy_bot, sb_x1, dy_top, track_c));
-                let thumb_frac = n_visible as f32 / total as f32;
-                let thumb_h_px = drop_h * thumb_frac;
-                let max_scroll = (total - n_visible) as f32;
-                let scroll_frac = overlay.search_scroll_offset as f32 / max_scroll;
-                let thumb_t_px = drop_top_px + scroll_frac * (drop_h - thumb_h_px);
-                let ty_top = 1.0 - thumb_t_px * px_y;
-                let ty_bot = 1.0 - (thumb_t_px + thumb_h_px) * px_y;
-                verts.extend_from_slice(&quad_verts(sb_x0, ty_bot, sb_x1, ty_top, SEARCH_BORDER));
-            }
-        }
+        append_ov_search_dropdown(&geom, overlay, cell_w_px, theme, &mut verts);
     }
-
     verts
 }
 
