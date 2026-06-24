@@ -265,6 +265,12 @@ impl Parser {
             b'n' if !has_private_prefix && params.first().copied() == Some(6) => {
                 actions.push(Action::DeviceStatusReport);
             }
+            b'c' if !has_private_prefix && !has_equal_prefix => {
+                // Primary DA query: CSI c or CSI 0 c.
+                if params.is_empty() || params.first().copied() == Some(0) {
+                    actions.push(Action::PrimaryDeviceAttributes);
+                }
+            }
             b'q' if !has_private_prefix => {
                 // DECSCUSR: \x1b[N q — the space before 'q' is an intermediate byte.
                 // Strip all intermediate bytes (0x20-0x2F) so parse_params sees just the digit.
@@ -697,6 +703,19 @@ mod tests {
         let mut parser = Parser::new();
         let actions = parser.advance(b"\x1b[6n");
         assert_eq!(actions, vec![Action::DeviceStatusReport]);
+    }
+
+    #[test]
+    fn parses_primary_device_attributes_query() {
+        let mut parser = Parser::new();
+        let actions = parser.advance(b"\x1b[c\x1b[0c");
+        assert_eq!(
+            actions,
+            vec![
+                Action::PrimaryDeviceAttributes,
+                Action::PrimaryDeviceAttributes,
+            ]
+        );
     }
 
     #[test]

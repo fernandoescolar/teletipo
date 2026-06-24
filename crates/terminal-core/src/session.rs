@@ -499,6 +499,10 @@ where
                     let col = self.screen.cursor_col() + 1;
                     self.pending_responses.push(format!("\x1b[{row};{col}R"));
                 }
+                Action::PrimaryDeviceAttributes => {
+                    // Minimal VT100-compatible DA1 response used by modern terminals.
+                    self.pending_responses.push("\x1b[?1;2c".to_string());
+                }
                 Action::SetCursorShape(n) => self.cursor_shape = n,
                 Action::KittyKeyboardPush(flags) => {
                     self.kitty_keyboard_flags.push(flags);
@@ -986,6 +990,15 @@ mod tests {
         let responses = session.drain_pending_responses();
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0], "\x1b[3;5R");
+    }
+
+    #[test]
+    fn primary_da_query_returns_terminal_identity() {
+        let mut session = make_session(5, 20);
+        session.feed(b"\x1b[c");
+        let responses = session.drain_pending_responses();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0], "\x1b[?1;2c");
     }
 
     #[test]

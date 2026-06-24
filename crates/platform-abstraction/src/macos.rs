@@ -116,7 +116,6 @@ pub fn apply_titlebar_color(window: &Window, [r, g, b, a]: [f32; 4]) {
 /// of the codebase can reference it unconditionally.
 #[derive(Default)]
 pub struct MacOSAccessibility {
-    #[cfg(target_os = "macos")]
     previous_zone_count: usize,
 }
 
