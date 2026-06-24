@@ -265,11 +265,12 @@ impl Parser {
             b'n' if !has_private_prefix && params.first().copied() == Some(6) => {
                 actions.push(Action::DeviceStatusReport);
             }
-            b'c' if !has_private_prefix && !has_equal_prefix => {
+            b'c' if !has_private_prefix
+                && !has_equal_prefix
+                && (params.is_empty() || params.first().copied() == Some(0)) =>
+            {
                 // Primary DA query: CSI c or CSI 0 c.
-                if params.is_empty() || params.first().copied() == Some(0) {
-                    actions.push(Action::PrimaryDeviceAttributes);
-                }
+                actions.push(Action::PrimaryDeviceAttributes);
             }
             b'q' if !has_private_prefix => {
                 // DECSCUSR: \x1b[N q — the space before 'q' is an intermediate byte.
