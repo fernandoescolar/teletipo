@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use clap::Parser;
 use platform_abstraction::default_shell;
-use render_wgpu::{FontConfig, RenderConfig};
+use render_glow::{FontConfig, RenderConfig};
 
 use crate::launch::{build_initial_state, load_session, save_session};
 use crate::runtime::EventCtx;
@@ -84,7 +84,7 @@ pub fn run(
             let event_ctx_for_frame = event_ctx.clone();
             let event_ctx_for_events = event_ctx.clone();
             let event_ctx_for_window = event_ctx;
-            if let Err(err) = render_wgpu::run_gpu_window_live_with_events_and_window(
+            if let Err(err) = render_glow::run_gpu_window_live_with_events_and_window(
                 move || event_ctx_for_frame.build_snapshot(),
                 move |event| event_ctx_for_events.handle_event(event),
                 move |window| event_ctx_for_window.install_window(window),

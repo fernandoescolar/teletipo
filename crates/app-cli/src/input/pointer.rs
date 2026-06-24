@@ -5,7 +5,7 @@ use crate::coords::{
 };
 use crate::launch::execute_context_menu_item;
 use crate::search;
-use render_wgpu::{AppWindowEvent, SCROLLBAR_W_PX};
+use render_glow::{AppWindowEvent, SCROLLBAR_W_PX};
 use std::time::Instant;
 use winit::event::{ElementState, MouseButton};
 

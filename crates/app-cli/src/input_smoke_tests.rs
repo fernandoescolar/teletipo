@@ -3,7 +3,7 @@
 //! spawning a PTY or opening a window.
 
 use app_orchestrator::App;
-use render_wgpu::AppWindowEvent;
+use render_glow::AppWindowEvent;
 
 use crate::config;
 use crate::input;

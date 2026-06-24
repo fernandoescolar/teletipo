@@ -1,7 +1,7 @@
 use crate::config::{SETTINGS_FIELDS, save_config};
 use crate::consts::SEARCH_MAX_VISIBLE;
 use crate::runtime::GpuRuntimeState;
-use render_wgpu::{SettingsItem, SettingsOverlay};
+use render_glow::{SettingsItem, SettingsOverlay};
 use std::path::PathBuf;
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};

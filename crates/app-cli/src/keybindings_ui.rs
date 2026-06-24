@@ -1,6 +1,6 @@
 use crate::config::{KeyBinding, save_config};
 use crate::runtime::GpuRuntimeState;
-use render_wgpu::{KeybindingRow, KeybindingsOverlay};
+use render_glow::{KeybindingRow, KeybindingsOverlay};
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};
 

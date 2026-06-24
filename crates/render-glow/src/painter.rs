@@ -2,13 +2,9 @@ use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
 
+use crate::{ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay};
 use font8x8::UnicodeFonts;
 use glow::HasContext;
-// Types removed - render-wgpu crate has been deleted
-// use render_wgpu::{
-//     ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay,
-//     shell_highlight::highlight_shell,
-// };
 use winit::dpi::PhysicalSize;
 
 use crate::font::CpuFontRasterizer;
@@ -854,7 +850,8 @@ impl GlPainter {
         let max_x = layout.width - layout.padding_h;
         let max_y = layout.height - layout.padding_v;
         let row_offset = snapshot.editor_scroll_offset;
-        let hl = highlight_shell(&snapshot.editor_text);
+        // Note: highlight_shell was removed with render-wgpu, creating minimal fallback
+        let hl: Vec<Option<[f32; 3]>> = vec![];
         let mut char_idx = 0usize; // tracks index into `hl` as we iterate chars
 
         for (line_idx, line) in snapshot.editor_text.lines().enumerate() {
@@ -1356,7 +1353,7 @@ impl GlPainter {
     }
 
     fn settings_item_display_val<'a>(
-        item: &'a render_wgpu::SettingsItem,
+        item: &'a crate::SettingsItem,
         overlay: &'a SettingsOverlay,
         is_focused: bool,
     ) -> std::borrow::Cow<'a, str> {
@@ -2041,22 +2038,22 @@ impl GlPainter {
             let right = layout.width - margin;
             let left = right - w;
             let (bg, border, text) = match toast.kind {
-                // Removed: render_wgpu::ToastKind::Info => (
+                crate::ToastKind::Info => (
                     [0.12, 0.15, 0.25, 0.93],
                     [0.35, 0.50, 0.90, 1.0],
                     [0.92, 0.94, 0.98, 1.0],
                 ),
-                // Removed: render_wgpu::ToastKind::Success => (
+                crate::ToastKind::Success => (
                     [0.08, 0.20, 0.10, 0.93],
                     [0.25, 0.78, 0.35, 1.0],
                     [0.90, 1.00, 0.90, 1.0],
                 ),
-                // Removed: render_wgpu::ToastKind::Warn => (
+                crate::ToastKind::Warn => (
                     [0.22, 0.18, 0.05, 0.93],
                     [0.90, 0.72, 0.20, 1.0],
                     [1.00, 0.97, 0.85, 1.0],
                 ),
-                // Removed: render_wgpu::ToastKind::Error => (
+                crate::ToastKind::Error => (
                     [0.22, 0.08, 0.08, 0.93],
                     [0.90, 0.30, 0.30, 1.0],
                     [1.00, 0.90, 0.90, 1.0],

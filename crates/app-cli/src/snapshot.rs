@@ -7,7 +7,7 @@ use crate::coords::{
 };
 use crate::settings::build_settings_overlay;
 use crate::theme;
-use render_wgpu::{
+use render_glow::{
     ColorTheme, CommandPalette, ContextMenu, DamageRegion, RenderCell, RenderRow, RenderSnapshot,
     SearchPanel, SuggestionDropdown, TerminalLink, Toast, ToastKind,
 };

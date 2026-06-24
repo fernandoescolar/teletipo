@@ -164,7 +164,7 @@ impl EventCtx {
         Self { state }
     }
 
-    pub(crate) fn build_snapshot(&self) -> render_wgpu::RenderSnapshot {
+    pub(crate) fn build_snapshot(&self) -> render_glow::RenderSnapshot {
         let frame_start = Instant::now();
         let mut state = self.state.borrow_mut();
         let snapshot = snapshot::build_snapshot(&mut state);
@@ -172,7 +172,7 @@ impl EventCtx {
         snapshot
     }
 
-    pub(crate) fn handle_event(&self, event: render_wgpu::AppWindowEvent) {
+    pub(crate) fn handle_event(&self, event: render_glow::AppWindowEvent) {
         let mut state = self.state.borrow_mut();
         input::handle_event(&mut state, event);
     }
