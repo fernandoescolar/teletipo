@@ -1133,23 +1133,45 @@ pub(crate) fn build_command_palette_bg_verts(
 /// Must be drawn **after** all terminal/editor text so the panel sits on top.
 /// Returns an empty `Vec` when there is no active overlay.
 fn color_add(c: [f32; 4], d: f32) -> [f32; 4] {
-    [(c[0] + d).clamp(0.0, 1.0), (c[1] + d).clamp(0.0, 1.0), (c[2] + d).clamp(0.0, 1.0), c[3]]
+    [
+        (c[0] + d).clamp(0.0, 1.0),
+        (c[1] + d).clamp(0.0, 1.0),
+        (c[2] + d).clamp(0.0, 1.0),
+        c[3],
+    ]
 }
 
 fn color_mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
-    [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t, a[3]+(b[3]-a[3])*t]
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    ]
 }
 
 struct SettingsOvGeom {
-    x0: f32, x1: f32, px_x: f32, px_y: f32,
-    panel_x0: f32, panel_y0: f32, panel_w: f32,
-    title_h: f32, row_h: f32, edit_h: f32,
+    x0: f32,
+    x1: f32,
+    px_x: f32,
+    px_y: f32,
+    panel_x0: f32,
+    panel_y0: f32,
+    panel_w: f32,
+    title_h: f32,
+    row_h: f32,
+    edit_h: f32,
     n_items: f32,
 }
 
 struct SettingsOvColors {
-    dim: [f32; 4], bg: [f32; 4], border: [f32; 4], title: [f32; 4],
-    section: [f32; 4], select: [f32; 4], edit: [f32; 4],
+    dim: [f32; 4],
+    bg: [f32; 4],
+    border: [f32; 4],
+    title: [f32; 4],
+    section: [f32; 4],
+    select: [f32; 4],
+    edit: [f32; 4],
 }
 
 fn append_ov_row_highlights(
@@ -1167,7 +1189,11 @@ fn append_ov_row_highlights(
             verts.extend_from_slice(&quad_verts(g.x0, iy_bot, g.x1, iy_top, c.section));
         } else {
             if editable_idx == overlay.cursor {
-                let color = if overlay.editing.is_some() { c.edit } else { c.select };
+                let color = if overlay.editing.is_some() {
+                    c.edit
+                } else {
+                    c.select
+                };
                 verts.extend_from_slice(&quad_verts(g.x0, iy_bot, g.x1, iy_top, color));
             }
             editable_idx += 1;
@@ -1198,37 +1224,65 @@ fn append_ov_search_dropdown(
         let mut fi = 0usize;
         for (i, item) in overlay.items.iter().enumerate() {
             if !item.is_header {
-                if ec == overlay.cursor { fi = i; break; }
+                if ec == overlay.cursor {
+                    fi = i;
+                    break;
+                }
                 ec += 1;
             }
         }
         fi
     };
-    let n_visible = overlay.search_matches.len()
+    let n_visible = overlay
+        .search_matches
+        .len()
         .saturating_sub(overlay.search_scroll_offset)
         .clamp(1, SEARCH_MAX_VISIBLE);
     let drop_h = n_visible as f32 * g.row_h;
     let drop_top_px = g.panel_y0 + g.title_h + (focused_flat + 1) as f32 * g.row_h;
     let dy_top = 1.0 - drop_top_px * g.px_y;
     let dy_bot = 1.0 - (drop_top_px + drop_h) * g.px_y;
-    verts.extend_from_slice(&quad_verts(g.x0 - g.px_x, dy_bot - g.px_y, g.x1 + g.px_x, dy_top + g.px_y, SEARCH_BORDER));
+    verts.extend_from_slice(&quad_verts(
+        g.x0 - g.px_x,
+        dy_bot - g.px_y,
+        g.x1 + g.px_x,
+        dy_top + g.px_y,
+        SEARCH_BORDER,
+    ));
     verts.extend_from_slice(&quad_verts(g.x0, dy_bot, g.x1, dy_top, SEARCH_BG));
-    let vis_sel = overlay.search_selected.saturating_sub(overlay.search_scroll_offset);
+    let vis_sel = overlay
+        .search_selected
+        .saturating_sub(overlay.search_scroll_offset);
     if !overlay.search_matches.is_empty() && vis_sel < n_visible {
         let sel_top_px = drop_top_px + vis_sel as f32 * g.row_h;
-        verts.extend_from_slice(&quad_verts(g.x0, 1.0 - (sel_top_px + g.row_h) * g.px_y, g.x1, 1.0 - sel_top_px * g.px_y, SEARCH_SEL));
+        verts.extend_from_slice(&quad_verts(
+            g.x0,
+            1.0 - (sel_top_px + g.row_h) * g.px_y,
+            g.x1,
+            1.0 - sel_top_px * g.px_y,
+            SEARCH_SEL,
+        ));
     }
     let total = overlay.search_matches.len();
     if total > SEARCH_MAX_VISIBLE {
         let sb_w_px = (cell_w_px * 0.35).max(3.0);
         let sb_x0 = (g.panel_x0 + g.panel_w - sb_w_px).max(g.panel_x0) * g.px_x - 1.0;
         let sb_x1 = sb_x0 + sb_w_px * g.px_x;
-        let track_c = color_add(color_mix(theme.terminal_bg, theme.separator_focused, 0.15), 0.12);
+        let track_c = color_add(
+            color_mix(theme.terminal_bg, theme.separator_focused, 0.15),
+            0.12,
+        );
         verts.extend_from_slice(&quad_verts(sb_x0, dy_bot, sb_x1, dy_top, track_c));
         let thumb_h_px = drop_h * (n_visible as f32 / total as f32);
         let scroll_frac = overlay.search_scroll_offset as f32 / (total - n_visible) as f32;
         let thumb_t_px = drop_top_px + scroll_frac * (drop_h - thumb_h_px);
-        verts.extend_from_slice(&quad_verts(sb_x0, 1.0 - (thumb_t_px + thumb_h_px) * g.px_y, sb_x1, 1.0 - thumb_t_px * g.px_y, SEARCH_BORDER));
+        verts.extend_from_slice(&quad_verts(
+            sb_x0,
+            1.0 - (thumb_t_px + thumb_h_px) * g.px_y,
+            sb_x1,
+            1.0 - thumb_t_px * g.px_y,
+            SEARCH_BORDER,
+        ));
     }
 }
 
@@ -1240,24 +1294,40 @@ pub(crate) fn build_settings_overlay_bg_verts(
 ) -> Vec<f32> {
     let mut verts = Vec::new();
     let ctx = LayoutContext::new(size, snapshot, cell_w_px, cell_h_px);
-    let Some(ref overlay) = snapshot.settings_overlay else { return verts; };
-    if !ctx.has_grid() { return verts; }
+    let Some(ref overlay) = snapshot.settings_overlay else {
+        return verts;
+    };
+    if !ctx.has_grid() {
+        return verts;
+    }
     let theme = &snapshot.theme;
     let colors = SettingsOvColors {
-        dim:     [0.0, 0.0, 0.0, 0.68],
-        bg:      color_add(theme.terminal_bg, 0.01),
-        border:  theme.separator_focused,
-        title:   color_add(theme.terminal_bg, -0.01),
+        dim: [0.0, 0.0, 0.0, 0.68],
+        bg: color_add(theme.terminal_bg, 0.01),
+        border: theme.separator_focused,
+        title: color_add(theme.terminal_bg, -0.01),
         section: color_add(theme.terminal_bg, 0.04),
-        select:  color_mix(color_add(theme.terminal_bg, 0.08), theme.separator_focused, 0.20),
-        edit:    color_mix(color_add(theme.terminal_bg, 0.08), theme.separator_focused, 0.28),
+        select: color_mix(
+            color_add(theme.terminal_bg, 0.08),
+            theme.separator_focused,
+            0.20,
+        ),
+        edit: color_mix(
+            color_add(theme.terminal_bg, 0.08),
+            theme.separator_focused,
+            0.28,
+        ),
     };
     let (px_x, px_y) = (ctx.px_x(), ctx.px_y());
     let (win_w, win_h) = (ctx.window_width(), ctx.window_height());
     let title_h = cell_h_px * 2.2;
-    let row_h   = cell_h_px * 1.7;
+    let row_h = cell_h_px * 1.7;
     let footer_h = cell_h_px * 1.9;
-    let edit_h  = if overlay.editing.is_some() { cell_h_px * 1.8 } else { 0.0 };
+    let edit_h = if overlay.editing.is_some() {
+        cell_h_px * 1.8
+    } else {
+        0.0
+    };
     let n_items = overlay.items.len() as f32;
     let panel_h = title_h + n_items * row_h + edit_h + footer_h;
     let panel_w = (cell_w_px * 72.0).min(win_w * 0.92).max(cell_w_px * 40.0);
@@ -1267,11 +1337,35 @@ pub(crate) fn build_settings_overlay_bg_verts(
     let x1 = (panel_x0 + panel_w) * px_x - 1.0;
     let y_top = 1.0 - panel_y0 * px_y;
     let y_bot = 1.0 - (panel_y0 + panel_h) * px_y;
-    let geom = SettingsOvGeom { x0, x1, px_x, px_y, panel_x0, panel_y0, panel_w, title_h, row_h, edit_h, n_items };
+    let geom = SettingsOvGeom {
+        x0,
+        x1,
+        px_x,
+        px_y,
+        panel_x0,
+        panel_y0,
+        panel_w,
+        title_h,
+        row_h,
+        edit_h,
+        n_items,
+    };
     verts.extend_from_slice(&quad_verts(-1.0, -1.0, 1.0, 1.0, colors.dim));
-    verts.extend_from_slice(&quad_verts(x0 - 2.0*px_x, y_bot - 2.0*px_y, x1 + 2.0*px_x, y_top + 2.0*px_y, colors.border));
+    verts.extend_from_slice(&quad_verts(
+        x0 - 2.0 * px_x,
+        y_bot - 2.0 * px_y,
+        x1 + 2.0 * px_x,
+        y_top + 2.0 * px_y,
+        colors.border,
+    ));
     verts.extend_from_slice(&quad_verts(x0, y_bot, x1, y_top, colors.bg));
-    verts.extend_from_slice(&quad_verts(x0, 1.0 - (panel_y0 + title_h) * px_y, x1, y_top, colors.title));
+    verts.extend_from_slice(&quad_verts(
+        x0,
+        1.0 - (panel_y0 + title_h) * px_y,
+        x1,
+        y_top,
+        colors.title,
+    ));
     append_ov_row_highlights(&geom, &colors, overlay, &mut verts);
     if overlay.search_buf.is_some() {
         append_ov_search_dropdown(&geom, overlay, cell_w_px, theme, &mut verts);
