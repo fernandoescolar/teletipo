@@ -50,6 +50,8 @@ pub enum Action {
     Bell,
     /// Request cursor position report (`\x1b[6n`).
     DeviceStatusReport,
+    /// Request primary device attributes (`\x1b[c` or `\x1b[0c`).
+    PrimaryDeviceAttributes,
     /// DECSCUSR — set cursor shape.
     /// 0/1 = blinking block, 2 = steady block, 3 = blinking underline,
     /// 4 = steady underline, 5 = blinking bar, 6 = steady bar.
