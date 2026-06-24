@@ -11,7 +11,8 @@ use glutin::surface::{Surface, SurfaceAttributesBuilder, SwapInterval, WindowSur
 use glutin_winit::DisplayBuilder;
 use platform_abstraction::{WindowControl, apply_app_icon, apply_titlebar_color};
 use raw_window_handle::HasRawWindowHandle;
-use render_wgpu::{AppWindowEvent, RenderConfig, RenderSnapshot, snapshot_to_ime_area};
+// TODO: These types need to be moved from render-wgpu to a shared location
+// use render_wgpu::{AppWindowEvent, RenderConfig, RenderSnapshot, snapshot_to_ime_area};
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{Event, Ime, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};

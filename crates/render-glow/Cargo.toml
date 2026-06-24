@@ -16,7 +16,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 memmap2 = "0.9"
 platform-abstraction = { path = "../platform-abstraction" }
 raw-window-handle = "0.5"
-render-wgpu = { path = "../render-wgpu" }
 rustybuzz = "0.14"
 tracing = { workspace = true }
 ttf-parser = "0.25"

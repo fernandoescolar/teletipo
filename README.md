@@ -61,9 +61,7 @@ starship preset gruvbox-rainbow -o ~/.config/starship.toml
 ```bash
 teletipo                        # open a shell in the current directory
 teletipo --exec "htop"          # run a specific command on startup
-teletipo --renderer wgpu        # use the wgpu backend instead of glow
 teletipo --metrics              # expose Prometheus metrics on 127.0.0.1:9898
-TELETIPO_RENDERER=wgpu teletipo # select renderer via environment variable
 ```
 
 Runtime logs are written to daily-rotated files under the platform data directory (see [File Locations](#file-locations)).
@@ -74,7 +72,7 @@ Runtime logs are written to daily-rotated files under the platform data director
 
 ### Terminal
 
-- GPU-accelerated rendering (glow backend by default, wgpu available via `--renderer wgpu`)
+- GPU-accelerated rendering with glow backend
 - Full ANSI/VT100 support — primary and alternate screen buffers, SGR colors, DEC sequences, scrollback
 - Multi-tab workflow with tab reordering, middle-click to close, and per-tab unread/bell badges
 - Themeable with YAML theme files — ships with Catppuccin Mocha, Dracula, Gruvbox, Nord, One Dark, Rosé Pine, Solarized Dark, Tokyo Night
@@ -347,8 +345,7 @@ cargo bench -p terminal-screen  # screen model benchmarks
 | `crates/editor-core` | Editor buffer and undo/redo |
 | `crates/editor-lang` | Token-based syntax highlighting |
 | `crates/platform-abstraction` | Clipboard, window control, accessibility, IME |
-| `crates/render-glow` | Default renderer (`winit + glutin + glow`) |
-| `crates/render-wgpu` | WGPU renderer backend and shared snapshot types |
+| `crates/render-glow` | Renderer backend (`winit + glutin + glow`) |
 | `crates/terminal-ansi` | ANSI/VT parser |
 | `crates/terminal-screen` | Screen grid, styles, scrollback, damage tracking |
 | `crates/terminal-core` | Applies parser actions to the screen |

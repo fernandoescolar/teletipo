@@ -36,7 +36,7 @@ pub(crate) fn normalize_rect_selection(
 }
 
 /// Returns the number of terminal columns occupied by `ch` (1 for narrow, 2
-/// for wide — emoji, CJK, etc.).  Mirrors the same function in render-wgpu.
+/// for wide — emoji, CJK, etc.).
 pub(crate) fn char_col_width(ch: char) -> usize {
     let cp = ch as u32;
     if matches!(cp,

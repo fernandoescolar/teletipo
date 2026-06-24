@@ -15,10 +15,5 @@ pub use window::{
     run_gpu_window_live_with_events_and_window,
 };
 
-pub use render_wgpu::{
-    Batch, BatchBuilder, CellQuad, ColorTheme, CommandPalette, ContextMenu, DamageRegion,
-    GlyphAtlas, GlyphEntry, GlyphKey, NullRenderer, PaneKind, PaneLayout, PipelineStage,
-    RenderCell, RenderError, RenderRow, RenderStats, Renderer, SCROLLBAR_W_PX, SearchPanel,
-    SettingsItem, SettingsOverlay, SuggestionDropdown, TerminalLink, Toast, ToastKind, VsyncMode,
-    WgpuRenderer, default_ansi_palette, snapshot_to_cell_quads, snapshot_to_cell_quads_in_bounds,
-};
+// Re-exports removed - render-wgpu has been deleted in favor of glow-only rendering
+// Public exports are now only from window module and internal types

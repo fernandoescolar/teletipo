@@ -8,7 +8,6 @@ license = "MIT OR Apache-2.0"
 app-orchestrator = { path = "../app-orchestrator" }
 platform-abstraction = { path = "../platform-abstraction" }
 terminal-pty = { path = "../terminal-pty" }
-render-wgpu = { path = "../render-wgpu" }
 render-glow = { path = "../render-glow" }
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = { workspace = true }

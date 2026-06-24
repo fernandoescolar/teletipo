@@ -46,9 +46,9 @@ pub trait ProcessInfo {
 }
 
 /// Operations the application layer needs to perform on the host window or
-/// shell that don't fit any of the other trait boundaries. Backends owning the
-/// window (`render-wgpu`) provide a concrete implementation and hand it to the
-/// application layer through the renderer's setup callback.
+/// shell that don't fit any of the other trait boundaries. The renderer backend
+/// provides a concrete implementation and hands it to the application layer
+/// through the renderer's setup callback.
 ///
 /// All methods take `&self` so the trait object can be cheaply shared with
 /// callbacks living inside the event loop. Implementations must therefore use
