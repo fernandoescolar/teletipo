@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use font8x8::UnicodeFonts;
 use glow::HasContext;
-use render_wgpu::{
-    ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay,
-    shell_highlight::highlight_shell,
-};
+// Types removed - render-wgpu crate has been deleted
+// use render_wgpu::{
+//     ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay,
+//     shell_highlight::highlight_shell,
+// };
 use winit::dpi::PhysicalSize;
 
 use crate::font::CpuFontRasterizer;
@@ -2040,22 +2041,22 @@ impl GlPainter {
             let right = layout.width - margin;
             let left = right - w;
             let (bg, border, text) = match toast.kind {
-                render_wgpu::ToastKind::Info => (
+                // Removed: render_wgpu::ToastKind::Info => (
                     [0.12, 0.15, 0.25, 0.93],
                     [0.35, 0.50, 0.90, 1.0],
                     [0.92, 0.94, 0.98, 1.0],
                 ),
-                render_wgpu::ToastKind::Success => (
+                // Removed: render_wgpu::ToastKind::Success => (
                     [0.08, 0.20, 0.10, 0.93],
                     [0.25, 0.78, 0.35, 1.0],
                     [0.90, 1.00, 0.90, 1.0],
                 ),
-                render_wgpu::ToastKind::Warn => (
+                // Removed: render_wgpu::ToastKind::Warn => (
                     [0.22, 0.18, 0.05, 0.93],
                     [0.90, 0.72, 0.20, 1.0],
                     [1.00, 0.97, 0.85, 1.0],
                 ),
-                render_wgpu::ToastKind::Error => (
+                // Removed: render_wgpu::ToastKind::Error => (
                     [0.22, 0.08, 0.08, 0.93],
                     [0.90, 0.30, 0.30, 1.0],
                     [1.00, 0.90, 0.90, 1.0],

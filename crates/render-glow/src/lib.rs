@@ -10,10 +10,9 @@ mod types;
 mod util;
 mod window;
 
-pub use window::{
-    run_gpu_window, run_gpu_window_live, run_gpu_window_live_with_events,
-    run_gpu_window_live_with_events_and_window,
-};
-
-// Re-exports removed - render-wgpu has been deleted in favor of glow-only rendering
-// Public exports are now only from window module and internal types
+// Window functions require shared types that were in render-wgpu
+// This is a temporary state while the crate is being cleaned up
+// pub use window::{
+//     run_gpu_window, run_gpu_window_live, run_gpu_window_live_with_events,
+//     run_gpu_window_live_with_events_and_window,
+// };
