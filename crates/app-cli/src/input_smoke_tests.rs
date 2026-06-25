@@ -329,6 +329,7 @@ fn startup_snapshot_renders_command_output() {
     let session = tab::PersistentSession::default();
     let mut state = launch::build_initial_state(
         Some("printf 'hello from teletipo\n'"),
+        None,
         "/bin/sh",
         session,
         update_rx,

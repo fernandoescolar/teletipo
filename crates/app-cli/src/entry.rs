@@ -21,8 +21,20 @@ struct Cli {
     #[arg(long)]
     shell: Option<String>,
 
-    #[arg(long, help = "Execute a command and exit")]
+    #[arg(
+        short = 'e',
+        long,
+        visible_alias = "execute",
+        help = "Execute a command and exit"
+    )]
     exec: Option<String>,
+
+    #[arg(
+        long,
+        visible_alias = "working-directory",
+        help = "Start the shell/command in this directory"
+    )]
+    cwd: Option<String>,
 
     #[arg(long, help = "Expose Prometheus metrics on 127.0.0.1:9898")]
     metrics: bool,
@@ -67,7 +79,13 @@ pub fn run(
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
     };
-    let state = match build_initial_state(cli.exec.as_deref(), &shell, session, update_rx) {
+    let state = match build_initial_state(
+        cli.exec.as_deref(),
+        cli.cwd.as_deref(),
+        &shell,
+        session,
+        update_rx,
+    ) {
         Ok(state) => Rc::new(RefCell::new(state)),
         Err(err) => {
             tracing::error!(error = %err, "failed to initialize runtime state");

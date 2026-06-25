@@ -61,7 +61,41 @@ starship preset gruvbox-rainbow -o ~/.config/starship.toml
 ```bash
 teletipo                        # open a shell in the current directory
 teletipo --exec "htop"          # run a specific command on startup
+teletipo -e "git status"        # short alias for --exec (also accepts --execute)
+teletipo --cwd /tmp             # start in a specific working directory
 teletipo --metrics              # expose Prometheus metrics on 127.0.0.1:9898
+```
+
+### Launch Contract (for OS launchers and integrations)
+
+There is no universal cross-OS standard flag for "open terminal and run this",
+so Teletipo provides a stable launch contract:
+
+- `--exec`, `-e`, `--execute` — execute a command in the spawned shell session
+- `--cwd`, `--working-directory` — start the shell/command in a target directory
+
+Recommended invocation patterns:
+
+```bash
+# Shell-string form
+teletipo --cwd /path/to/project --exec "npm run dev"
+
+# Preferred when launching a single program with arguments from another process:
+# pass a fully quoted command string appropriate for the target shell.
+teletipo --cwd /path/to/project -e "python -m http.server 9000"
+```
+
+OS launcher examples:
+
+```bash
+# Linux (.desktop Exec= line)
+Exec=teletipo --cwd /home/user/project -e "cargo test"
+
+# macOS (from another process)
+open -a Teletipo --args --cwd /Users/user/project --exec "make run"
+
+# Windows (PowerShell)
+teletipo.exe --cwd C:\\work\\project --exec "cargo run"
 ```
 
 Runtime logs are written to daily-rotated files under the platform data directory (see [File Locations](#file-locations)).

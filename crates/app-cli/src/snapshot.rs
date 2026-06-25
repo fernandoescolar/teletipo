@@ -342,11 +342,7 @@ fn build_editor_syntax_colors(state: &GpuRuntimeState, text: &str) -> Vec<Option
     colors
 }
 
-fn pick_high_contrast_color(
-    bg: [f32; 3],
-    candidates: &[[f32; 3]],
-    fallback: [f32; 3],
-) -> [f32; 3] {
+fn pick_high_contrast_color(bg: [f32; 3], candidates: &[[f32; 3]], fallback: [f32; 3]) -> [f32; 3] {
     const MIN_RATIO: f32 = 3.0;
     let mut best = fallback;
     let mut best_ratio = contrast_ratio(bg, fallback);

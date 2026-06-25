@@ -250,6 +250,7 @@ fn initial_terminal_size(
 
 pub(crate) fn build_initial_state(
     exec: Option<&str>,
+    launch_cwd: Option<&str>,
     shell: &str,
     session: PersistentSession,
     update_rx: std::sync::mpsc::Receiver<Result<Option<String>, String>>,
@@ -281,7 +282,7 @@ pub(crate) fn build_initial_state(
         user_config.padding.horizontal as f32,
         user_config.padding.vertical as f32,
     );
-    let tabs = build_tabs(saved_tabs, rows, cols, &effective_shell, exec)?;
+    let tabs = build_tabs(saved_tabs, rows, cols, &effective_shell, exec, launch_cwd)?;
 
     let mut state = GpuRuntimeState {
         tabs,
@@ -352,6 +353,7 @@ fn build_tabs(
     cols: usize,
     effective_shell: &str,
     exec: Option<&str>,
+    launch_cwd: Option<&str>,
 ) -> anyhow::Result<Vec<TabState>> {
     // Process shared history and entries across all tabs
     let (shared_history, shared_entries) = process_shared_tab_data(&saved_tabs);
@@ -366,7 +368,7 @@ fn build_tabs(
     // Apply shared data to each tab
     let mut tabs: Vec<TabState> = Vec::new();
     for (i, saved) in saved_tabs.into_iter().enumerate() {
-        let tab_state = build_single_tab(i, &saved, rows, cols, &params)?;
+        let tab_state = build_single_tab(i, &saved, rows, cols, &params, launch_cwd)?;
         tabs.push(tab_state);
     }
 
@@ -416,6 +418,7 @@ fn build_single_tab(
     rows: usize,
     cols: usize,
     params: &TabBuildParams<'_>,
+    launch_cwd: Option<&str>,
 ) -> anyhow::Result<TabState> {
     let mut app = build_app(rows, cols)?;
 
@@ -426,7 +429,9 @@ fn build_single_tab(
     }
 
     // Determine current working directory
-    let initial_cwd: String = if !saved.cwd.is_empty() {
+    let initial_cwd: String = if let Some(cli_cwd) = launch_cwd {
+        cli_cwd.to_owned()
+    } else if !saved.cwd.is_empty() {
         saved.cwd.clone()
     } else {
         std::env::current_dir()
