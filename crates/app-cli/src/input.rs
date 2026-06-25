@@ -17,6 +17,17 @@ pub(crate) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     }
     if let AppWindowEvent::WindowFocused(focused) = event {
         state.window_focused = focused;
+        // Send focus in/out sequences to the active PTY if the application has
+        // enabled focus tracking via DEC private mode 1004 (?1004h).
+        let active = state.active_tab;
+        let tab = &mut state.tabs[active];
+        if tab.app.focus_events_enabled() {
+            let seq: &[u8] = if focused { b"\x1b[I" } else { b"\x1b[O" };
+            if let Some(mut pty) = tab.pty.take() {
+                let _ = tab.app.send_pty_input(&mut pty, seq);
+                tab.pty = Some(pty);
+            }
+        }
         return;
     }
     keyboard::handle_event(state, event);

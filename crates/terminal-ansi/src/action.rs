@@ -64,4 +64,12 @@ pub enum Action {
     KittyKeyboardQuery,
     /// ESC M — reverse index (RI): move cursor up one line, scroll down if at top margin.
     ReverseIndex,
+    /// OSC 1337;ReportCellSize — the application requests the terminal's cell
+    /// pixel dimensions. The terminal should respond with
+    /// `\x1b]1337;ReportCellSize=HxW\a` where H and W are the cell height and
+    /// width in physical pixels.
+    ReportCellSize,
+    /// OSC 1337;CurrentDir=`path` — iTerm2 working-directory report.
+    /// Semantically equivalent to OSC 7; both update the shell CWD label.
+    SetCwdIterm(String),
 }

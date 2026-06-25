@@ -38,6 +38,11 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
         state.layout.scale_factor = *scale_factor;
         state.layout.cell_w = *cell_w;
         state.layout.cell_h = *cell_h;
+        // Keep terminal sessions informed of the current cell pixel size so
+        // they can respond to OSC 1337;ReportCellSize queries correctly.
+        for tab in state.tabs.iter_mut() {
+            tab.app.set_cell_size(*cell_w, *cell_h);
+        }
         // Freeze the terminal grid during rapid OS window resize. Both the
         // visual grid resize and SIGWINCH are deferred; the single
         // apply_deferred_resize call fires once the gesture has settled.

@@ -998,7 +998,7 @@ impl Screen {
         }
     }
 
-    fn mark_full_redraw(&mut self) {
+    pub fn mark_full_redraw(&mut self) {
         self.full_redraw = true;
         for row in &mut self.dirty_rows {
             *row = true;

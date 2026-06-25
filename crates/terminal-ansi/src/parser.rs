@@ -304,6 +304,15 @@ fn parse_osc_payload(payload: &str) -> Action {
             }
         }
     }
+    // OSC 1337 — iTerm2 proprietary sequences.
+    if let Some(rest) = payload.strip_prefix("1337;") {
+        if rest == "ReportCellSize" {
+            return Action::ReportCellSize;
+        }
+        if let Some(path) = rest.strip_prefix("CurrentDir=") {
+            return Action::SetCwdIterm(path.to_owned());
+        }
+    }
     Action::Osc(payload.to_owned())
 }
 

@@ -277,6 +277,12 @@ impl AppTerminal {
         self.session.kitty_keyboard_flags()
     }
 
+    /// Whether focus tracking (DEC mode 1004) is currently enabled by the
+    /// running application.
+    pub fn focus_events_enabled(&self) -> bool {
+        self.session.focus_events_enabled()
+    }
+
     pub fn drain_pending_responses(&mut self) -> Vec<String> {
         self.session.drain_pending_responses()
     }
@@ -338,6 +344,11 @@ impl AppTerminal {
     /// Working directory last reported by the shell via OSC 7.
     pub fn osc7_cwd(&self) -> Option<&std::path::Path> {
         self.session.osc7_cwd()
+    }
+
+    /// Update the cell pixel dimensions for OSC 1337;ReportCellSize responses.
+    pub fn set_cell_size(&mut self, width_px: f32, height_px: f32) {
+        self.session.set_cell_size(width_px, height_px);
     }
 }
 
@@ -607,6 +618,12 @@ impl App {
         self.terminal.kitty_keyboard_flags()
     }
 
+    /// Whether focus tracking (DEC mode 1004) is currently enabled by the
+    /// running application.
+    pub fn focus_events_enabled(&self) -> bool {
+        self.terminal.focus_events_enabled()
+    }
+
     /// Drains pending PTY response strings (e.g. cursor-position reports).
     pub fn drain_pending_responses(&mut self) -> Vec<String> {
         self.terminal.drain_pending_responses()
@@ -644,6 +661,11 @@ impl App {
     /// Returns whether application cursor keys mode (DECCKM) is active.
     pub fn application_cursor_keys(&self) -> bool {
         self.terminal.application_cursor_keys()
+    }
+
+    /// Update the cell pixel dimensions for OSC 1337;ReportCellSize responses.
+    pub fn set_cell_size(&mut self, width_px: f32, height_px: f32) {
+        self.terminal.set_cell_size(width_px, height_px);
     }
 }
 

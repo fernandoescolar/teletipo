@@ -70,6 +70,10 @@ pub trait TerminalDisplay {
     /// Collect all hyperlink spans in the visible viewport at the given scroll
     /// offset. Returns `(vis_row, col_start, col_end_exclusive, id)` tuples.
     fn dump_hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)>;
+    /// Force a full-screen redraw on the next damage poll.
+    /// Used by synchronized output mode reset (`?2026l`) to flush accumulated
+    /// damage after an atomic update.
+    fn mark_full_redraw(&mut self);
 }
 
 impl TerminalDisplay for Screen {
@@ -248,6 +252,10 @@ impl TerminalDisplay for Screen {
     fn dump_hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
         Screen::dump_hyperlink_spans(self, scroll_offset)
     }
+
+    fn mark_full_redraw(&mut self) {
+        Screen::mark_full_redraw(self)
+    }
 }
 
 /// Generic terminal session: pairs a [`TerminalParser`] with a [`TerminalDisplay`].
@@ -298,6 +306,19 @@ pub struct GenericTerminalSession<P = Parser, D = Screen> {
     /// Kitty keyboard protocol flags stack. Top of stack (last element) is the
     /// active flags word. Each `\x1b[=<flags>u` pushes; `\x1b[<n>u` pops n.
     kitty_keyboard_flags: Vec<u32>,
+    /// Whether focus tracking (DEC private mode 1004) is enabled.
+    /// When enabled, `\x1b[I` / `\x1b[O` are sent to the application on
+    /// window focus-in / focus-out events.
+    focus_events: bool,
+    /// Whether synchronized output mode (DEC private mode 2026) is active.
+    /// While active, damage reports are suppressed so the renderer does not
+    /// display a partially-drawn frame. Cleared on mode reset, which also
+    /// triggers a full-redraw flush.
+    synchronized_output: bool,
+    /// Cell pixel dimensions `(width_px, height_px)` in physical pixels.
+    /// Updated via `set_cell_size` whenever the window layout changes.
+    /// Used to respond to OSC 1337;ReportCellSize queries.
+    cell_size_px: (f32, f32),
 }
 
 /// Default `GenericTerminalSession` specialised with the production parser
@@ -326,6 +347,9 @@ impl GenericTerminalSession<Parser, Screen> {
             current_zone: None,
             cwd: None,
             kitty_keyboard_flags: Vec::new(),
+            focus_events: false,
+            synchronized_output: false,
+            cell_size_px: (8.0, 16.0),
         })
     }
 }
@@ -352,6 +376,9 @@ where
             current_zone: None,
             cwd: None,
             kitty_keyboard_flags: Vec::new(),
+            focus_events: false,
+            synchronized_output: false,
+            cell_size_px: (8.0, 16.0),
         }
     }
 
@@ -473,20 +500,29 @@ where
                 Action::SetGraphicsRendition(params) => self.screen.set_sgr(&params),
                 Action::DecPrivateModeSet(mode) => match mode {
                     1 => self.application_cursor_keys = true,
+                    1004 => self.focus_events = true,
                     1049 => self.screen.set_alternate_screen(true),
                     1000 | 1002 | 1003 => self.mouse_tracking = mode,
                     1006 => self.mouse_sgr = true,
                     2004 => self.bracketed_paste = true,
+                    2026 => self.synchronized_output = true,
                     _ => {}
                 },
                 Action::DecPrivateModeReset(mode) => match mode {
                     1 => self.application_cursor_keys = false,
+                    1004 => self.focus_events = false,
                     1049 => self.screen.set_alternate_screen(false),
                     1000 | 1002 | 1003 if self.mouse_tracking == mode => {
                         self.mouse_tracking = 0;
                     }
                     1006 => self.mouse_sgr = false,
                     2004 => self.bracketed_paste = false,
+                    2026 => {
+                        self.synchronized_output = false;
+                        // Flush any damage that accumulated during the synchronized
+                        // update window so the renderer redraws on the next frame.
+                        self.screen.mark_full_redraw();
+                    }
                     _ => {}
                 },
                 Action::Osc(s) => self.handle_osc(s),
@@ -517,6 +553,18 @@ where
                     self.pending_responses.push(format!("\x1b[?{flags}u"));
                 }
                 Action::ReverseIndex => self.screen.reverse_index(),
+                Action::ReportCellSize => {
+                    // Respond with physical cell dimensions: height × width in pixels.
+                    // Format: OSC 1337;ReportCellSize=H;W BEL
+                    let (w, h) = self.cell_size_px;
+                    self.pending_responses
+                        .push(format!("\x1b]1337;ReportCellSize={h};{w}\x07"));
+                }
+                Action::SetCwdIterm(path) => {
+                    // Treat iTerm2 CurrentDir the same as OSC 7.
+                    let decoded = percent_decode(&path);
+                    self.cwd = Some(std::path::PathBuf::from(decoded));
+                }
             }
         }
     }
@@ -578,8 +626,40 @@ where
         self.screen.snapshot()
     }
 
+    /// Take accumulated damage for the next render frame.
+    ///
+    /// Returns an empty `DamageRegion` (no dirty rows, no full redraw) while
+    /// synchronized output mode (`?2026h`) is active so the renderer does not
+    /// display a partial frame. Once the app resets the mode (`?2026l`), a
+    /// `mark_full_redraw()` is triggered and the next call returns all rows.
     pub fn take_damage(&mut self) -> DamageRegion {
+        if self.synchronized_output {
+            // Drain the underlying damage without exposing it; we'll flush on reset.
+            let _ = self.screen.take_damage();
+            return DamageRegion {
+                full_redraw: false,
+                dirty_rows: Vec::new(),
+                version: self.screen.version(),
+            };
+        }
         self.screen.take_damage()
+    }
+
+    /// Whether focus tracking (DEC private mode 1004) is currently enabled.
+    pub fn focus_events_enabled(&self) -> bool {
+        self.focus_events
+    }
+
+    /// Whether synchronized output mode (DEC private mode 2026) is active.
+    pub fn is_synchronized(&self) -> bool {
+        self.synchronized_output
+    }
+
+    /// Update the cell pixel dimensions used to respond to OSC 1337;ReportCellSize.
+    /// Call this whenever the renderer recomputes the cell metrics (window resize,
+    /// font size change, DPI change).
+    pub fn set_cell_size(&mut self, width_px: f32, height_px: f32) {
+        self.cell_size_px = (width_px, height_px);
     }
 
     /// Consumes and returns the exit code reported by the most recent OSC 133;D
