@@ -850,8 +850,6 @@ impl GlPainter {
         let max_x = layout.width - layout.padding_h;
         let max_y = layout.height - layout.padding_v;
         let row_offset = snapshot.editor_scroll_offset;
-        // Note: highlight_shell was removed with render-wgpu, creating minimal fallback
-        let hl: Vec<Option<[f32; 3]>> = vec![];
         let mut char_idx = 0usize; // tracks index into `hl` as we iterate chars
 
         for (line_idx, line) in snapshot.editor_text.lines().enumerate() {
@@ -873,7 +871,8 @@ impl GlPainter {
                 if x + layout.cell_w_px > max_x {
                     break;
                 }
-                let fg = hl
+                let fg = snapshot
+                    .editor_fg_colors
                     .get(char_idx)
                     .and_then(|c| *c)
                     .map(|c| [c[0] * dim, c[1] * dim, c[2] * dim, 1.0])

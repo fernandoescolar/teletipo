@@ -7,6 +7,7 @@ use crate::coords::{
 };
 use crate::settings::build_settings_overlay;
 use crate::theme;
+use editor_lang::{LanguageHighlighter, ShellLikeHighlighter};
 use render_glow::{
     ColorTheme, CommandPalette, ContextMenu, DamageRegion, RenderCell, RenderRow, RenderSnapshot,
     SearchPanel, SuggestionDropdown, TerminalLink, Toast, ToastKind,
@@ -114,6 +115,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         build_terminal_links(state, active, &terminal_text, term_cols, scroll_offset);
 
     let editor_text = state.tabs[active].app.editor_snapshot();
+    let editor_fg_colors = build_editor_syntax_colors(state, &editor_text);
     let editor_line_count = editor_text.lines().count().max(1);
     let editor_cursor_offset = state.tabs[active].app.editor_cursor_offset();
     let editor_suggestion =
@@ -140,6 +142,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
         ComputedFrame {
             scroll_offset,
             editor_text,
+            editor_fg_colors,
             editor_line_count,
             editor_cursor_offset,
             editor_suggestion,
@@ -170,6 +173,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
 struct ComputedFrame {
     scroll_offset: usize,
     editor_text: String,
+    editor_fg_colors: Vec<Option<[f32; 3]>>,
     editor_line_count: usize,
     editor_cursor_offset: usize,
     editor_suggestion: String,
@@ -211,6 +215,7 @@ fn assemble_snapshot(state: &GpuRuntimeState, active: usize, f: ComputedFrame) -
         terminal_bg_colors: f.terminal_bg_colors,
         terminal_styles: f.terminal_styles,
         editor_text: f.editor_text.clone(),
+        editor_fg_colors: f.editor_fg_colors,
         editor_cursor_offset: f.editor_cursor_offset,
         scroll_offset: f.scroll_offset,
         scrollback_lines: state.tabs[active].app.scrollback_len(),
@@ -255,6 +260,127 @@ fn assemble_snapshot(state: &GpuRuntimeState, active: usize, f: ComputedFrame) -
         font_size: state.user_config.font.size,
         command_palette: f.command_palette,
     }
+}
+
+/// Build per-character syntax colors for the command editor.
+///
+/// The output vector is parallel to `text.chars()` so renderer indexing matches
+/// even when skipping lines/columns in the viewport.
+fn build_editor_syntax_colors(state: &GpuRuntimeState, text: &str) -> Vec<Option<[f32; 3]>> {
+    let mut colors: Vec<Option<[f32; 3]>> = text.chars().map(|_| None).collect();
+    if text.is_empty() {
+        return colors;
+    }
+
+    let theme = {
+        let tf = state
+            .themes_fonts
+            .active_theme_idx
+            .map(|i| &state.themes_fonts.available_themes[i]);
+        theme_from_config(tf)
+    };
+    let bg = [theme.editor_bg[0], theme.editor_bg[1], theme.editor_bg[2]];
+    let default_text = [theme.text[0], theme.text[1], theme.text[2]];
+    let command_color = pick_high_contrast_color(
+        bg,
+        &[
+            theme.ansi_palette[10],
+            theme.ansi_palette[2],
+            theme.ansi_palette[12],
+            default_text,
+        ],
+        default_text,
+    );
+    let flag_color = pick_high_contrast_color(
+        bg,
+        &[
+            theme.ansi_palette[11],
+            theme.ansi_palette[3],
+            theme.ansi_palette[9],
+            default_text,
+        ],
+        default_text,
+    );
+    let arg_color = pick_high_contrast_color(
+        bg,
+        &[
+            theme.ansi_palette[14],
+            theme.ansi_palette[6],
+            theme.ansi_palette[15],
+            default_text,
+        ],
+        default_text,
+    );
+
+    let highlighter = ShellLikeHighlighter;
+    let ranges = highlighter.highlight(text);
+
+    let char_byte_starts: Vec<usize> = text.char_indices().map(|(idx, _)| idx).collect();
+    let to_char_idx = |byte_idx: usize| -> usize {
+        match char_byte_starts.binary_search(&byte_idx) {
+            Ok(i) => i,
+            Err(i) => i,
+        }
+    };
+
+    for h in ranges {
+        let start = to_char_idx(h.range.start);
+        let end = to_char_idx(h.range.end);
+        let token_color = match h.token {
+            "command" => Some(command_color),
+            "flag" => Some(flag_color),
+            "arg" => Some(arg_color),
+            _ => None,
+        };
+        if let Some(c) = token_color {
+            for slot in &mut colors[start..end] {
+                *slot = Some(c);
+            }
+        }
+    }
+
+    colors
+}
+
+fn pick_high_contrast_color(
+    bg: [f32; 3],
+    candidates: &[[f32; 3]],
+    fallback: [f32; 3],
+) -> [f32; 3] {
+    const MIN_RATIO: f32 = 3.0;
+    let mut best = fallback;
+    let mut best_ratio = contrast_ratio(bg, fallback);
+    for &candidate in candidates {
+        let ratio = contrast_ratio(bg, candidate);
+        if ratio > best_ratio {
+            best_ratio = ratio;
+            best = candidate;
+        }
+        if ratio >= MIN_RATIO {
+            return candidate;
+        }
+    }
+    best
+}
+
+fn contrast_ratio(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let la = relative_luminance(a);
+    let lb = relative_luminance(b);
+    let (l1, l2) = if la >= lb { (la, lb) } else { (lb, la) };
+    (l1 + 0.05) / (l2 + 0.05)
+}
+
+fn relative_luminance(rgb: [f32; 3]) -> f32 {
+    let f = |c: f32| {
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * f(rgb[0].clamp(0.0, 1.0))
+        + 0.7152 * f(rgb[1].clamp(0.0, 1.0))
+        + 0.0722 * f(rgb[2].clamp(0.0, 1.0))
 }
 
 /// Per-frame housekeeping: polls update channel, autosaves session, handles deferred

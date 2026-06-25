@@ -143,6 +143,7 @@ dependencies = [
  "app-orchestrator",
  "clap",
  "dirs",
+ "editor-lang",
  "fontdb",
  "metrics",
  "metrics-exporter-prometheus",

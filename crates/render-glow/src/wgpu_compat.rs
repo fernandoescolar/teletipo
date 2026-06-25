@@ -50,6 +50,9 @@ pub struct RenderSnapshot {
     /// Style bits per terminal character: bit 0 = bold, bit 1 = italic, bit 2 = strikethrough.
     pub terminal_styles: Vec<u8>,
     pub editor_text: String,
+    /// Optional per-character editor foreground color, parallel to
+    /// `editor_text.chars()` (including newlines).
+    pub editor_fg_colors: Vec<Option<[f32; 3]>>,
     pub editor_cursor_offset: usize,
     pub scroll_offset: usize,
     pub scrollback_lines: usize,

@@ -980,6 +980,10 @@ fn handle_named_key_editor_ops(
             true
         }
         NamedKey::ArrowRight => {
+            if cycling && !state.modifiers.shift_down {
+                apply_selected_suggestion(state);
+                return true;
+            }
             let extend = state.modifiers.shift_down;
             state.tab_mut().app.editor_move_cursor_right(extend);
             true
