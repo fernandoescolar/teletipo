@@ -8,7 +8,7 @@ use crate::coords::{
 use crate::settings::build_settings_overlay;
 use crate::theme;
 use editor_lang::{LanguageHighlighter, ShellLikeHighlighter};
-use render_glow::{
+use render_model::{
     ColorTheme, CommandPalette, ContextMenu, DamageRegion, RenderCell, RenderRow, RenderSnapshot,
     SearchPanel, SuggestionDropdown, TerminalLink, Toast, ToastKind,
 };

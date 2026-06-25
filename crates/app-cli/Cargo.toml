@@ -9,6 +9,7 @@ app-orchestrator = { path = "../app-orchestrator" }
 platform-abstraction = { path = "../platform-abstraction" }
 terminal-pty = { path = "../terminal-pty" }
 render-glow = { path = "../render-glow" }
+render-model = { path = "../render-model" }
 editor-lang = { path = "../editor-lang" }
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = { workspace = true }

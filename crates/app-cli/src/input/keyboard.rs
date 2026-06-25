@@ -6,7 +6,7 @@ use crate::coords::{
 };
 use crate::search;
 use crate::settings;
-use render_glow::AppWindowEvent;
+use render_model::AppWindowEvent;
 use winit::event::ElementState;
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 

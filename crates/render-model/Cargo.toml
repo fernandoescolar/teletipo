@@ -1,0 +1,11 @@
+[package]
+name = "render-model"
+version = "0.0.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+platform-abstraction = { path = "../platform-abstraction" }
+
+[lints]
+workspace = true

@@ -149,6 +149,7 @@ use crate::state::{
 };
 use crate::tab::{HistoryEntry, TabState};
 use platform_abstraction::{AccessNode, AccessibilityTree, WindowControl};
+use render_model::{AppWindowEvent, RenderSnapshot};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
@@ -164,7 +165,7 @@ impl EventCtx {
         Self { state }
     }
 
-    pub(crate) fn build_snapshot(&self) -> render_glow::RenderSnapshot {
+    pub(crate) fn build_snapshot(&self) -> RenderSnapshot {
         let frame_start = Instant::now();
         let mut state = self.state.borrow_mut();
         let snapshot = snapshot::build_snapshot(&mut state);
@@ -172,7 +173,7 @@ impl EventCtx {
         snapshot
     }
 
-    pub(crate) fn handle_event(&self, event: render_glow::AppWindowEvent) {
+    pub(crate) fn handle_event(&self, event: AppWindowEvent) {
         let mut state = self.state.borrow_mut();
         input::handle_event(&mut state, event);
     }

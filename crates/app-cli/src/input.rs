@@ -5,7 +5,7 @@ mod pointer;
 pub(crate) use pointer::execute_editor_context_menu_item;
 
 use crate::GpuRuntimeState;
-use render_glow::AppWindowEvent;
+use render_model::AppWindowEvent;
 
 pub(crate) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     if pointer::handle_event(state, &event) {

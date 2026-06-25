@@ -150,6 +150,7 @@ dependencies = [
  "platform-abstraction",
  "regex",
  "render-glow",
+ "render-model",
  "self_update",
  "serde",
  "serde_json",
@@ -2778,10 +2779,18 @@ dependencies = [
  "memmap2",
  "platform-abstraction",
  "raw-window-handle 0.5.2",
+ "render-model",
  "rustybuzz",
  "tracing",
  "ttf-parser 0.25.1",
  "winit",
+]
+
+[[package]]
+name = "render-model"
+version = "0.0.1"
+dependencies = [
+ "platform-abstraction",
 ]
 
 [[package]]
