@@ -156,6 +156,33 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
                 env_vars: vec![("PATH".to_string(), gui_path)],
             })
         }
+        "fish" => {
+            // fish supports `--init-command` (`-C`) for running an inline script
+            // before the interactive session — the cleanest injection point that
+            // does not require overriding XDG_CONFIG_HOME or writing to the user's
+            // own fish config directory.
+            let gui_path = gui_shell_path();
+            let fish_init = format!(
+                "# Teletipo shell integration\n\
+                 function _teletipo_precmd --on-event fish_prompt\n\
+                     {precmd_hook}\n\
+                 end\n\
+                 function _teletipo_preexec --on-event fish_preexec\n\
+                     {preexec_hook}\n\
+                 end\n"
+            );
+            let fish_file = integration_dir.join("teletipo.fish");
+            if let Err(err) = std::fs::write(&fish_file, fish_init) {
+                warn!(path = %fish_file.display(), error = %err, "failed to write fish shell integration file");
+                return None;
+            }
+
+            let source_cmd = format!("source '{}'", fish_file.to_string_lossy());
+            Some(IntegrationSetup {
+                extra_args: vec!["--init-command".to_string(), source_cmd],
+                env_vars: vec![("PATH".to_string(), gui_path)],
+            })
+        }
         _ => None,
     }
 }
