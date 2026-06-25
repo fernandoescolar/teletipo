@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 winit = { workspace = true }
-arboard = "3"
+arboard = { version = "3", features = ["wayland-data-control"] }
 tracing = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -302,6 +302,20 @@ where
                                 cell_h: cell_h_px,
                             });
                         }
+                        WindowEvent::Focused(focused) => {
+                            if focused {
+                                let size = window.inner_size();
+                                gl_surface.resize(
+                                    &gl_context,
+                                    NonZeroU32::new(size.width.max(1))
+                                        .expect("width max(1) is non-zero"),
+                                    NonZeroU32::new(size.height.max(1))
+                                        .expect("height max(1) is non-zero"),
+                                );
+                                window.request_redraw();
+                            }
+                            on_event(AppWindowEvent::WindowFocused(focused));
+                        }
                         WindowEvent::ModifiersChanged(mods) => {
                             on_event(AppWindowEvent::ModifiersChanged(mods.state()));
                         }
