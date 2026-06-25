@@ -6,6 +6,23 @@ use crate::overlays::{
 use crate::screen::{DamageRegion, RenderRow};
 use crate::theme::ColorTheme;
 
+/// An image to be rendered on the terminal.
+#[derive(Debug, Clone)]
+pub struct SnapshotImage {
+    /// Unique identifier for this image.
+    pub id: u32,
+    /// X position in pixels (top-left corner).
+    pub x_px: usize,
+    /// Y position in pixels (top-left corner).
+    pub y_px: usize,
+    /// Image width in pixels.
+    pub width_px: usize,
+    /// Image height in pixels.
+    pub height_px: usize,
+    /// RGBA pixel data (4 bytes per pixel).
+    pub rgba: Arc<Vec<u8>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TerminalLink {
     /// Row index in the terminal grid (0-based).
@@ -83,6 +100,8 @@ pub struct RenderSnapshot {
     pub copy_mode_highlights: Vec<(usize, usize, usize)>,
     /// Copy mode cursor position (row, col) in viewport coordinates, if copy mode is active.
     pub copy_mode_cursor: Option<(usize, usize)>,
+    /// Images currently displayed on the terminal (in viewport pixel coordinates).
+    pub terminal_images: Vec<SnapshotImage>,
     /// Label for every open tab (e.g. "Tab 1", "Tab 2"). When empty the tab bar
     /// is not rendered. Populated by the application layer.
     pub tab_labels: Vec<String>,

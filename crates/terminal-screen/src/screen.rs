@@ -8,6 +8,29 @@ use crate::color::{AnsiColor, ansi_cell_tuple_with_palette};
 use crate::grid::{Grid, reflow_grid};
 use crate::hyperlink::HyperlinkInterner;
 
+/// An image placed on the terminal screen at a specific cell position.
+///
+/// Images occupy grid cells from (row, col) to (row + rows - 1, col + cols - 1).
+#[derive(Debug, Clone)]
+pub struct TerminalImage {
+    /// Unique identifier for this image (incremented per image).
+    pub id: u32,
+    /// Grid row where the image starts (0 = top of visible grid).
+    pub row: usize,
+    /// Grid column where the image starts.
+    pub col: usize,
+    /// Width in grid columns that this image occupies.
+    pub cols: u16,
+    /// Height in grid rows that this image occupies.
+    pub rows: u16,
+    /// RGBA pixel data: 4 bytes per pixel (width_px * height_px * 4 bytes).
+    pub rgba: Arc<Vec<u8>>,
+    /// Image width in pixels.
+    pub width_px: usize,
+    /// Image height in pixels.
+    pub height_px: usize,
+}
+
 /// Terminal screen model: cell grid, scrollback, cursor, and damage tracking.
 ///
 /// Applies ANSI parser actions to a primary/alternate grid pair and exposes
@@ -38,6 +61,10 @@ pub struct Screen {
     // of copying potentially-large terminal dumps on every hit. See PERF-1.
     /// Cached result of `dump_ansi()` for the current `version`.
     ansi_cache: RefCell<Option<(u64, Arc<String>)>>,
+    /// Images currently displayed on the terminal.
+    pub(crate) images: Vec<TerminalImage>,
+    /// Next image ID to assign.
+    next_image_id: u32,
 }
 
 /// Lightweight, cloneable view of the visible grid for the renderer.
@@ -161,6 +188,8 @@ impl Screen {
             current_hyperlink_id: 0,
             text_cache: RefCell::new(None),
             ansi_cache: RefCell::new(None),
+            images: Vec::new(),
+            next_image_id: 1,
         }
     }
 
@@ -272,6 +301,53 @@ impl Screen {
     /// Returns `None` for ID 0 (no link) or unknown IDs.
     pub fn hyperlink_uri(&self, id: u16) -> Option<&str> {
         self.hyperlinks.resolve(id)
+    }
+
+    /// Place an image at the current cursor position and advance the cursor.
+    ///
+    /// The image occupies `image_cols` x `image_rows` grid cells.
+    pub fn place_image(
+        &mut self,
+        width_px: usize,
+        height_px: usize,
+        rgba: Arc<Vec<u8>>,
+        image_cols: u16,
+        image_rows: u16,
+    ) {
+        // Capture cursor position before modifying the grid
+        let grid = self.active_grid_mut();
+        let row = grid.cursor_row;
+        let col = grid.cursor_col;
+        let cols = grid.cols;
+        let rows = grid.rows;
+
+        // Create the image
+        let image = TerminalImage {
+            id: self.next_image_id,
+            row,
+            col,
+            cols: image_cols,
+            rows: image_rows,
+            rgba,
+            width_px,
+            height_px,
+        };
+
+        self.images.push(image);
+        self.next_image_id = self.next_image_id.saturating_add(1);
+
+        // Now advance cursor past the image (move right by image_cols, then wrap)
+        let grid = self.active_grid_mut();
+        for _ in 0..image_cols {
+            if grid.cursor_col >= cols - 1 {
+                grid.cursor_col = 0;
+                grid.cursor_row = (grid.cursor_row + 1).min(rows - 1);
+            } else {
+                grid.cursor_col += 1;
+            }
+        }
+
+        self.mark_full_redraw();
     }
 
     /// Collect all hyperlink spans visible at the given scroll offset.

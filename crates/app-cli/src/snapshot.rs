@@ -10,7 +10,7 @@ use crate::theme;
 use editor_lang::{LanguageHighlighter, ShellLikeHighlighter};
 use render_model::{
     ColorTheme, CommandPalette, ContextMenu, DamageRegion, RenderCell, RenderRow, RenderSnapshot,
-    SearchPanel, SuggestionDropdown, TerminalLink, Toast, ToastKind,
+    SearchPanel, SnapshotImage, SuggestionDropdown, TerminalLink, Toast, ToastKind,
 };
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
@@ -113,6 +113,8 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
 
     let (copy_mode_highlights, copy_mode_cursor) = build_copy_mode_section(state, active);
 
+    let terminal_images = build_terminal_images(state, active, scroll_offset);
+
     let terminal_links =
         build_terminal_links(state, active, &terminal_text, term_cols, scroll_offset);
 
@@ -160,6 +162,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             search_current_highlight,
             copy_mode_highlights,
             copy_mode_cursor,
+            terminal_images,
             terminal_links,
             resize_overlay,
             selection,
@@ -193,6 +196,7 @@ struct ComputedFrame {
     search_current_highlight: Option<(usize, usize, usize)>,
     copy_mode_highlights: Vec<(usize, usize, usize)>,
     copy_mode_cursor: Option<(usize, usize)>,
+    terminal_images: Vec<SnapshotImage>,
     terminal_links: Vec<TerminalLink>,
     resize_overlay: Option<String>,
     selection: Option<(usize, usize, usize, usize)>,
@@ -238,6 +242,7 @@ fn assemble_snapshot(state: &GpuRuntimeState, active: usize, f: ComputedFrame) -
         search_current_highlight: f.search_current_highlight,
         copy_mode_highlights: f.copy_mode_highlights,
         copy_mode_cursor: f.copy_mode_cursor,
+        terminal_images: f.terminal_images,
         tab_labels: f.tab_labels,
         active_tab: active,
         context_menu: f.context_menu,
@@ -705,6 +710,19 @@ fn build_copy_mode_section(state: &GpuRuntimeState, active: usize) -> CopyModeSe
     };
 
     (highlights, cursor_pos)
+}
+
+/// Build terminal image list in viewport coordinates.
+fn build_terminal_images(
+    _state: &GpuRuntimeState,
+    _active: usize,
+    _scroll_offset: usize,
+) -> Vec<SnapshotImage> {
+    // TODO: Once AppTerminal exposes screen images publicly, project them here.
+    // For now, images are stored on the screen but not displayed via snapshot.
+    // The infrastructure is in place (sixel decoder → screen.place_image → images vec)
+    // but rendering support requires exposing the images through the App/AppTerminal API.
+    Vec::new()
 }
 
 /// Detect terminal links and return only the hovered URL's segments (if any).

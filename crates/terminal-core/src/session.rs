@@ -74,6 +74,15 @@ pub trait TerminalDisplay {
     /// Used by synchronized output mode reset (`?2026l`) to flush accumulated
     /// damage after an atomic update.
     fn mark_full_redraw(&mut self);
+    /// Place an image at the current cursor position.
+    fn place_image(
+        &mut self,
+        width_px: usize,
+        height_px: usize,
+        rgba: Arc<Vec<u8>>,
+        image_cols: u16,
+        image_rows: u16,
+    );
 }
 
 impl TerminalDisplay for Screen {
@@ -255,6 +264,17 @@ impl TerminalDisplay for Screen {
 
     fn mark_full_redraw(&mut self) {
         Screen::mark_full_redraw(self)
+    }
+
+    fn place_image(
+        &mut self,
+        width_px: usize,
+        height_px: usize,
+        rgba: Arc<Vec<u8>>,
+        image_cols: u16,
+        image_rows: u16,
+    ) {
+        Screen::place_image(self, width_px, height_px, rgba, image_cols, image_rows)
     }
 }
 
@@ -465,6 +485,7 @@ where
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn feed(&mut self, bytes: &[u8]) {
         let actions = self.parser.advance(bytes);
         metrics::histogram!("parse_actions").record(actions.len() as f64);
@@ -565,13 +586,34 @@ where
                     let decoded = percent_decode(&path);
                     self.cwd = Some(std::path::PathBuf::from(decoded));
                 }
-                Action::DcsString(_payload) => {
-                    // DCS payloads (Sixel, iTerm2 images, etc.) are currently
-                    // discarded. Full implementation would:
-                    // 1. Decode payload as Sixel or iTerm2 image format
-                    // 2. Place decoded TerminalImage on screen at cursor position
-                    // 3. Advance cursor past the image
-                    // For now, this is a no-op while the integration is proven.
+                Action::DcsString(payload) => {
+                    // Sixel image data: payload starts with 'q'
+                    if !payload.is_empty() && payload[0] == b'q' {
+                        // Skip the 'q' prefix and decode the rest
+                        let image_data = &payload[1..];
+                        match crate::sixel::decode_sixel(image_data) {
+                            Ok(sixel_image) => {
+                                // Calculate grid dimensions:
+                                // Assume 8 pixels per grid column, 16 pixels per grid row
+                                let cols_per_char = 8;
+                                let rows_per_char = 16;
+                                let image_cols = sixel_image.width.div_ceil(cols_per_char) as u16;
+                                let image_rows = sixel_image.height.div_ceil(rows_per_char) as u16;
+
+                                // Place the image on the screen
+                                self.screen.place_image(
+                                    sixel_image.width,
+                                    sixel_image.height,
+                                    std::sync::Arc::new(sixel_image.rgba),
+                                    image_cols,
+                                    image_rows,
+                                );
+                            }
+                            Err(_e) => {
+                                // Decoding failed - image is silently dropped
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -971,6 +1013,16 @@ mod tests {
         }
 
         fn mark_full_redraw(&mut self) {}
+
+        fn place_image(
+            &mut self,
+            _width_px: usize,
+            _height_px: usize,
+            _rgba: Arc<Vec<u8>>,
+            _image_cols: u16,
+            _image_rows: u16,
+        ) {
+        }
     }
 
     #[test]

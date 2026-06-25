@@ -11,7 +11,7 @@ mod screen;
 pub use cell::{Cell, CellStyle};
 pub use color::{ansi_color_to_rgb_with_palette, ansi_indexed_to_rgb};
 pub use hyperlink::HyperlinkInterner;
-pub use screen::{DamageRegion, Screen, ScreenSnapshot};
+pub use screen::{DamageRegion, Screen, ScreenSnapshot, TerminalImage};
 
 /// Per-character styled data: (character, foreground RGB, background RGB, style bits).
 /// `None` on the color fields means the cell uses the renderer's default color.

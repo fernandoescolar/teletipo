@@ -11,7 +11,7 @@ pub use overlays::{
     SuggestionDropdown, Toast, ToastKind,
 };
 pub use screen::{DamageRegion, RenderCell, RenderRow};
-pub use snapshot::{RenderSnapshot, SearchPanel, TerminalLink};
+pub use snapshot::{RenderSnapshot, SearchPanel, SnapshotImage, TerminalLink};
 pub use stats::RenderStats;
 pub use theme::{
     ColorTheme, FontConfig, PaneKind, PaneLayout, PipelineStage, RenderConfig, SCROLLBAR_W_PX,
