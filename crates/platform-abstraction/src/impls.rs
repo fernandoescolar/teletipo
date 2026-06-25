@@ -61,12 +61,12 @@ impl SystemClipboardInner {
     }
 
     fn set_text(&mut self, text: String) {
-        if let Some(cb) = self.handle_mut() {
-            if let Err(err) = cb.set_text(text) {
-                tracing::debug!("clipboard write failed: {}", err);
-                // Clear handle for next operation
-                self.handle = None;
-            }
+        if let Some(cb) = self.handle_mut()
+            && let Err(err) = cb.set_text(text)
+        {
+            tracing::debug!("clipboard write failed: {}", err);
+            // Clear handle for next operation
+            self.handle = None;
         }
     }
 }
