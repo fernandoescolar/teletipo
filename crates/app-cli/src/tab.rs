@@ -3,6 +3,20 @@ use terminal_pty::PortablePtySession;
 
 use crate::search::SearchState;
 
+/// Copy mode state for scrollback-driven selection (Ctrl+Shift+[).
+#[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
+pub(crate) struct CopyModeState {
+    /// Whether copy mode is currently active.
+    pub(crate) active: bool,
+    /// Cursor row (signed offset from bottom of scrollback/grid; 0 = current grid top).
+    pub(crate) cursor_row: isize,
+    /// Cursor column.
+    pub(crate) cursor_col: usize,
+    /// Selection anchor (row, col), if `v` was pressed to start selection.
+    pub(crate) anchor: Option<(isize, usize)>,
+}
+
 /// Per-command frecency tracking data persisted across sessions.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct HistoryEntry {
@@ -87,6 +101,9 @@ pub(crate) struct TabState {
     /// `true` when the tab has received BEL while in background and the user
     /// has not yet visited it. Cleared when the tab becomes active.
     pub(crate) bell_pending: bool,
+    /// Copy mode state (keyboard-driven scrollback selection).
+    #[allow(dead_code)]
+    pub(crate) copy_mode: CopyModeState,
     /// Screen version seen at the last accessibility-tree push.
     /// Used to skip `update_accessibility_tree` when nothing changed.
     pub(crate) a11y_screen_version: u64,

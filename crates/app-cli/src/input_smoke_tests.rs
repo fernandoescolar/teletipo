@@ -50,6 +50,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         pending_cmd: None,
         shell_integration: false,
         search: search::SearchState::default(),
+        copy_mode: tab::CopyModeState::default(),
         command_running: false,
         editor_unlocked: false,
         command_start_time: None,

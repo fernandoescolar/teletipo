@@ -61,6 +61,7 @@ fn default_term() -> String {
 /// `ESC ] 133 ; D ; <exit_code> BEL` before each prompt (OSC 133).
 /// Returns `None` if the shell is not supported or the files cannot be written.
 #[tracing::instrument(skip(shell))]
+#[allow(clippy::too_many_lines)]
 fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
     let shell_name = std::path::Path::new(shell)
         .file_name()

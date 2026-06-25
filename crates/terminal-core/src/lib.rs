@@ -4,6 +4,7 @@
 
 mod error;
 mod session;
+pub mod sixel;
 
 pub use error::TerminalError;
 pub use session::{

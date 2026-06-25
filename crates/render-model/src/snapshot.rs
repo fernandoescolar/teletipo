@@ -79,6 +79,10 @@ pub struct RenderSnapshot {
     pub search_highlights: Vec<(usize, usize, usize)>,
     /// Highlight range for the active terminal search match in viewport coordinates.
     pub search_current_highlight: Option<(usize, usize, usize)>,
+    /// Copy mode selection highlight ranges in viewport coordinates (row, col_start, col_end).
+    pub copy_mode_highlights: Vec<(usize, usize, usize)>,
+    /// Copy mode cursor position (row, col) in viewport coordinates, if copy mode is active.
+    pub copy_mode_cursor: Option<(usize, usize)>,
     /// Label for every open tab (e.g. "Tab 1", "Tab 2"). When empty the tab bar
     /// is not rendered. Populated by the application layer.
     pub tab_labels: Vec<String>,

@@ -111,6 +111,8 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let (search_panel, search_highlights, search_current_highlight) =
         build_search_section(state, active);
 
+    let (copy_mode_highlights, copy_mode_cursor) = build_copy_mode_section(state, active);
+
     let terminal_links =
         build_terminal_links(state, active, &terminal_text, term_cols, scroll_offset);
 
@@ -156,6 +158,8 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             search_panel,
             search_highlights,
             search_current_highlight,
+            copy_mode_highlights,
+            copy_mode_cursor,
             terminal_links,
             resize_overlay,
             selection,
@@ -187,6 +191,8 @@ struct ComputedFrame {
     search_panel: Option<SearchPanel>,
     search_highlights: Vec<(usize, usize, usize)>,
     search_current_highlight: Option<(usize, usize, usize)>,
+    copy_mode_highlights: Vec<(usize, usize, usize)>,
+    copy_mode_cursor: Option<(usize, usize)>,
     terminal_links: Vec<TerminalLink>,
     resize_overlay: Option<String>,
     selection: Option<(usize, usize, usize, usize)>,
@@ -230,6 +236,8 @@ fn assemble_snapshot(state: &GpuRuntimeState, active: usize, f: ComputedFrame) -
         selection: f.selection,
         search_highlights: f.search_highlights,
         search_current_highlight: f.search_current_highlight,
+        copy_mode_highlights: f.copy_mode_highlights,
+        copy_mode_cursor: f.copy_mode_cursor,
         tab_labels: f.tab_labels,
         active_tab: active,
         context_menu: f.context_menu,
@@ -620,6 +628,83 @@ fn build_search_section(state: &mut GpuRuntimeState, active: usize) -> SearchSec
         highlights,
         current,
     )
+}
+
+/// `(highlights, cursor_position)` for copy mode rendering.
+type CopyModeSection = (Vec<(usize, usize, usize)>, Option<(usize, usize)>);
+
+/// Build copy mode highlights and cursor position for the active tab.
+fn build_copy_mode_section(state: &GpuRuntimeState, active: usize) -> CopyModeSection {
+    let tab = &state.tabs[active];
+    if !tab.copy_mode.active {
+        return (Vec::new(), None);
+    }
+
+    let visible_rows = tab.term_row_count.max(1);
+    let total_rows = (tab.app.scrollback_len() + visible_rows).max(visible_rows);
+    let window_start = total_rows
+        .saturating_sub(visible_rows)
+        .saturating_sub(tab.scroll_offset.min(tab.app.scrollback_len()));
+    let window_end = window_start.saturating_add(visible_rows);
+
+    // Build selection highlights if anchor is set
+    let mut highlights = Vec::new();
+    if let Some((anchor_row, anchor_col)) = tab.copy_mode.anchor {
+        let cursor_row = tab.copy_mode.cursor_row;
+        let cursor_col = tab.copy_mode.cursor_col;
+
+        // Normalize selection bounds
+        let (start_row, start_col, end_row, end_col) =
+            if anchor_row > cursor_row || (anchor_row == cursor_row && anchor_col > cursor_col) {
+                (cursor_row, cursor_col, anchor_row, anchor_col)
+            } else {
+                (anchor_row, anchor_col, cursor_row, cursor_col)
+            };
+
+        // Convert from scrollback-relative coordinates to viewport coordinates
+        // scrollback_len() + rows covers the entire terminal height (scrollback + visible grid)
+        // Row 0 = current screen bottom (latest output), negative rows = scrollback
+        let scrollback_len = tab.app.scrollback_len() as isize;
+        let abs_start_row = (scrollback_len + start_row) as usize;
+        let abs_end_row = (scrollback_len + end_row) as usize;
+
+        // Add selection highlights for all rows in range
+        if abs_start_row < window_end && abs_end_row >= window_start {
+            let vis_start_row = abs_start_row.saturating_sub(window_start);
+            let vis_end_row = (abs_end_row + 1).min(window_end) - window_start;
+
+            if vis_start_row == vis_end_row {
+                // Single-row selection
+                highlights.push((vis_start_row, start_col, end_col));
+            } else {
+                // Multi-row selection: highlight entire rows in between
+                if abs_start_row >= window_start {
+                    highlights.push((vis_start_row, start_col, 200)); // Start row: from start_col to EOL
+                }
+                for row in (abs_start_row + 1)..abs_end_row {
+                    if row >= window_start && row < window_end {
+                        let vis_row = row - window_start;
+                        highlights.push((vis_row, 0, 200)); // Full row width
+                    }
+                }
+                if abs_end_row < window_end {
+                    let vis_row = abs_end_row - window_start;
+                    highlights.push((vis_row, 0, end_col)); // End row: from 0 to end_col
+                }
+            }
+        }
+    }
+
+    // Build cursor position (viewport coordinates)
+    let scrollback_len = tab.app.scrollback_len() as isize;
+    let abs_cursor_row = (scrollback_len + tab.copy_mode.cursor_row) as usize;
+    let cursor_pos = if abs_cursor_row >= window_start && abs_cursor_row < window_end {
+        Some((abs_cursor_row - window_start, tab.copy_mode.cursor_col))
+    } else {
+        None
+    };
+
+    (highlights, cursor_pos)
 }
 
 /// Detect terminal links and return only the hovered URL's segments (if any).

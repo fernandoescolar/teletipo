@@ -565,6 +565,14 @@ where
                     let decoded = percent_decode(&path);
                     self.cwd = Some(std::path::PathBuf::from(decoded));
                 }
+                Action::DcsString(_payload) => {
+                    // DCS payloads (Sixel, iTerm2 images, etc.) are currently
+                    // discarded. Full implementation would:
+                    // 1. Decode payload as Sixel or iTerm2 image format
+                    // 2. Place decoded TerminalImage on screen at cursor position
+                    // 3. Advance cursor past the image
+                    // For now, this is a no-op while the integration is proven.
+                }
             }
         }
     }
@@ -961,6 +969,8 @@ mod tests {
         fn dump_hyperlink_spans(&self, _scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
             Vec::new()
         }
+
+        fn mark_full_redraw(&mut self) {}
     }
 
     #[test]

@@ -84,6 +84,9 @@ fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &winit::event::Ke
         handle_search_key(state, key_event);
         return true;
     }
+    if state.tab().copy_mode.active {
+        return crate::input::copy_mode::handle_copy_mode_key(state, key_event);
+    }
     if handle_non_macos_ctrl_shortcuts(state, key_event) {
         return true;
     }

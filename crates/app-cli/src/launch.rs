@@ -515,6 +515,7 @@ fn build_single_tab(
         pending_cmd: None,
         shell_integration: integration,
         search: crate::search::SearchState::default(),
+        copy_mode: crate::tab::CopyModeState::default(),
         command_running: false,
         editor_unlocked: false,
         command_start_time: None,

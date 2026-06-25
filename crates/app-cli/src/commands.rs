@@ -44,6 +44,9 @@ pub(crate) enum CommandId {
     RepeatLastCommand,
     ClearScrollback,
     CopyLastOutput,
+    // Copy mode (keyboard scrollback selection)
+    CopyModeEnter,
+    CopyModeExit,
 }
 
 impl CommandId {
@@ -71,6 +74,8 @@ impl CommandId {
             "repeat_last_command" => Some(Self::RepeatLastCommand),
             "clear_scrollback" => Some(Self::ClearScrollback),
             "copy_last_output" => Some(Self::CopyLastOutput),
+            "copy_mode_enter" => Some(Self::CopyModeEnter),
+            "copy_mode_exit" => Some(Self::CopyModeExit),
             _ => None,
         }
     }
@@ -115,6 +120,16 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
         | CommandId::RepeatLastCommand
         | CommandId::ClearScrollback
         | CommandId::CopyLastOutput => execute_dev_command(state, cmd),
+        CommandId::CopyModeEnter => {
+            state.tab_mut().copy_mode.active = true;
+            state.tab_mut().copy_mode.cursor_row = 0;
+            state.tab_mut().copy_mode.cursor_col = 0;
+            state.tab_mut().copy_mode.anchor = None;
+        }
+        CommandId::CopyModeExit => {
+            state.tab_mut().copy_mode.active = false;
+            state.tab_mut().copy_mode.anchor = None;
+        }
     }
 }
 

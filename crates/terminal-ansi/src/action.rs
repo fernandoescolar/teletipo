@@ -72,4 +72,7 @@ pub enum Action {
     /// OSC 1337;CurrentDir=`path` — iTerm2 working-directory report.
     /// Semantically equivalent to OSC 7; both update the shell CWD label.
     SetCwdIterm(String),
+    /// DCS (Device Control String) payload: `ESC P ... ST`.
+    /// Currently used for Sixel graphics (`q` prefix).
+    DcsString(Vec<u8>),
 }

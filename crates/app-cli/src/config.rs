@@ -369,8 +369,7 @@ impl UserConfig {
             },
             ("terminal", "opacity") => {
                 if let Ok(v) = value.parse::<f32>()
-                    && v >= 0.1
-                    && v <= 1.0
+                    && (0.1..=1.0).contains(&v)
                 {
                     self.terminal.opacity = v;
                     return true;

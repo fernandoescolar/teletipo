@@ -22,6 +22,9 @@ enum ParserState {
     EscIntermediate,
     Csi,
     Osc,
+    /// DCS (Device Control String): ESC P ... ST (ESC \\ or BEL).
+    /// Used by Sixel graphics and iTerm2 image protocols.
+    Dcs,
 }
 
 /// Incremental ANSI / VT escape-sequence parser.
@@ -35,6 +38,9 @@ pub struct Parser {
     csi_buf: Vec<u8>,
     osc_buf: Vec<u8>,
     osc_esc_seen: bool,
+    /// DCS (Device Control String) data accumulator: `ESC P ... ST`.
+    dcs_buf: Vec<u8>,
+    dcs_esc_seen: bool,
     /// Partial UTF-8 sequence accumulator (up to 4 bytes).
     utf8_buf: [u8; 4],
     /// Number of bytes currently in `utf8_buf`.
@@ -48,6 +54,8 @@ impl Parser {
             csi_buf: Vec::with_capacity(64),
             osc_buf: Vec::with_capacity(64),
             osc_esc_seen: false,
+            dcs_buf: Vec::with_capacity(256),
+            dcs_esc_seen: false,
             utf8_buf: [0u8; 4],
             utf8_len: 0,
         }
@@ -91,6 +99,24 @@ impl Parser {
                 } else {
                     self.osc_esc_seen = false;
                     self.osc_buf.push(byte);
+                }
+            }
+            ParserState::Dcs => {
+                if byte == 0x07 || (self.dcs_esc_seen && byte == b'\\') {
+                    // End of DCS: `ST` received (either BEL or ESC \\).
+                    // Emit action for sixel or other DCS payload.
+                    if !self.dcs_buf.is_empty() && self.dcs_buf[0] == b'q' {
+                        // Sixel image data: `DCS q ... ST`
+                        actions.push(Action::DcsString(self.dcs_buf.clone()));
+                    }
+                    self.dcs_buf.clear();
+                    self.dcs_esc_seen = false;
+                    self.state = ParserState::Ground;
+                } else if byte == 0x1b {
+                    self.dcs_esc_seen = true;
+                } else {
+                    self.dcs_esc_seen = false;
+                    self.dcs_buf.push(byte);
                 }
             }
         }
@@ -147,6 +173,13 @@ impl Parser {
                 self.osc_esc_seen = false;
                 self.osc_buf.clear();
                 self.state = ParserState::Osc;
+            }
+            b'P' => {
+                // DCS: Device Control String (ESC P ... ST).
+                // Used by Sixel graphics and iTerm2 image protocols.
+                self.dcs_esc_seen = false;
+                self.dcs_buf.clear();
+                self.state = ParserState::Dcs;
             }
             b'7' => {
                 actions.push(Action::SaveCursor);
