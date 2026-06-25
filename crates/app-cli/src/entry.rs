@@ -92,9 +92,13 @@ pub fn run(
             return std::process::ExitCode::FAILURE;
         }
     };
-    let (initial_font_family, initial_font_size) = {
+    let (initial_font_family, initial_font_size, initial_opacity) = {
         let s = state.borrow();
-        (s.user_config.font.family.clone(), s.user_config.font.size)
+        (
+            s.user_config.font.family.clone(),
+            s.user_config.font.size,
+            s.user_config.terminal.opacity,
+        )
     };
     match cli.renderer {
         RendererBackend::Wgpu => {
@@ -110,9 +114,10 @@ pub fn run(
                     initial_size: Some((window_width, window_height)),
                     initial_position: window_pos,
                     font: FontConfig {
-                        font_family: initial_font_family,
+                        font_family: initial_font_family.clone(),
                         font_size: initial_font_size,
                     },
+                    opacity: initial_opacity,
                     ..RenderConfig::default()
                 },
             ) {
@@ -135,6 +140,7 @@ pub fn run(
                         font_family: initial_font_family,
                         font_size: initial_font_size,
                     },
+                    opacity: initial_opacity,
                     ..RenderConfig::default()
                 },
             ) {

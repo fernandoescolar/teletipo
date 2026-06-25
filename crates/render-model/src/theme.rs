@@ -118,6 +118,9 @@ pub struct RenderConfig {
     pub initial_size: Option<(u32, u32)>,
     /// If `Some`, position the window at these physical-pixel screen coordinates on startup.
     pub initial_position: Option<(i32, i32)>,
+    /// Background opacity (0.1–1.0). Values below 1.0 enable window transparency.
+    /// Requires a compositing window manager on Linux/X11.
+    pub opacity: f32,
 }
 
 impl Default for RenderConfig {
@@ -130,6 +133,7 @@ impl Default for RenderConfig {
             theme: ColorTheme::default(),
             initial_size: None,
             initial_position: None,
+            opacity: 1.0,
         }
     }
 }

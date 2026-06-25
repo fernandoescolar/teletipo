@@ -259,6 +259,7 @@ fn assemble_snapshot(state: &GpuRuntimeState, active: usize, f: ComputedFrame) -
         suggestion_dropdown: f.suggestion_dropdown,
         font_size: state.user_config.font.size,
         command_palette: f.command_palette,
+        opacity: state.user_config.terminal.opacity,
     }
 }
 

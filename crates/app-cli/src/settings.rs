@@ -28,6 +28,7 @@ fn numeric_step(section: &str, key: &str) -> Option<f32> {
         ("font", "size") => Some(0.5),
         ("padding", "horizontal") | ("padding", "vertical") => Some(1.0),
         ("terminal", "scrollback_lines") => Some(500.0),
+        ("terminal", "opacity") => Some(0.05),
         _ => None,
     }
 }

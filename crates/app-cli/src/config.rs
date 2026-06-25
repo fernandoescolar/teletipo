@@ -58,6 +58,10 @@ pub struct TerminalCfg {
     /// Minimum command duration (seconds) before an OS notification is sent
     /// when the window is not focused. 0 = disabled (default).
     pub notify_on_command_secs: u32,
+
+    /// Background opacity (0.1 = nearly transparent, 1.0 = fully opaque).
+    /// Requires a compositing window manager on Linux. Default: 1.0.
+    pub opacity: f32,
 }
 
 impl Default for TerminalCfg {
@@ -68,6 +72,7 @@ impl Default for TerminalCfg {
             bell: true,
             restore_session: true,
             notify_on_command_secs: 0,
+            opacity: 1.0,
         }
     }
 }
@@ -142,6 +147,10 @@ pub const SETTINGS_FIELDS: &[SettingsDef] = &[
         section: "terminal",
         key: "restore_session",
     },
+    SettingsDef {
+        section: "terminal",
+        key: "opacity",
+    },
 ];
 
 pub struct SettingsDef {
@@ -193,6 +202,7 @@ impl UserConfig {
                     "off".to_owned()
                 }
             }
+            ("terminal", "opacity") => format!("{:.2}", self.terminal.opacity),
             _ => String::new(),
         }
     }
@@ -254,6 +264,22 @@ impl UserConfig {
                 field = "terminal.shell",
                 shell = %shell,
                 "configured shell path does not exist; will fall back at spawn time"
+            );
+        }
+        if !self.terminal.opacity.is_finite()
+            || self.terminal.opacity < 0.1
+            || self.terminal.opacity > 1.0
+        {
+            let old = self.terminal.opacity;
+            self.terminal.opacity = self.terminal.opacity.clamp(0.1, 1.0);
+            if !old.is_finite() {
+                self.terminal.opacity = 1.0;
+            }
+            tracing::warn!(
+                field = "terminal.opacity",
+                old = old,
+                new = self.terminal.opacity,
+                "clamped out-of-range value"
             );
         }
     }
@@ -341,6 +367,16 @@ impl UserConfig {
                 }
                 _ => false,
             },
+            ("terminal", "opacity") => {
+                if let Ok(v) = value.parse::<f32>()
+                    && v >= 0.1
+                    && v <= 1.0
+                {
+                    self.terminal.opacity = v;
+                    return true;
+                }
+                false
+            }
             _ => false,
         }
     }

@@ -142,6 +142,10 @@ pub struct RenderSnapshot {
     /// Current logical font size in points (unscaled). When this changes the
     /// renderer should rebuild font metrics and reflow the terminal.
     pub font_size: f32,
+    /// Background opacity (0.1–1.0) configured by the user. Applied as the
+    /// alpha component of the GL clear color so the compositor can show the
+    /// desktop behind the terminal window.
+    pub opacity: f32,
 }
 
 impl RenderSnapshot {

@@ -192,6 +192,13 @@ where
         builder = builder.with_titlebar_transparent(true);
     }
 
+    // Enable window-level transparency when the configured opacity is below 1.0.
+    // The alpha channel on the GL config (with_alpha_size(8)) is already requested.
+    // On Linux this requires a compositing WM (KWin, Mutter, Picom, etc.).
+    if config.opacity < 1.0 {
+        builder = builder.with_transparent(true);
+    }
+
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
     let display_builder = DisplayBuilder::new().with_window_builder(Some(builder));
     let (window_opt, gl_config) = display_builder
@@ -391,7 +398,9 @@ where
                                     snapshot.theme.terminal_bg[0],
                                     snapshot.theme.terminal_bg[1],
                                     snapshot.theme.terminal_bg[2],
-                                    snapshot.theme.terminal_bg[3],
+                                    // Multiply the theme's alpha by the user-configured
+                                    // opacity so backgrounds can be semi-transparent.
+                                    snapshot.theme.terminal_bg[3] * snapshot.opacity,
                                 );
                                 gl.clear(glow::COLOR_BUFFER_BIT);
                             }
