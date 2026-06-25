@@ -84,7 +84,7 @@ fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &winit::event::Ke
         handle_search_key(state, key_event);
         return true;
     }
-    if handle_windows_shortcuts(state, key_event) {
+    if handle_non_macos_ctrl_shortcuts(state, key_event) {
         return true;
     }
 
@@ -101,8 +101,8 @@ fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &winit::event::Ke
     false
 }
 
-#[cfg(target_os = "windows")]
-fn handle_windows_shortcuts(
+#[cfg(not(target_os = "macos"))]
+fn handle_non_macos_ctrl_shortcuts(
     state: &mut GpuRuntimeState,
     key_event: &winit::event::KeyEvent,
 ) -> bool {
@@ -158,8 +158,8 @@ fn handle_windows_shortcuts(
     false
 }
 
-#[cfg(not(target_os = "windows"))]
-fn handle_windows_shortcuts(
+#[cfg(target_os = "macos")]
+fn handle_non_macos_ctrl_shortcuts(
     _state: &mut GpuRuntimeState,
     _key_event: &winit::event::KeyEvent,
 ) -> bool {
