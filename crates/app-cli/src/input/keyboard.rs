@@ -269,7 +269,17 @@ fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEv
 
     match &key_event.logical_key {
         Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "," => false,
+        Key::Character(ch)
+            if state.modifiers.ctrl_down
+                && state.modifiers.shift_down
+                && ch.as_str().eq_ignore_ascii_case("v") =>
+        {
+            false
+        }
         Key::Named(named) => {
+            if matches!(named, NamedKey::Paste) {
+                return false;
+            }
             if let Some(seq) = pty_named_sequence(named, app_cursor) {
                 state.send_terminal_input(seq);
                 true
