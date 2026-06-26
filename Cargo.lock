@@ -155,6 +155,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "terminal-core",
  "terminal-pty",
  "thiserror 2.0.18",
  "toml 0.8.23",

@@ -405,6 +405,11 @@ impl Screen {
         spans
     }
 
+    /// Get all terminal images currently on the screen.
+    pub fn images(&self) -> &[TerminalImage] {
+        &self.images
+    }
+
     pub fn linefeed(&mut self) {
         let region = self.scroll_region;
         if self.use_alternate {

@@ -43,16 +43,44 @@ const DEFAULT_PALETTE: &[[u8; 3]] = &[
     [255, 255, 255], // 15: bright white
 ];
 
+/// Convert HLS (Hue, Lightness, Saturation) to RGB.
+/// H: 0-360 degrees
+/// L: 0-255 (normalized to 0-1 by dividing by 255)
+/// S: 0-255 (normalized to 0-1 by dividing by 255)
+/// Returns (R, G, B) where each is 0-1.
+fn hls_to_rgb(h: f32, l: f32, s: f32) -> (f32, f32, f32) {
+    let h = h % 360.0;
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h_prime = h / 60.0;
+    let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());
+    
+    let (r1, g1, b1) = if h_prime < 1.0 {
+        (c, x, 0.0)
+    } else if h_prime < 2.0 {
+        (x, c, 0.0)
+    } else if h_prime < 3.0 {
+        (0.0, c, x)
+    } else if h_prime < 4.0 {
+        (0.0, x, c)
+    } else if h_prime < 5.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    
+    let m = l - c / 2.0;
+    ((r1 + m).max(0.0).min(1.0), (g1 + m).max(0.0).min(1.0), (b1 + m).max(0.0).min(1.0))
+}
+
 /// Sixel decoder state machine for parsing graphics data.
 struct SixelDecoder {
     width: usize,
     height: usize,
     palette: HashMap<u8, [u8; 3]>,
     current_color: u8,
-    rows: Vec<Vec<u8>>, // Each row is a vec of palette indices
-    current_row: Vec<u8>,
-    current_col: usize,
-    sixel_height: usize, // Height in sixels (default 6 pixels per sixel)
+    rows: Vec<Vec<u8>>, // rows[pixel_row][pixel_col] = palette index
+    current_col: usize, // Current column in current sixel row
+    current_sixel_row: usize, // Which sixel row we're on (0 means rows 0-5, 1 means rows 6-11, etc.)
 }
 
 impl SixelDecoder {
@@ -68,26 +96,38 @@ impl SixelDecoder {
             palette,
             current_color: 0,
             rows: Vec::new(),
-            current_row: Vec::new(),
             current_col: 0,
-            sixel_height: 6,
+            current_sixel_row: 0,
         }
     }
 
-    /// Parse raster attributes: `"Pw;Ph;Pc`
+    /// Parse raster attributes: can be 3-parameter legacy or 4-parameter extended
+    /// Legacy (3 params): "Pw;Ph;Pc (width, height, color-map-type)
+    /// Extended (4 params): "Pan;Pad;Pw;Ph (aspect num/denom, pixel width, pixel height)
     fn parse_raster_attributes(&mut self, attrs: &str) {
         let parts: Vec<&str> = attrs.split(';').collect();
-        if !parts.is_empty()
-            && let Ok(w) = parts[0].parse::<usize>()
-        {
-            self.width = w.max(1);
+        
+        if parts.len() >= 4 {
+            // Extended 4-parameter format: Pan;Pad;Pw;Ph
+            // parts[0] = aspect numerator (ignore)
+            // parts[1] = aspect denominator (ignore)
+            // parts[2] = pixel width
+            // parts[3] = pixel height
+            if let Ok(w) = parts[2].parse::<usize>() {
+                self.width = w.max(1);
+            }
+            if let Ok(h) = parts[3].parse::<usize>() {
+                self.height = h.max(1);
+            }
+        } else if parts.len() >= 2 {
+            // Legacy 3-parameter format: Pw;Ph;Pc
+            if let Ok(w) = parts[0].parse::<usize>() {
+                self.width = w.max(1);
+            }
+            if let Ok(h) = parts[1].parse::<usize>() {
+                self.height = h.max(1);
+            }
         }
-        if parts.len() >= 2
-            && let Ok(h) = parts[1].parse::<usize>()
-        {
-            self.height = h.max(1);
-        }
-        // parts[2] is color-map-type (0=indexed, 1=RGB), handled elsewhere
     }
 
     /// Parse color palette definition: `#N;Cs;Hls;R;G;B`
@@ -102,22 +142,28 @@ impl SixelDecoder {
             Err(_) => return,
         };
         let color_space = parts[1];
-        let _mode = parts[2];
-        let r_str = parts.get(3).copied().unwrap_or("0");
-        let g_str = parts.get(4).copied().unwrap_or("0");
-        let b_str = parts.get(5).copied().unwrap_or("0");
+        let v1_str = parts.get(2).copied().unwrap_or("0");
+        let v2_str = parts.get(3).copied().unwrap_or("0");
+        let v3_str = parts.get(4).copied().unwrap_or("0");
 
         let (r, g, b) = if color_space == "1" {
-            // RGB color space
-            let r = r_str.parse::<u8>().unwrap_or(0);
-            let g = g_str.parse::<u8>().unwrap_or(0);
-            let b = b_str.parse::<u8>().unwrap_or(0);
+            // RGB color space: v1=R, v2=G, v3=B (0-255)
+            let r = v1_str.parse::<u8>().unwrap_or(0);
+            let g = v2_str.parse::<u8>().unwrap_or(0);
+            let b = v3_str.parse::<u8>().unwrap_or(0);
             (r, g, b)
+        } else if color_space == "2" {
+            // HLS color space: v1=H (0-360), v2=L (0-100), v3=S (0-100)
+            let h = v1_str.parse::<f32>().unwrap_or(0.0);
+            let l = v2_str.parse::<f32>().unwrap_or(0.0) / 100.0; // Normalize to 0-1
+            let s = v3_str.parse::<f32>().unwrap_or(0.0) / 100.0; // Normalize to 0-1
+            let (rf, gf, bf) = hls_to_rgb(h, l, s);
+            ((rf * 255.0) as u8, (gf * 255.0) as u8, (bf * 255.0) as u8)
         } else {
-            // HLS color space (simplified - just use RGB values directly for now)
-            let r = r_str.parse::<u8>().unwrap_or(0);
-            let g = g_str.parse::<u8>().unwrap_or(0);
-            let b = b_str.parse::<u8>().unwrap_or(0);
+            // Unknown color space, use values directly
+            let r = v1_str.parse::<u8>().unwrap_or(0);
+            let g = v2_str.parse::<u8>().unwrap_or(0);
+            let b = v3_str.parse::<u8>().unwrap_or(0);
             (r, g, b)
         };
 
@@ -136,29 +182,57 @@ impl SixelDecoder {
         }
 
         let bits = byte - 0x3F;
-        for row_offset in 0..6 {
-            if bits & (1 << row_offset) != 0 {
+        let base_row = self.current_sixel_row * 6; // Which row to start writing from
+        
+        for bit_offset in 0..6 {
+            if bits & (1 << bit_offset) != 0 {
+                let row_idx = base_row + bit_offset;
+                
                 // Extend rows if needed
-                while self.rows.len() <= row_offset {
+                while self.rows.len() <= row_idx {
                     self.rows.push(Vec::new());
                 }
+                
                 // Extend current row to current column
-                while self.rows[row_offset].len() <= self.current_col {
-                    self.rows[row_offset].push(0);
+                while self.rows[row_idx].len() <= self.current_col {
+                    self.rows[row_idx].push(0);
                 }
-                self.rows[row_offset][self.current_col] = self.current_color;
+                
+                self.rows[row_idx][self.current_col] = self.current_color;
             }
         }
+        
         self.current_col += 1;
     }
 
     /// Carriage return (advance to start of next sixel row).
     fn carriage_return(&mut self) {
-        // Finish current row
-        if !self.current_row.is_empty() {
-            self.rows.push(self.current_row.clone());
-            self.current_row.clear();
+        // Get the maximum column width for this sixel row
+        let base_row = self.current_sixel_row * 6;
+        let max_col = (0..6)
+            .map(|i| {
+                if base_row + i < self.rows.len() {
+                    self.rows[base_row + i].len()
+                } else {
+                    0
+                }
+            })
+            .max()
+            .unwrap_or(0);
+        
+        // Pad all rows in this sixel row to the same length
+        for i in 0..6 {
+            let row_idx = base_row + i;
+            while row_idx >= self.rows.len() {
+                self.rows.push(Vec::new());
+            }
+            while self.rows[row_idx].len() < max_col {
+                self.rows[row_idx].push(0);
+            }
         }
+        
+        // Move to next sixel row
+        self.current_sixel_row += 1;
         self.current_col = 0;
     }
 
@@ -169,9 +243,18 @@ impl SixelDecoder {
             return (vec![], 0, 0);
         }
 
-        // Determine final dimensions
-        let height_px = self.rows.len() * self.sixel_height;
-        let width_px = self.rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        // Use raster attributes for dimensions, or calculate from data
+        let height_px = if self.height > 0 {
+            self.height
+        } else {
+            self.rows.len()  // Now rows.len() directly represents pixel height
+        };
+        
+        let width_px = if self.width > 0 {
+            self.width
+        } else {
+            self.rows.iter().map(|r| r.len()).max().unwrap_or(0)
+        };
 
         if width_px == 0 || height_px == 0 {
             return (vec![], 0, 0);
@@ -179,7 +262,7 @@ impl SixelDecoder {
 
         let mut rgba = vec![0u8; width_px * height_px * 4];
 
-        // Fill with background (white by default) and overwrite with sixels
+        // Fill with background (white by default)
         for i in 0..rgba.len() / 4 {
             rgba[i * 4] = 255; // R
             rgba[i * 4 + 1] = 255; // G
@@ -187,21 +270,52 @@ impl SixelDecoder {
             rgba[i * 4 + 3] = 255; // A
         }
 
-        // Draw sixels
+        // Draw sixels with scaling to fit raster dimensions
+        let data_height = self.rows.len();  // Now this is actual pixel rows!
+        let data_width = self.rows.iter().map(|r| r.len()).max().unwrap_or(1);
+        
+        let scale_y = if data_height > 0 {
+            height_px as f32 / data_height as f32
+        } else {
+            1.0
+        };
+        
+        let scale_x = if data_width > 0 {
+            width_px as f32 / data_width as f32
+        } else {
+            1.0
+        };
+
+        // Draw sixels - now rows[i] directly corresponds to pixel row i
         for (row_idx, row) in self.rows.iter().enumerate() {
+            let screen_y_start = (row_idx as f32 * scale_y) as usize;
+            let screen_y_end = ((row_idx as f32 + 1.0) * scale_y) as usize;
+            
+            if screen_y_start >= height_px {
+                break;
+            }
+            
             for (col_idx, &color_idx) in row.iter().enumerate() {
-                let [r, g, b] = self.palette.get(&color_idx).copied().unwrap_or([0, 0, 0]);
-                for py in 0..self.sixel_height {
-                    let y = row_idx * self.sixel_height + py;
-                    if y >= height_px {
-                        break;
-                    }
-                    let idx = (y * width_px + col_idx) * 4;
-                    if idx + 3 < rgba.len() {
-                        rgba[idx] = r;
-                        rgba[idx + 1] = g;
-                        rgba[idx + 2] = b;
-                        rgba[idx + 3] = 255;
+                // Skip pixels that were never set (remain as padding zeros and don't have a palette entry)
+                // But allow color index 0 if it's defined in the palette
+                if color_idx == 0 && !self.palette.contains_key(&0) {
+                    continue; // Skip uninitialized pixels
+                }
+                
+                let [r, g, b] = self.palette.get(&color_idx).copied().unwrap_or([255, 255, 255]);
+                let screen_x_start = (col_idx as f32 * scale_x) as usize;
+                let screen_x_end = ((col_idx as f32 + 1.0) * scale_x) as usize;
+                
+                // Fill pixels for this sixel
+                for screen_y in screen_y_start..screen_y_end.min(height_px) {
+                    for screen_x in screen_x_start..screen_x_end.min(width_px) {
+                        let idx = (screen_y * width_px + screen_x) * 4;
+                        if idx + 3 < rgba.len() {
+                            rgba[idx] = r;
+                            rgba[idx + 1] = g;
+                            rgba[idx + 2] = b;
+                            rgba[idx + 3] = 255;
+                        }
                     }
                 }
             }
@@ -257,14 +371,33 @@ fn parse_sixel_byte(decoder: &mut SixelDecoder, bytes: &[u8], mut i: usize) -> u
             decoder.parse_raster_attributes(&attrs);
         }
         b'#' => {
-            // Color palette: #N;Cs;Hls;R;G;B
+            // Color commands: can be definition or selection
+            // Definition: #N;Cs;V1;V2;V3
+            // Selection: #N (just a number)
             i += 1;
             let start = i;
-            while i < bytes.len() && bytes[i] != b'#' && bytes[i] < 0x3F {
+            
+            // Consume digits until we hit a non-digit, semicolon, # or byte < 0x3F
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            let def = String::from_utf8_lossy(&bytes[start..i]);
-            decoder.parse_color_definition(&def);
+            
+            // Now check what comes next
+            if i < bytes.len() && bytes[i] == b';' {
+                // It's a color definition (#N;Cs;...)
+                // Consume until we see another # or a byte < 0x3F
+                while i < bytes.len() && bytes[i] != b'#' && bytes[i] < 0x3F {
+                    i += 1;
+                }
+                let def = String::from_utf8_lossy(&bytes[start..i]);
+                decoder.parse_color_definition(&def);
+            } else {
+                // It's a color selection (#N)
+                let color_str = String::from_utf8_lossy(&bytes[start..i]);
+                if let Ok(color_idx) = color_str.parse::<u8>() {
+                    decoder.set_color(color_idx);
+                }
+            }
         }
         b'$' => {
             // Carriage return

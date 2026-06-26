@@ -86,6 +86,8 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
 
     let precmd_hook = r#"_ret=$?; printf '\033]133;D;%d\007' "$_ret"; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' "$(hostname -f 2>/dev/null || hostname)" "$PWD""#;
     let preexec_hook = r#"printf '\033]133;B\007'; printf '\033]133;C\007'"#;
+    let fish_precmd_hook = r#"set -l _ret $status; printf '\033]133;D;%d\007' $_ret; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' (hostname -f 2>/dev/null; or hostname) $PWD"#;
+    let fish_preexec_hook = r#"printf '\033]133;B\007'; printf '\033]133;C\007'"#;
 
     match shell_name {
         "zsh" => {
@@ -166,10 +168,10 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
             let fish_init = format!(
                 "# Teletipo shell integration\n\
                  function _teletipo_precmd --on-event fish_prompt\n\
-                     {precmd_hook}\n\
+                     {fish_precmd_hook}\n\
                  end\n\
                  function _teletipo_preexec --on-event fish_preexec\n\
-                     {preexec_hook}\n\
+                     {fish_preexec_hook}\n\
                  end\n"
             );
             let fish_file = integration_dir.join("teletipo.fish");

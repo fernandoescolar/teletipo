@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use terminal_ansi::{Action, Parser};
-use terminal_screen::{DamageRegion, Screen, ScreenSnapshot, StyledChars};
+use terminal_screen::{DamageRegion, Screen, ScreenSnapshot, StyledChars, TerminalImage};
 
 use crate::error::TerminalError;
 
@@ -816,6 +816,17 @@ where
     /// Resolve a hyperlink ID to its URI string. `0` always returns `None`.
     pub fn hyperlink_uri(&self, id: u16) -> Option<&str> {
         self.screen.hyperlink_uri(id)
+    }
+}
+
+/// Additional methods for TerminalSession when D is specifically Screen.
+impl<P> GenericTerminalSession<P, Screen>
+where
+    P: TerminalParser,
+{
+    /// Get all terminal images on the screen.
+    pub fn screen_images(&self) -> &[TerminalImage] {
+        self.screen.images()
     }
 }
 

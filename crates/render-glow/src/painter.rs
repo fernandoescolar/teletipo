@@ -60,6 +60,18 @@ pub(crate) struct GlPainter {
     color_atlas_row_h: u32,
     /// Cached color atlas entries keyed by char.
     color_char_atlas: HashMap<char, ColorAtlasEntry>,
+    // ── Sixel/Image RGBA pipeline ──────────────────────────────────────────
+    /// GL_RGBA textures for sixel images, keyed by image ID.
+    image_textures: HashMap<u32, glow::Texture>,
+    image_program: glow::Program,
+    image_vbo: glow::Buffer,
+    image_vao: glow::VertexArray,
+    image_u_screen: Option<glow::UniformLocation>,
+    image_u_sampler: Option<glow::UniformLocation>,
+    /// Vertex data for image quads: [x, y, u, v, r, g, b, a] × 6 per image.
+    image_vertices: Vec<f32>,
+    /// Track which image ID each group of vertices belongs to: (image_id, first_vertex_index, vertex_count).
+    image_draw_calls: Vec<(u32, usize, usize)>,
     rasterizer: CpuFontRasterizer,
     shaped_terminal_cache: Option<ShapedTerminalCache>,
 }
@@ -304,6 +316,44 @@ impl GlPainter {
             gl.bind_texture(glow::TEXTURE_2D, None);
         }
 
+        // ── Sixel/Image RGBA pipeline ───────────────────────────────────────
+        let image_program = crate::shaders::compile_image_program(gl)?;
+        let image_vbo = unsafe { gl.create_buffer() }
+            .map_err(|err| anyhow::anyhow!("create image GL buffer: {err}"))?;
+        let image_vao = unsafe { gl.create_vertex_array() }
+            .map_err(|err| anyhow::anyhow!("create image GL vertex array: {err}"))?;
+        let image_u_screen = unsafe { gl.get_uniform_location(image_program, "u_screen") };
+        let image_u_sampler = unsafe { gl.get_uniform_location(image_program, "u_image") };
+
+        unsafe {
+            gl.bind_vertex_array(Some(image_vao));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(image_vbo));
+            // layout: x(2) y(0) u(2) v(0) r(4) g b a  →  8 floats per vertex
+            let stride = (8 * size_of::<f32>()) as i32;
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
+            gl.enable_vertex_attrib_array(1);
+            gl.vertex_attrib_pointer_f32(
+                1,
+                2,
+                glow::FLOAT,
+                false,
+                stride,
+                (2 * size_of::<f32>()) as i32,
+            );
+            gl.enable_vertex_attrib_array(2);
+            gl.vertex_attrib_pointer_f32(
+                2,
+                4,
+                glow::FLOAT,
+                false,
+                stride,
+                (4 * size_of::<f32>()) as i32,
+            );
+            gl.bind_buffer(glow::ARRAY_BUFFER, None);
+            gl.bind_vertex_array(None);
+        }
+
         Ok(Self {
             program,
             vbo,
@@ -333,6 +383,14 @@ impl GlPainter {
             color_atlas_alloc_y: 0,
             color_atlas_row_h: 0,
             color_char_atlas: HashMap::new(),
+            image_textures: HashMap::new(),
+            image_program,
+            image_vbo,
+            image_vao,
+            image_u_screen,
+            image_u_sampler,
+            image_vertices: Vec::with_capacity(16 * 1024),
+            image_draw_calls: Vec::with_capacity(1024),
             rasterizer: CpuFontRasterizer::new(font_family, font_size_px),
             shaped_terminal_cache: None,
         })
@@ -436,7 +494,12 @@ impl GlPainter {
 
         self.vertices.clear();
         self.atlas_vertices.clear();
+        self.image_vertices.clear();
+        self.image_draw_calls.clear();
         self.warm_atlas(gl, snapshot);
+
+        // Upload image textures if needed
+        self.upload_image_textures(gl, snapshot);
 
         self.render_pane_backgrounds(snapshot, &layout);
         self.draw_tab_bar(snapshot, &layout);
@@ -461,6 +524,7 @@ impl GlPainter {
         self.draw_toasts(snapshot, &layout);
         self.draw_resize_overlay(snapshot, &layout);
         self.draw_scroll_indicator(snapshot, &layout);
+        self.draw_images(snapshot, &layout);
 
         self.flush_passes(gl, layout.width, layout.height);
     }
@@ -666,6 +730,51 @@ impl GlPainter {
                 gl.disable(glow::BLEND);
             }
             self.color_atlas_vertices.clear();
+        }
+
+        // ── Flush image quads ───────────────────────────────────────────────
+        if !self.image_vertices.is_empty() && !self.image_draw_calls.is_empty() {
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    self.image_vertices.as_ptr() as *const u8,
+                    self.image_vertices.len() * size_of::<f32>(),
+                )
+            };
+
+            unsafe {
+                gl.enable(glow::BLEND);
+                gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+
+                gl.use_program(Some(self.image_program));
+                gl.bind_vertex_array(Some(self.image_vao));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.image_vbo));
+                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
+
+                if let Some(loc) = &self.image_u_screen {
+                    gl.uniform_2_f32(Some(loc), width, height);
+                }
+
+                gl.active_texture(glow::TEXTURE0);
+
+                // Render each image with its corresponding texture
+                for &(image_id, first_vertex, vertex_count) in &self.image_draw_calls {
+                    if let Some(&tex) = self.image_textures.get(&image_id) {
+                        gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                        if let Some(loc) = &self.image_u_sampler {
+                            gl.uniform_1_i32(Some(loc), 0);
+                        }
+                        gl.draw_arrays(glow::TRIANGLES, first_vertex as i32, vertex_count as i32);
+                    }
+                }
+
+                gl.bind_texture(glow::TEXTURE_2D, None);
+                gl.bind_buffer(glow::ARRAY_BUFFER, None);
+                gl.bind_vertex_array(None);
+                gl.use_program(None);
+                gl.disable(glow::BLEND);
+            }
+            self.image_vertices.clear();
+            self.image_draw_calls.clear();
         }
     }
 
@@ -2202,6 +2311,126 @@ impl GlPainter {
                 layout.cell_h_px,
                 [0.92, 0.94, 0.98, 1.0],
             );
+        }
+    }
+
+    fn upload_image_textures(&mut self, gl: &glow::Context, snapshot: &RenderSnapshot) {
+        // Create textures for any images not yet in cache
+        for img in &snapshot.terminal_images {
+            use std::collections::hash_map::Entry;
+            #[allow(clippy::collapsible_if)]
+            if let Entry::Vacant(e) = self.image_textures.entry(img.id) {
+                if let Ok(tex) = unsafe { gl.create_texture() } {
+                    // Calculate row byte size
+                    let bytes_per_pixel = 4; // RGBA
+                    let row_bytes = img.width_px * bytes_per_pixel;
+                    let expected_total_bytes = row_bytes * img.height_px;
+                    
+                    // Verify data size matches
+                    if img.rgba.len() != expected_total_bytes {
+                        eprintln!(
+                            "WARNING: Image {} size mismatch: expected {} bytes, got {}",
+                            img.id,
+                            expected_total_bytes,
+                            img.rgba.len()
+                        );
+                    }
+                    
+                    // Don't flip rows - instead rely on texture sampling to handle the flip
+                    // OpenGL textures are typically bottom-left origin, so we need to 
+                    // sample with inverted V coordinates, not flip the data
+                    
+                    // Upload RGBA data as-is
+                    unsafe {
+                        gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                        gl.tex_image_2d(
+                            glow::TEXTURE_2D,
+                            0,
+                            glow::RGBA as i32,
+                            img.width_px as i32,
+                            img.height_px as i32,
+                            0,
+                            glow::RGBA,
+                            glow::UNSIGNED_BYTE,
+                            Some(&img.rgba),
+                        );
+                        gl.tex_parameter_i32(
+                            glow::TEXTURE_2D,
+                            glow::TEXTURE_MIN_FILTER,
+                            glow::LINEAR as i32,
+                        );
+                        gl.tex_parameter_i32(
+                            glow::TEXTURE_2D,
+                            glow::TEXTURE_MAG_FILTER,
+                            glow::LINEAR as i32,
+                        );
+                        gl.tex_parameter_i32(
+                            glow::TEXTURE_2D,
+                            glow::TEXTURE_WRAP_S,
+                            glow::CLAMP_TO_EDGE as i32,
+                        );
+                        gl.tex_parameter_i32(
+                            glow::TEXTURE_2D,
+                            glow::TEXTURE_WRAP_T,
+                            glow::CLAMP_TO_EDGE as i32,
+                        );
+                        gl.bind_texture(glow::TEXTURE_2D, None);
+                    }
+                    e.insert(tex);
+                }
+            }
+        }
+    }
+
+    fn draw_images(&mut self, snapshot: &RenderSnapshot, _layout: &FrameLayout) {
+        if snapshot.terminal_images.is_empty() {
+            return;
+        }
+
+        // Queue image quads
+        for img in &snapshot.terminal_images {
+            let x_px = img.x_px as f32;
+            let y_px = img.y_px as f32;
+            let w_px = img.width_px as f32;
+            let h_px = img.height_px as f32;
+
+            let x0 = x_px;
+            let y0 = y_px;
+            let x1 = x_px + w_px;
+            let y1 = y_px + h_px;
+
+            // Only queue if texture was successfully uploaded
+            if self.image_textures.contains_key(&img.id) {
+                // Track the starting vertex index for this image
+                let first_vertex = self.image_vertices.len() / 8;  // 8 floats per vertex
+                
+                // Queue two triangles for the image quad
+                let color = [1.0, 1.0, 1.0, 1.0]; // Full opacity
+                let uv0_x = 0.0;
+                let uv0_y = 0.0;  // Top of screen → V=0 (image row 0 at texture V=0)
+                let uv1_x = 1.0;
+                let uv1_y = 1.0;  // Bottom of screen → V=1 (image row H-1 at texture V=1)
+
+                // Triangle 1: (x0, y0) - (x1, y0) - (x0, y1)
+                // y0 is screen top, samples from texture V=0 (image row 0)
+                // y1 is screen bottom, samples from texture V=1 (image row H-1)
+                self.image_vertices.extend_from_slice(&[
+                    x0, y0, uv0_x, uv0_y, color[0], color[1], color[2], color[3], x1, y0, uv1_x,
+                    uv0_y, color[0], color[1], color[2], color[3], x0, y1, uv0_x, uv1_y, color[0],
+                    color[1], color[2], color[3],
+                ]);
+
+                // Triangle 2: (x1, y0) - (x1, y1) - (x0, y1)
+                self.image_vertices.extend_from_slice(&[
+                    x1, y0, uv1_x, uv0_y, color[0], color[1], color[2], color[3], x1, y1, uv1_x,
+                    uv1_y, color[0], color[1], color[2], color[3], x0, y1, uv0_x, uv1_y, color[0],
+                    color[1], color[2], color[3],
+                ]);
+
+                // Track this image's draw call: 6 vertices for 2 triangles
+                let vertex_count = 6;
+                self.image_draw_calls.push((img.id, first_vertex, vertex_count));
+            }
         }
     }
 

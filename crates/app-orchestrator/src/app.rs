@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use editor_core::EditorBuffer;
-use terminal_core::{DamageRegion, StyledChars, TerminalError, TerminalSession};
+use terminal_core::{DamageRegion, StyledChars, TerminalError, TerminalImage, TerminalSession};
 use terminal_pty::PtyBackend;
 
 // ============================================================================
@@ -339,6 +339,11 @@ impl AppTerminal {
     /// Resolves a hyperlink ID to its URI string. Returns `None` for ID 0.
     pub fn hyperlink_uri(&self, id: u16) -> Option<&str> {
         self.session.hyperlink_uri(id)
+    }
+
+    /// Get all terminal images on the screen.
+    pub fn screen_images(&self) -> &[TerminalImage] {
+        self.session.screen_images()
     }
 
     /// Working directory last reported by the shell via OSC 7.

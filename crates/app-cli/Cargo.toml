@@ -35,5 +35,8 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 regex = "1"
 
+[dev-dependencies]
+terminal-core = { path = "../terminal-core" }
+
 [lints]
 workspace = true

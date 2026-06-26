@@ -714,15 +714,46 @@ fn build_copy_mode_section(state: &GpuRuntimeState, active: usize) -> CopyModeSe
 
 /// Build terminal image list in viewport coordinates.
 fn build_terminal_images(
-    _state: &GpuRuntimeState,
-    _active: usize,
+    state: &GpuRuntimeState,
+    active: usize,
     _scroll_offset: usize,
 ) -> Vec<SnapshotImage> {
-    // TODO: Once AppTerminal exposes screen images publicly, project them here.
-    // For now, images are stored on the screen but not displayed via snapshot.
-    // The infrastructure is in place (sixel decoder → screen.place_image → images vec)
-    // but rendering support requires exposing the images through the App/AppTerminal API.
-    Vec::new()
+    let images = state.tabs[active].app.terminal.screen_images();
+    if images.is_empty() {
+        return Vec::new();
+    }
+
+    let cell_w_px = state.layout.cell_w as usize;
+    let cell_h_px = state.layout.cell_h as usize;
+    let padding_h = state.user_config.padding.horizontal as usize;
+    let padding_v = state.user_config.padding.vertical as usize;
+
+    // Tab bar height is only shown if there are multiple tabs
+    const TAB_H_MULT: f32 = 1.5;
+    let tab_bar_h_px = if state.tabs.len() > 1 {
+        (state.layout.cell_h * TAB_H_MULT).ceil() as usize
+    } else {
+        0
+    };
+
+    images
+        .iter()
+        .map(|img| {
+            // Convert grid coordinates to pixel coordinates
+            // Images are positioned relative to the terminal text area
+            let x_px = padding_h + img.col * cell_w_px;
+            let y_px = tab_bar_h_px + padding_v + img.row * cell_h_px;
+
+            SnapshotImage {
+                id: img.id,
+                x_px,
+                y_px,
+                width_px: img.width_px,
+                height_px: img.height_px,
+                rgba: img.rgba.clone(),
+            }
+        })
+        .collect()
 }
 
 /// Detect terminal links and return only the hovered URL's segments (if any).
