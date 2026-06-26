@@ -27,7 +27,9 @@ pub(super) fn path_completions(editor_text: &str, cwd: &str) -> Vec<String> {
     }
 
     let home = std::env::var("HOME").unwrap_or_default();
-    let expanded: String = if let Some(rest) = raw_frag.strip_prefix('~') {
+    let expanded: String = if raw_frag == "~" {
+        format!("{}/", home.trim_end_matches('/'))
+    } else if let Some(rest) = raw_frag.strip_prefix('~') {
         format!("{}{}", home, rest)
     } else if let Some(rest) = raw_frag.strip_prefix("./") {
         format!("{}/{}", cwd.trim_end_matches('/'), rest)
@@ -55,9 +57,13 @@ pub(super) fn path_completions(editor_text: &str, cwd: &str) -> Vec<String> {
     };
 
     // Keep the user-typed directory sigil (e.g. "~/", "./") in the output.
-    let display_dir = match raw_frag.rfind('/') {
-        Some(pos) => &raw_frag[..=pos],
-        None => "",
+    let display_dir = if raw_frag == "~" {
+        "~/"
+    } else {
+        match raw_frag.rfind('/') {
+            Some(pos) => &raw_frag[..=pos],
+            None => "",
+        }
     };
 
     let name_lower = name_prefix.to_lowercase();
@@ -84,4 +90,24 @@ pub(super) fn path_completions(editor_text: &str, cwd: &str) -> Vec<String> {
 
     completions.sort();
     completions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_completions;
+
+    #[test]
+    fn bare_tilde_completions_keep_home_prefix() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        if home.is_empty() {
+            return;
+        }
+        let cwd = std::env::current_dir()
+            .expect("cwd")
+            .to_string_lossy()
+            .into_owned();
+        let out = path_completions("~", &cwd);
+        assert!(!out.is_empty());
+        assert!(out.iter().all(|entry| entry.starts_with("~/")));
+    }
 }

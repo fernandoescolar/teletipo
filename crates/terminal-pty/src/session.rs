@@ -84,8 +84,10 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
         return None;
     }
 
-    let precmd_hook = r#"_ret=$?; printf '\033]133;D;%d\007' "$_ret"; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' "$(hostname -f 2>/dev/null || hostname)" "$PWD""#;
-    let preexec_hook = r#"printf '\033]133;B\007'; printf '\033]133;C\007'"#;
+    let precmd_hook_posix = r#"_ret=$?; printf '\033]133;D;%d\007' "$_ret"; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' "$(hostname -f 2>/dev/null || hostname)" "$PWD""#;
+    let preexec_hook_posix = r#"printf '\033]133;B\007'; printf '\033]133;C\007'"#;
+    let precmd_hook_fish = r#"set _ret $status; printf '\033]133;D;%d\007' $_ret; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' (hostname -f 2>/dev/null; or hostname) "$PWD""#;
+    let preexec_hook_fish = r#"printf '\033]133;B\007'; printf '\033]133;C\007'"#;
 
     match shell_name {
         "zsh" => {
@@ -108,8 +110,8 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
             let zshrc = format!(
                 "# Teletipo shell integration\n\
                  autoload -Uz add-zsh-hook\n\
-                 _teletipo_precmd() {{ {precmd_hook}; }}\n\
-                 _teletipo_preexec() {{ {preexec_hook}; }}\n\
+                 _teletipo_precmd() {{ {precmd_hook_posix}; }}\n\
+                 _teletipo_preexec() {{ {preexec_hook_posix}; }}\n\
                  add-zsh-hook precmd _teletipo_precmd\n\
                  add-zsh-hook preexec _teletipo_preexec\n\
                  # Restore normal dotfile lookup for subshells.\n\
@@ -138,7 +140,7 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
             let bashrc = format!(
                 "# Teletipo shell integration\n\
                  [ -f '{home}/.bashrc' ] && source '{home}/.bashrc'\n\
-                 _teletipo_precmd() {{ {precmd_hook}; }}\n\
+                  _teletipo_precmd() {{ {precmd_hook_posix}; }}\n\
                  _teletipo_dbg() {{ [ \"$BASH_COMMAND\" != '_teletipo_precmd' ] && printf '\\033]133;B\\007' && printf '\\033]133;C\\007'; }}\n\
                  trap '_teletipo_dbg' DEBUG\n\
                  PROMPT_COMMAND=\"${{PROMPT_COMMAND:+${{PROMPT_COMMAND}}; }}_teletipo_precmd\"\n"
@@ -166,10 +168,10 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
             let fish_init = format!(
                 "# Teletipo shell integration\n\
                  function _teletipo_precmd --on-event fish_prompt\n\
-                     {precmd_hook}\n\
+                     {precmd_hook_fish}\n\
                  end\n\
                  function _teletipo_preexec --on-event fish_preexec\n\
-                     {preexec_hook}\n\
+                     {preexec_hook_fish}\n\
                  end\n"
             );
             let fish_file = integration_dir.join("teletipo.fish");

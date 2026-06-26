@@ -815,7 +815,8 @@ fn build_editor_suggestion(
         );
         matches
             .get(idx)
-            .map(|full| truncate_display(&full[prefix.len()..], 80))
+            .and_then(|full| full.strip_prefix(prefix))
+            .map(|suffix| truncate_display(suffix, 80))
             .unwrap_or_default()
     } else if cursor_at_line_end(editor_text, editor_cursor_offset) {
         let prefix = current_line_prefix(editor_text, editor_cursor_offset);
@@ -831,7 +832,8 @@ fn build_editor_suggestion(
             )
             .into_iter()
             .next()
-            .map(|full| truncate_display(&full[prefix.len()..], 80))
+            .and_then(|full| full.strip_prefix(prefix).map(str::to_owned))
+            .map(|suffix| truncate_display(&suffix, 80))
             .unwrap_or_default()
         }
     } else {

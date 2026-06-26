@@ -390,7 +390,9 @@ fn reset_suggestion_cycle_if_needed(
     let is_tab = matches!(&key_event.logical_key, Key::Named(NamedKey::Tab));
     let is_nav = matches!(
         &key_event.logical_key,
-        Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown)
+        Key::Named(NamedKey::ArrowUp)
+            | Key::Named(NamedKey::ArrowDown)
+            | Key::Named(NamedKey::ArrowRight)
     );
     let is_esc = matches!(&key_event.logical_key, Key::Named(NamedKey::Escape));
     let is_enter = matches!(&key_event.logical_key, Key::Named(NamedKey::Enter));
@@ -483,6 +485,39 @@ fn apply_selected_suggestion(state: &mut GpuRuntimeState) {
     }
     state.tabs[state.active_tab].suggestion_prefix = None;
     state.tabs[state.active_tab].suggestion_index = None;
+}
+
+fn apply_ghost_suggestion_if_visible(state: &mut GpuRuntimeState) -> bool {
+    let editor_text = state.tab().app.editor_snapshot();
+    let cursor = state.tab().app.editor_cursor_offset();
+    if !cursor_at_line_end(&editor_text, cursor) {
+        return false;
+    }
+
+    let prefix = current_line_prefix(&editor_text, cursor);
+    if prefix.is_empty() {
+        return false;
+    }
+
+    let active = state.active_tab;
+    let matches = crate::suggestion_matches_frecency(
+        &state.tabs[active].history,
+        &state.tabs[active].history_entries,
+        prefix,
+        &state.tabs[active].cwd,
+        &state.shell,
+    );
+    let Some(first) = matches.first() else {
+        return false;
+    };
+    if !first.starts_with(prefix) {
+        return false;
+    }
+
+    state.tabs[active].suggestion_prefix = Some(prefix.to_owned());
+    state.tabs[active].suggestion_index = Some(0);
+    apply_selected_suggestion(state);
+    true
 }
 
 fn handle_tab_key(state: &mut GpuRuntimeState, cycling: bool) {
@@ -983,9 +1018,14 @@ fn handle_named_key_editor_ops(
             true
         }
         NamedKey::ArrowRight => {
-            if cycling && !state.modifiers.shift_down {
-                apply_selected_suggestion(state);
-                return true;
+            if !state.modifiers.shift_down {
+                if cycling {
+                    apply_selected_suggestion(state);
+                    return true;
+                }
+                if apply_ghost_suggestion_if_visible(state) {
+                    return true;
+                }
             }
             let extend = state.modifiers.shift_down;
             state.tab_mut().app.editor_move_cursor_right(extend);

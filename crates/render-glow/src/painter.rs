@@ -21,6 +21,18 @@ use crate::util::{
 
 type Result<T> = anyhow::Result<T>;
 
+fn frosted_backdrop_alpha(opacity: f32) -> f32 {
+    // Keep backgrounds translucent but not crystal-clear when opacity is low.
+    // This approximates a blur/frosted effect on compositors without real blur.
+    let opacity = opacity.clamp(0.0, 1.0);
+    0.55 + 0.45 * opacity
+}
+
+fn with_backdrop_alpha(mut color: [f32; 4], opacity: f32) -> [f32; 4] {
+    color[3] = (color[3] * frosted_backdrop_alpha(opacity)).clamp(0.0, 1.0);
+    color
+}
+
 // ── GlPainter struct ──────────────────────────────────────────────────────────
 
 pub(crate) struct GlPainter {
@@ -509,12 +521,13 @@ impl GlPainter {
     }
 
     fn render_pane_backgrounds(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
+        let bg = |c| with_backdrop_alpha(c, snapshot.opacity);
         self.push_rect(
             0.0,
             layout.tab_bar_h,
             layout.width,
             layout.terminal_h,
-            snapshot.theme.terminal_bg,
+            bg(snapshot.theme.terminal_bg),
         );
         let editor_bg = if snapshot.editor_disabled {
             let [r, g, b, a] = snapshot.theme.editor_bg;
@@ -527,18 +540,18 @@ impl GlPainter {
             layout.editor_top,
             layout.width,
             layout.height,
-            editor_bg,
+            bg(editor_bg),
         );
         self.push_rect(
             0.0,
             layout.terminal_h,
             layout.width,
             layout.editor_top,
-            if snapshot.editor_focused {
+            bg(if snapshot.editor_focused {
                 snapshot.theme.separator_focused
             } else {
                 snapshot.theme.separator
-            },
+            }),
         );
         if snapshot.bell_active {
             self.push_rect(
@@ -546,7 +559,7 @@ impl GlPainter {
                 layout.tab_bar_h,
                 layout.width,
                 layout.terminal_h,
-                [0.60, 0.20, 0.20, 0.15],
+                bg([0.60, 0.20, 0.20, 0.15]),
             );
         }
     }
@@ -671,6 +684,7 @@ impl GlPainter {
 
     fn draw_terminal_text(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
         let terminal_text = snapshot.terminal_text_from_rows();
+        let backdrop = frosted_backdrop_alpha(snapshot.opacity);
         let fallback_fg = [
             snapshot.theme.text[0],
             snapshot.theme.text[1],
@@ -704,7 +718,7 @@ impl GlPainter {
                         y,
                         x + layout.cell_w_px,
                         y + layout.cell_h_px,
-                        [bg[0], bg[1], bg[2], 1.0],
+                        [bg[0], bg[1], bg[2], backdrop],
                     );
                 }
             }
@@ -919,6 +933,7 @@ impl GlPainter {
         if snapshot.tab_labels.is_empty() || layout.tab_bar_h <= 0.0 {
             return;
         }
+        let bg = |c| with_backdrop_alpha(c, snapshot.opacity);
         let tab_bar_bg = clamp_color(snapshot.theme.terminal_bg, 0.05);
         let tab_inactive = clamp_color(snapshot.theme.terminal_bg, 0.02);
         let tab_active = mix_color(tab_bar_bg, snapshot.theme.separator_focused, 0.22);
@@ -928,7 +943,7 @@ impl GlPainter {
             (snapshot.theme.terminal_bg[2] + 0.03).clamp(0.0, 1.0),
             0.90,
         ];
-        self.push_rect(0.0, 0.0, layout.width, layout.tab_bar_h, tab_bar_bg);
+        self.push_rect(0.0, 0.0, layout.width, layout.tab_bar_h, bg(tab_bar_bg));
 
         let n = snapshot.tab_labels.len().max(1);
         let add_w = layout.cell_w_px * 2.0;
@@ -946,7 +961,7 @@ impl GlPainter {
             } else {
                 tab_inactive
             };
-            self.push_rect(x0, y0, x1, y1, color);
+            self.push_rect(x0, y0, x1, y1, bg(color));
 
             let text_x = x0 + layout.cell_w_px * 0.5;
             let text_y = (layout.tab_bar_h - layout.cell_h_px).max(0.0) * 0.5;
@@ -994,7 +1009,7 @@ impl GlPainter {
             1.0,
             add_x1,
             (layout.tab_bar_h - 1.0).max(2.0),
-            add_btn_bg,
+            bg(add_btn_bg),
         );
         self.push_glyph(
             '+',
@@ -1018,7 +1033,7 @@ impl GlPainter {
                 0.0,
                 (x + 1.0).min(layout.width),
                 layout.tab_bar_h,
-                snapshot.theme.separator_focused,
+                bg(snapshot.theme.separator_focused),
             );
         }
     }
