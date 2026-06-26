@@ -356,17 +356,31 @@ impl GlPainter {
         self.shaped_terminal_cache = None;
         // If the size actually changed, glyph bitmaps are now wrong size.
         if (old_size - font_size_px).abs() >= 0.5 {
-            self.char_atlas.clear();
-            self.glyph_id_atlas.clear();
-            self.atlas_alloc_x = 0;
-            self.atlas_alloc_y = 0;
-            self.atlas_row_h = 0;
-            // Color atlas entries are also size-dependent.
-            self.color_char_atlas.clear();
-            self.color_atlas_alloc_x = 0;
-            self.color_atlas_alloc_y = 0;
-            self.color_atlas_row_h = 0;
+            self.reset_text_atlas_state();
         }
+    }
+
+    fn reset_text_atlas_state(&mut self) {
+        self.char_atlas.clear();
+        self.glyph_id_atlas.clear();
+        self.atlas_alloc_x = 0;
+        self.atlas_alloc_y = 0;
+        self.atlas_row_h = 0;
+
+        self.color_char_atlas.clear();
+        self.color_atlas_alloc_x = 0;
+        self.color_atlas_alloc_y = 0;
+        self.color_atlas_row_h = 0;
+    }
+
+    /// Force atlas repack/reupload on next frame.
+    ///
+    /// Useful after display resume/context hiccups where GL textures may lose
+    /// their texel contents while CPU-side cache still thinks glyphs exist.
+    pub(crate) fn invalidate_text_atlases(&mut self, gl: &glow::Context) {
+        self.reset_text_atlas_state();
+        self.clear_atlas_textures(gl);
+        self.shaped_terminal_cache = None;
     }
 
     /// Clear both glyph atlases after a DPI/font-size jump so stale texels do

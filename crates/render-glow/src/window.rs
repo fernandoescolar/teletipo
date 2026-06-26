@@ -319,6 +319,7 @@ where
                                     NonZeroU32::new(size.height.max(1))
                                         .expect("height max(1) is non-zero"),
                                 );
+                                painter.invalidate_text_atlases(&gl);
                                 window.request_redraw();
                             }
                             on_event(AppWindowEvent::WindowFocused(focused));
@@ -414,6 +415,10 @@ where
                         }
                         _ => {}
                     }
+                }
+                Event::Resumed => {
+                    painter.invalidate_text_atlases(&gl);
+                    window.request_redraw();
                 }
                 Event::AboutToWait => window.request_redraw(),
                 _ => {}
