@@ -272,6 +272,13 @@ fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEv
         Key::Character(ch)
             if state.modifiers.ctrl_down
                 && state.modifiers.shift_down
+                && ch.as_str().eq_ignore_ascii_case("c") =>
+        {
+            false
+        }
+        Key::Character(ch)
+            if state.modifiers.ctrl_down
+                && state.modifiers.shift_down
                 && ch.as_str().eq_ignore_ascii_case("v") =>
         {
             false
