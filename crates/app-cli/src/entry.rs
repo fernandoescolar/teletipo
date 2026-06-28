@@ -109,7 +109,7 @@ pub fn run(
             if let Err(err) = render_glow::run_gpu_window_live_with_events_and_window(
                 move || event_ctx_for_frame.build_snapshot(),
                 move |event| event_ctx_for_events.handle_event(event),
-                move |window| event_ctx_for_window.install_window(window),
+                move |window, redrawer| event_ctx_for_window.install_window(window, redrawer),
                 RenderConfig {
                     initial_size: Some((window_width, window_height)),
                     initial_position: window_pos,
@@ -132,7 +132,7 @@ pub fn run(
             if let Err(err) = render_glow::run_gpu_window_live_with_events_and_window(
                 move || event_ctx_for_frame.build_snapshot(),
                 move |event| event_ctx_for_events.handle_event(event),
-                move |window| event_ctx_for_window.install_window(window),
+                move |window, redrawer| event_ctx_for_window.install_window(window, redrawer),
                 RenderConfig {
                     initial_size: Some((window_width, window_height)),
                     initial_position: window_pos,

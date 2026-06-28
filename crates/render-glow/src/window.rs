@@ -14,7 +14,7 @@ use platform_abstraction::{WindowControl, apply_app_icon, apply_titlebar_color};
 use raw_window_handle::HasRawWindowHandle;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{Event, Ime, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ControlFlow, EventLoop};
+use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Icon, Window, WindowBuilder};
 
 use crate::painter::GlPainter;
@@ -22,6 +22,21 @@ use crate::painter::GlPainter;
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../docs/teletipo128x128.png");
 
 type Result<T> = anyhow::Result<T>;
+
+/// A thread-safe handle that wakes the render loop to schedule a redraw.
+/// Wraps an `EventLoopProxy` so PTY reader threads can trigger rendering
+/// when new data arrives without waiting for the next compositor frame callback.
+#[derive(Clone)]
+pub struct Redrawer {
+    proxy: EventLoopProxy<()>,
+}
+
+impl Redrawer {
+    /// Wake the event loop and request a redraw. Safe to call from any thread.
+    pub fn request_redraw(&self) {
+        let _ = self.proxy.send_event(());
+    }
+}
 
 fn format_window_title(title_cwd: &str) -> String {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -60,7 +75,7 @@ where
     F: 'static + FnMut() -> RenderSnapshot,
     E: 'static + FnMut(AppWindowEvent),
 {
-    run_gpu_window_live_with_events_and_window(next_snapshot, on_event, |_| {}, config)
+    run_gpu_window_live_with_events_and_window(next_snapshot, on_event, |_, _| {}, config)
 }
 
 struct WinitWindowControl {
@@ -163,10 +178,11 @@ pub fn run_gpu_window_live_with_events_and_window<F, E, W>(
 where
     F: 'static + FnMut() -> RenderSnapshot,
     E: 'static + FnMut(AppWindowEvent),
-    W: FnOnce(Box<dyn WindowControl>),
+    W: FnOnce(Box<dyn WindowControl>, Redrawer),
 {
     let initial = next_snapshot();
     let event_loop = EventLoop::new().context("create event loop")?;
+    let proxy = event_loop.create_proxy();
     let title = format_window_title(&initial.title_cwd);
 
     let mut builder = WindowBuilder::new()
@@ -219,7 +235,10 @@ where
     let window: &'static Window = Box::leak(Box::new(window));
     window.set_ime_allowed(true);
 
-    on_window_ready(Box::new(WinitWindowControl { window }));
+    on_window_ready(
+        Box::new(WinitWindowControl { window }),
+        Redrawer { proxy },
+    );
     apply_app_icon(APP_ICON_PNG);
     apply_titlebar_color(window, initial.theme.terminal_bg);
 
@@ -418,6 +437,9 @@ where
                 }
                 Event::Resumed => {
                     painter.invalidate_text_atlases(&gl);
+                    window.request_redraw();
+                }
+                Event::UserEvent(()) => {
                     window.request_redraw();
                 }
                 Event::AboutToWait => window.request_redraw(),

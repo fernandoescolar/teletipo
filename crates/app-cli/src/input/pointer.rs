@@ -18,7 +18,6 @@ fn context_menu_width_px(cell_w: f32, items: &[String]) -> f64 {
     cell_w as f64 * (max_chars.max(8) as f64 + 2.0)
 }
 
-#[allow(clippy::too_many_lines, clippy::cognitive_complexity)] // top-level pointer dispatcher; flat match
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) -> bool {
     if let AppWindowEvent::WindowMoved { x, y } = event {
         state.layout.window_x = *x;
@@ -73,111 +72,190 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     if let AppWindowEvent::CursorMoved { x, y } = event {
-        state.cursor.cursor_x = *x;
-        state.cursor.cursor_y = *y;
-        let tab_bar_h = state.tab_bar_h() as f64;
-        let split_ratio = state.tab().split_ratio;
+        return handle_cursor_moved(state, *x, *y);
+    }
 
-        if let Some(menu) = state.overlays.context_menu.as_mut() {
-            let menu_w = context_menu_width_px(state.layout.cell_w, &menu.items);
-            let menu_item_h = state.layout.cell_h as f64 * 1.15;
-            let menu_h = menu_item_h * menu.items.len() as f64;
-            let mx = menu
-                .x_px
-                .min(state.layout.window_width as f64 - menu_w)
-                .max(0.0);
-            let my = menu
-                .y_px
-                .min(state.layout.window_height as f64 - menu_h)
-                .max(0.0);
-            let in_menu = *x >= mx && *x <= mx + menu_w && *y >= my && *y <= my + menu_h;
-            menu.hovered_item = if in_menu {
-                let item = ((*y - my) / menu_item_h) as usize;
-                if item < menu.items.len() && menu.enabled_items.get(item) == Some(&true) {
-                    Some(item)
-                } else {
-                    None
-                }
+    if let AppWindowEvent::MouseInput {
+        state: btn_state,
+        button,
+    } = event
+    {
+        return handle_mouse_input(state, *btn_state, *button);
+    }
+
+    if let AppWindowEvent::MouseWheel { delta_lines } = event {
+        return handle_mouse_wheel(state, *delta_lines);
+    }
+
+    if let AppWindowEvent::ModifiersChanged(mods) = event {
+        state.modifiers.ctrl_down = mods.control_key();
+        state.modifiers.super_down = mods.super_key();
+        state.modifiers.shift_down = mods.shift_key();
+        state.modifiers.alt_down = mods.alt_key();
+        return true;
+    }
+
+    false
+}
+
+#[allow(clippy::too_many_lines)]
+fn handle_cursor_moved(state: &mut GpuRuntimeState, x: f64, y: f64) -> bool {
+    state.cursor.cursor_x = x;
+    state.cursor.cursor_y = y;
+    let tab_bar_h = state.tab_bar_h() as f64;
+    let split_ratio = state.tab().split_ratio;
+
+    if let Some(menu) = state.overlays.context_menu.as_mut() {
+        let menu_w = context_menu_width_px(state.layout.cell_w, &menu.items);
+        let menu_item_h = state.layout.cell_h as f64 * 1.15;
+        let menu_h = menu_item_h * menu.items.len() as f64;
+        let mx = menu
+            .x_px
+            .min(state.layout.window_width as f64 - menu_w)
+            .max(0.0);
+        let my = menu
+            .y_px
+            .min(state.layout.window_height as f64 - menu_h)
+            .max(0.0);
+        let in_menu = x >= mx && x <= mx + menu_w && y >= my && y <= my + menu_h;
+        menu.hovered_item = if in_menu {
+            let item = ((y - my) / menu_item_h) as usize;
+            if item < menu.items.len() && menu.enabled_items.get(item) == Some(&true) {
+                Some(item)
             } else {
                 None
-            };
-        }
+            }
+        } else {
+            None
+        };
+    }
 
-        if state.drag.dragging_separator {
-            if state.tab().app.is_alternate_screen() {
-                state.drag.dragging_separator = false;
-                return true;
-            }
-            let available_h = state.layout.window_height as f64 - tab_bar_h;
-            let new_ratio = (*y - tab_bar_h) / available_h;
-            let pad_v_f = state.user_config.padding.vertical as f32;
-            let max_ratio =
-                (1.0 - (state.layout.cell_h + 2.0 * pad_v_f) / available_h as f32).max(0.2);
-            state.tab_mut().split_ratio = (new_ratio as f32).clamp(0.2, max_ratio);
-            let active = state.active_tab;
-            let sr = state.tabs[active].split_ratio;
-            let pad_h = state.user_config.padding.horizontal as f32;
-            let pad_v = state.user_config.padding.vertical as f32;
-            let cols = ((state.layout.window_width as f32 - 2.0 * pad_h) / state.layout.cell_w)
-                .max(1.0) as u16;
-            let term_h = (available_h as f32 * sr - 2.0 * pad_v).max(state.layout.cell_h);
-            let rows = (term_h / state.layout.cell_h).max(1.0) as u16;
-            // Visual-only resize during drag — defer SIGWINCH until release.
-            state.resize_tab_visual(active, rows, cols);
-            state.overlays.pending_pty_resize = Some(Instant::now());
-        } else if state.drag.dragging_terminal_scrollbar {
-            let available_h = state.layout.window_height as f64 - tab_bar_h;
-            let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
-            if term_bottom > tab_bar_h {
-                let frac = ((*y - tab_bar_h) / (term_bottom - tab_bar_h)).clamp(0.0, 1.0);
-                let max_scroll = state.tab().app.scrollback_len();
-                state.tab_mut().scroll_offset = ((1.0 - frac) * max_scroll as f64) as usize;
-            }
-        } else if state.drag.dragging_editor_horizontal_scrollbar {
-            let pad_h = state.user_config.padding.horizontal as f64;
-            let track_w =
-                (state.layout.window_width as f64 - 2.0 * pad_h - SCROLLBAR_W_PX as f64).max(1.0);
-            let frac = ((*x - pad_h) / track_w).clamp(0.0, 1.0);
+    if state.drag.dragging_separator {
+        if state.tab().app.is_alternate_screen() {
+            state.drag.dragging_separator = false;
+            return true;
+        }
+        let available_h = state.layout.window_height as f64 - tab_bar_h;
+        let new_ratio = (y - tab_bar_h) / available_h;
+        let pad_v_f = state.user_config.padding.vertical as f32;
+        let max_ratio = (1.0 - (state.layout.cell_h + 2.0 * pad_v_f) / available_h as f32).max(0.2);
+        state.tab_mut().split_ratio = (new_ratio as f32).clamp(0.2, max_ratio);
+        let active = state.active_tab;
+        let sr = state.tabs[active].split_ratio;
+        let pad_h = state.user_config.padding.horizontal as f32;
+        let pad_v = state.user_config.padding.vertical as f32;
+        let cols = ((state.layout.window_width as f32 - 2.0 * pad_h) / state.layout.cell_w).max(1.0)
+            as u16;
+        let term_h = (available_h as f32 * sr - 2.0 * pad_v).max(state.layout.cell_h);
+        let rows = (term_h / state.layout.cell_h).max(1.0) as u16;
+        // Visual-only resize during drag — defer SIGWINCH until release.
+        state.resize_tab_visual(active, rows, cols);
+        state.overlays.pending_pty_resize = Some(Instant::now());
+    } else if state.drag.dragging_terminal_scrollbar {
+        let available_h = state.layout.window_height as f64 - tab_bar_h;
+        let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
+        if term_bottom > tab_bar_h {
+            let frac = ((y - tab_bar_h) / (term_bottom - tab_bar_h)).clamp(0.0, 1.0);
+            let max_scroll = state.tab().app.scrollback_len();
+            state.tab_mut().scroll_offset = ((1.0 - frac) * max_scroll as f64) as usize;
+        }
+    } else if state.drag.dragging_editor_horizontal_scrollbar {
+        let pad_h = state.user_config.padding.horizontal as f64;
+        let track_w =
+            (state.layout.window_width as f64 - 2.0 * pad_h - SCROLLBAR_W_PX as f64).max(1.0);
+        let frac = ((x - pad_h) / track_w).clamp(0.0, 1.0);
+        let editor_text = state.tab().app.editor_snapshot();
+        let max_cols = editor_text
+            .lines()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0);
+        let visible_cols = if state.layout.cell_w > 0.0 {
+            (track_w / state.layout.cell_w as f64).floor().max(1.0) as usize
+        } else {
+            1
+        };
+        let max_scroll = max_cols.saturating_sub(visible_cols);
+        state.tab_mut().editor_horizontal_scroll_offset =
+            (frac * max_scroll as f64).round() as usize;
+    } else if state.drag.dragging_editor_scrollbar {
+        let available_h = state.layout.window_height as f64 - tab_bar_h;
+        let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
+        let edit_h_px = state.layout.window_height as f64 - term_bottom;
+        if edit_h_px > 0.0 {
+            let frac = ((y - term_bottom) / edit_h_px).clamp(0.0, 1.0);
             let editor_text = state.tab().app.editor_snapshot();
-            let max_cols = editor_text
-                .lines()
-                .map(|line| line.chars().count())
-                .max()
-                .unwrap_or(0);
-            let visible_cols = if state.layout.cell_w > 0.0 {
-                (track_w / state.layout.cell_w as f64).floor().max(1.0) as usize
+            let total_lines = editor_text.lines().count().max(1);
+            let pad_v = state.user_config.padding.vertical as f32;
+            let visible_rows = if state.layout.cell_h > 0.0 {
+                ((edit_h_px as f32 - pad_v) / state.layout.cell_h)
+                    .floor()
+                    .max(1.0) as usize
             } else {
                 1
             };
-            let max_scroll = max_cols.saturating_sub(visible_cols);
-            state.tab_mut().editor_horizontal_scroll_offset =
-                (frac * max_scroll as f64).round() as usize;
-        } else if state.drag.dragging_editor_scrollbar {
-            let available_h = state.layout.window_height as f64 - tab_bar_h;
-            let term_bottom = tab_bar_h + available_h * state.tab().split_ratio as f64;
-            let edit_h_px = state.layout.window_height as f64 - term_bottom;
-            if edit_h_px > 0.0 {
-                let frac = ((*y - term_bottom) / edit_h_px).clamp(0.0, 1.0);
-                let editor_text = state.tab().app.editor_snapshot();
-                let total_lines = editor_text.lines().count().max(1);
-                let pad_v = state.user_config.padding.vertical as f32;
-                let visible_rows = if state.layout.cell_h > 0.0 {
-                    ((edit_h_px as f32 - pad_v) / state.layout.cell_h)
-                        .floor()
-                        .max(1.0) as usize
-                } else {
-                    1
-                };
-                let max_scroll = total_lines.saturating_sub(visible_rows);
-                state.tab_mut().editor_scroll_offset = (frac * max_scroll as f64).round() as usize;
-            }
-        } else if state.tab().is_selecting {
+            let max_scroll = total_lines.saturating_sub(visible_rows);
+            state.tab_mut().editor_scroll_offset = (frac * max_scroll as f64).round() as usize;
+        }
+    } else if state.tab().is_selecting {
+        let term_row_count = state.tab().term_row_count;
+        let pad_h = state.user_config.padding.horizontal as f32;
+        let pad_v = state.user_config.padding.vertical as f32;
+        if let Some(cell) = cursor_to_terminal_cell(
+            x,
+            y,
+            state.layout.window_width,
+            state.layout.window_height,
+            &TerminalLayout {
+                split_ratio,
+                cell_w_px: state.layout.cell_w,
+                cell_h_px: state.layout.cell_h,
+                term_row_count,
+                tab_bar_h: tab_bar_h as f32,
+                pad_h,
+                pad_v,
+            },
+        ) {
+            state.tab_mut().selection_end = Some(cell);
+            state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
+        }
+    } else if state.tab().is_selecting_editor {
+        let available_h = state.layout.window_height as f64 - tab_bar_h;
+        let edit_top_px = tab_bar_h + split_ratio as f64 * available_h + 2.0;
+        let editor_scroll_offset = state.tab().editor_scroll_offset;
+        let pad_h = state.user_config.padding.horizontal as f64;
+        let pad_v = state.user_config.padding.vertical as f64;
+        let row = ((y - edit_top_px - pad_v) / state.layout.cell_h as f64)
+            .max(0.0)
+            .floor() as usize
+            + editor_scroll_offset;
+        let col = ((x - pad_h) / state.layout.cell_w as f64).max(0.0).floor() as usize
+            + state.tab().editor_horizontal_scroll_offset;
+        let text = state.tab().app.editor_snapshot();
+        let offset = editor_row_col_to_offset(&text, row, col);
+        state.tab_mut().app.set_editor_cursor(offset, true);
+        clamp_editor_scroll(state);
+    }
+
+    // Forward cursor motion to PTY when in fullscreen with motion reporting.
+    // Mode 1002: only when a mouse button is held (button-motion tracking).
+    // Mode 1003: always (any-event tracking).
+    // Shift or Alt/Option held: bypass reporting for local text selection.
+    let mouse_mode = state.tab().app.mouse_mode();
+    let bypass_mouse = state.modifiers.shift_down || state.modifiers.alt_down;
+    if state.tab().app.is_alternate_screen() && mouse_mode >= 1002 {
+        let should_send = !bypass_mouse
+            && (mouse_mode == 1003
+                || (mouse_mode == 1002 && state.cursor.mouse_btn_held.is_some()));
+        if should_send {
+            let tab_bar_h_f = state.tab_bar_h();
+            let split_ratio = state.tab().split_ratio;
             let term_row_count = state.tab().term_row_count;
             let pad_h = state.user_config.padding.horizontal as f32;
             let pad_v = state.user_config.padding.vertical as f32;
-            if let Some(cell) = cursor_to_terminal_cell(
-                *x,
-                *y,
+            if let Some((row, col)) = cursor_to_terminal_cell(
+                state.cursor.cursor_x,
+                state.cursor.cursor_y,
                 state.layout.window_width,
                 state.layout.window_height,
                 &TerminalLayout {
@@ -185,430 +263,74 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     cell_w_px: state.layout.cell_w,
                     cell_h_px: state.layout.cell_h,
                     term_row_count,
-                    tab_bar_h: tab_bar_h as f32,
+                    tab_bar_h: tab_bar_h_f,
                     pad_h,
                     pad_v,
                 },
             ) {
-                state.tab_mut().selection_end = Some(cell);
-                state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
-            }
-        } else if state.tab().is_selecting_editor {
-            let available_h = state.layout.window_height as f64 - tab_bar_h;
-            let edit_top_px = tab_bar_h + split_ratio as f64 * available_h + 2.0;
-            let editor_scroll_offset = state.tab().editor_scroll_offset;
-            let pad_h = state.user_config.padding.horizontal as f64;
-            let pad_v = state.user_config.padding.vertical as f64;
-            let row = ((*y - edit_top_px - pad_v) / state.layout.cell_h as f64)
-                .max(0.0)
-                .floor() as usize
-                + editor_scroll_offset;
-            let col = ((*x - pad_h) / state.layout.cell_w as f64).max(0.0).floor() as usize
-                + state.tab().editor_horizontal_scroll_offset;
-            let text = state.tab().app.editor_snapshot();
-            let offset = editor_row_col_to_offset(&text, row, col);
-            state.tab_mut().app.set_editor_cursor(offset, true);
-            clamp_editor_scroll(state);
-        }
-
-        // Forward cursor motion to PTY when in fullscreen with motion reporting.
-        // Mode 1002: only when a mouse button is held (button-motion tracking).
-        // Mode 1003: always (any-event tracking).
-        // Shift or Alt/Option held: bypass reporting for local text selection.
-        let mouse_mode = state.tab().app.mouse_mode();
-        let bypass_mouse = state.modifiers.shift_down || state.modifiers.alt_down;
-        if state.tab().app.is_alternate_screen() && mouse_mode >= 1002 {
-            let should_send = !bypass_mouse
-                && (mouse_mode == 1003
-                    || (mouse_mode == 1002 && state.cursor.mouse_btn_held.is_some()));
-            if should_send {
-                let tab_bar_h_f = state.tab_bar_h();
-                let split_ratio = state.tab().split_ratio;
-                let term_row_count = state.tab().term_row_count;
-                let pad_h = state.user_config.padding.horizontal as f32;
-                let pad_v = state.user_config.padding.vertical as f32;
-                if let Some((row, col)) = cursor_to_terminal_cell(
-                    state.cursor.cursor_x,
-                    state.cursor.cursor_y,
-                    state.layout.window_width,
-                    state.layout.window_height,
-                    &TerminalLayout {
-                        split_ratio,
-                        cell_w_px: state.layout.cell_w,
-                        cell_h_px: state.layout.cell_h,
-                        term_row_count,
-                        tab_bar_h: tab_bar_h_f,
-                        pad_h,
-                        pad_v,
-                    },
-                ) {
-                    let encode_mode = if state.tab().app.mouse_sgr() {
-                        1006
-                    } else {
-                        mouse_mode
-                    };
-                    let bytes =
-                        encode_mouse_motion(state.cursor.mouse_btn_held, row, col, encode_mode);
-                    state.send_terminal_input(&bytes);
-                }
+                let encode_mode = if state.tab().app.mouse_sgr() {
+                    1006
+                } else {
+                    mouse_mode
+                };
+                let bytes = encode_mouse_motion(state.cursor.mouse_btn_held, row, col, encode_mode);
+                state.send_terminal_input(&bytes);
             }
         }
-
-        return true;
     }
 
-    if let AppWindowEvent::MouseInput {
-        state: btn_state,
-        button: MouseButton::Left,
-    } = event
-    {
-        if *btn_state == ElementState::Released {
-            if let Some(drag_from) = state.drag.tab_drag {
-                if (state.cursor.cursor_x - state.drag.tab_drag_start_x).abs() > 5.0 {
-                    let n = state.tabs.len();
-                    let add_btn_w = state.layout.cell_w as f64 * 2.0;
-                    let tab_area_w = (state.layout.window_width as f64 - add_btn_w).max(1.0);
-                    let frac = (state.cursor.cursor_x / tab_area_w).clamp(0.0, 1.0);
-                    let insert_before = (frac * n as f64).round() as usize;
-                    state.move_tab_to(drag_from, insert_before);
-                }
-                state.drag.tab_drag = None;
-            }
-            if state.drag.dragging_separator && state.overlays.pending_pty_resize.is_some() {
-                state.flush_pty_resize();
-            }
-            state.drag.dragging_separator = false;
-            state.drag.dragging_terminal_scrollbar = false;
-            state.drag.dragging_editor_scrollbar = false;
-            state.drag.dragging_editor_horizontal_scrollbar = false;
-            state.tab_mut().is_selecting = false;
-            state.tab_mut().is_selecting_editor = false;
-            // Track whether the press was forwarded to PTY before clearing.
-            // If Shift was held during press, mouse_btn_held was never set.
-            let press_was_forwarded = state.cursor.mouse_btn_held.is_some();
-            state.cursor.mouse_btn_held = None;
-            // Send mouse release to PTY only if the press was also forwarded.
-            let mouse_mode = state.tab().app.mouse_mode();
-            if mouse_mode != 0 && press_was_forwarded {
-                let tab_bar_h = state.tab_bar_h() as f64;
-                let split_ratio = state.tab().split_ratio;
-                let term_row_count = state.tab().term_row_count;
-                let pad_h = state.user_config.padding.horizontal as f32;
-                let pad_v = state.user_config.padding.vertical as f32;
-                if let Some((row, col)) = cursor_to_terminal_cell(
-                    state.cursor.cursor_x,
-                    state.cursor.cursor_y,
-                    state.layout.window_width,
-                    state.layout.window_height,
-                    &TerminalLayout {
-                        split_ratio,
-                        cell_w_px: state.layout.cell_w,
-                        cell_h_px: state.layout.cell_h,
-                        term_row_count,
-                        tab_bar_h: tab_bar_h as f32,
-                        pad_h,
-                        pad_v,
-                    },
-                ) {
-                    let encode_mode = if state.tab().app.mouse_sgr() {
-                        1006
-                    } else {
-                        mouse_mode
-                    };
-                    let bytes = encode_mouse_btn(0, row, col, false, encode_mode);
-                    state.send_terminal_input(&bytes);
-                }
-            }
-        }
-        if *btn_state == ElementState::Pressed {
-            if matches!(
-                state.overlays.pending_update,
-                Some(crate::UpdateBanner::Available(_))
-            ) {
-                crate::updater::restart_app();
-                return true;
-            }
+    true
+}
 
-            // Command palette click handler.
-            if state.command_palette.is_some() {
-                let palette_w_px = state.layout.cell_w as f64 * 50.0;
-                let win_w = state.layout.window_width as f64;
-                let win_h = state.layout.window_height as f64;
-                let tab_bar_h = state.tab_bar_h() as f64;
-                let palette_x0 = (win_w - palette_w_px) / 2.0;
-                let palette_x1 = palette_x0 + palette_w_px;
-                let header_h = state.layout.cell_h as f64 * 2.2;
-                let item_h = state.layout.cell_h as f64 * 1.4;
-                let palette_y0 = tab_bar_h + win_h * 0.08;
-                let n_visible = state
-                    .command_palette
-                    .as_ref()
-                    .map(|cp| {
-                        cp.filtered
-                            .len()
-                            .saturating_sub(cp.scroll_offset)
-                            .min(crate::state::PALETTE_MAX_VISIBLE_PUB)
-                    })
-                    .unwrap_or(0);
-                let palette_y1 = palette_y0 + header_h + item_h * n_visible as f64;
+fn handle_mouse_input(
+    state: &mut GpuRuntimeState,
+    btn_state: ElementState,
+    button: MouseButton,
+) -> bool {
+    match button {
+        MouseButton::Left => handle_left_button(state, btn_state),
+        MouseButton::Middle => handle_middle_button(state, btn_state),
+        MouseButton::Right => handle_right_button(state, btn_state),
+        _ => false,
+    }
+}
 
-                let cx = state.cursor.cursor_x;
-                let cy = state.cursor.cursor_y;
-                if cx >= palette_x0 && cx <= palette_x1 && cy >= palette_y0 && cy <= palette_y1 {
-                    // Click inside the palette: select + execute if on an item.
-                    let items_y0 = palette_y0 + header_h;
-                    if cy >= items_y0 {
-                        let row = ((cy - items_y0) / item_h) as usize;
-                        let scroll_offset = state
-                            .command_palette
-                            .as_ref()
-                            .map(|cp| cp.scroll_offset)
-                            .unwrap_or(0);
-                        let item_abs = scroll_offset + row;
-                        if let Some(cp) = state.command_palette.as_mut() {
-                            cp.selected = item_abs.min(cp.filtered.len().saturating_sub(1));
-                        }
-                        crate::input::keyboard::palette_execute_from_pointer(state);
-                    }
-                } else {
-                    // Click outside: close palette.
-                    state.close_active_modal();
-                }
-                return true;
-            }
-
-            if let Some(menu) = state.overlays.context_menu.clone() {
-                if let Some(item) = menu.hovered_item {
-                    match menu.kind {
-                        crate::state::ContextMenuKind::Tab { tab_idx } => {
-                            execute_context_menu_item(state, tab_idx, item);
-                        }
-                        crate::state::ContextMenuKind::Terminal => {
-                            execute_terminal_context_menu_item(state, item);
-                        }
-                        crate::state::ContextMenuKind::Editor => {
-                            execute_editor_context_menu_item(state, item);
-                        }
-                    }
-                }
-                state.overlays.context_menu = None;
-                return true;
-            }
-
-            if state.tab().search.active
-                && let Some(hitbox) = search::search_panel_hitbox(
-                    state.layout.window_width,
-                    state.tab_bar_h(),
-                    state.layout.cell_w,
-                    state.layout.cell_h,
-                    state.user_config.padding.horizontal as f32,
-                    state.user_config.padding.vertical as f32,
-                )
-                && search::in_panel(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y)
-            {
-                if search::hit_close(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
-                    let q = state.tab().search.query.clone();
-                    if !q.is_empty() {
-                        state.overlays.last_search_query = Some(q);
-                    }
-                    search::close_search(state.tab_mut());
-                } else if search::hit_prev(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
-                    search::prev_match(state.tab_mut());
-                } else if search::hit_next(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
-                    search::next_match(state.tab_mut());
-                } else {
-                    // Click inside the query input area — position the cursor.
-                    let query_text_x = hitbox.panel_x
-                        + state.layout.cell_w as f64 * search::QUERY_TEXT_OFFSET_CELLS as f64;
-                    let click_x = state.cursor.cursor_x - query_text_x;
-                    let cell_w = state.layout.cell_w as f64;
-                    let char_idx = if click_x <= 0.0 {
-                        0
-                    } else {
-                        ((click_x + cell_w * 0.5) / cell_w) as usize
-                    };
-                    search::search_set_cursor(state.tab_mut(), char_idx);
-                }
-                return true;
-            }
-
-            let tab_bar_h = state.tab_bar_h() as f64;
-            if state.cursor.cursor_y < tab_bar_h {
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+fn handle_left_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> bool {
+    if btn_state == ElementState::Released {
+        if let Some(drag_from) = state.drag.tab_drag {
+            if (state.cursor.cursor_x - state.drag.tab_drag_start_x).abs() > 5.0 {
                 let n = state.tabs.len();
                 let add_btn_w = state.layout.cell_w as f64 * 2.0;
-                let tab_area_w = state.layout.window_width as f64 - add_btn_w;
-
-                if state.cursor.cursor_x >= state.layout.window_width as f64 - add_btn_w {
-                    state.add_new_tab();
-                    return true;
-                }
-
-                let tab_w = tab_area_w / n as f64;
-                let tab_idx = (state.cursor.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
-                let close_w = state.layout.cell_w as f64 * 1.5;
-                let tab_right = (tab_idx + 1) as f64 * tab_w;
-                if state.cursor.cursor_x >= tab_right - close_w {
-                    state.close_tab(tab_idx);
-                } else {
-                    state.active_tab = tab_idx;
-                    state.push_accessibility_tree();
-                    state.drag.tab_drag = Some(tab_idx);
-                    state.drag.tab_drag_start_x = state.cursor.cursor_x;
-                }
-                return true;
+                let tab_area_w = (state.layout.window_width as f64 - add_btn_w).max(1.0);
+                let frac = (state.cursor.cursor_x / tab_area_w).clamp(0.0, 1.0);
+                let insert_before = (frac * n as f64).round() as usize;
+                state.move_tab_to(drag_from, insert_before);
             }
-
+            state.drag.tab_drag = None;
+        }
+        if state.drag.dragging_separator && state.overlays.pending_pty_resize.is_some() {
+            state.flush_pty_resize();
+        }
+        state.drag.dragging_separator = false;
+        state.drag.dragging_terminal_scrollbar = false;
+        state.drag.dragging_editor_scrollbar = false;
+        state.drag.dragging_editor_horizontal_scrollbar = false;
+        state.tab_mut().is_selecting = false;
+        state.tab_mut().is_selecting_editor = false;
+        // Track whether the press was forwarded to PTY before clearing.
+        // If Shift was held during press, mouse_btn_held was never set.
+        let press_was_forwarded = state.cursor.mouse_btn_held.is_some();
+        state.cursor.mouse_btn_held = None;
+        // Send mouse release to PTY only if the press was also forwarded.
+        let mouse_mode = state.tab().app.mouse_mode();
+        if mouse_mode != 0 && press_was_forwarded {
+            let tab_bar_h = state.tab_bar_h() as f64;
             let split_ratio = state.tab().split_ratio;
-            let available_h = state.layout.window_height as f64 - tab_bar_h;
-            let sep_y_px = tab_bar_h + available_h * split_ratio as f64;
-            let fullscreen = state.tab().app.is_alternate_screen();
-
-            if !fullscreen && (state.cursor.cursor_y - sep_y_px).abs() < 6.0 {
-                state.drag.dragging_separator = true;
-                return true;
-            }
-
-            let sb_left = state.layout.window_width as f64 - SCROLLBAR_W_PX as f64;
-            let term_bottom = sep_y_px;
-
-            // Click on the "scrolled up" badge to jump back to bottom.
-            if state.tab().scroll_offset > 0 {
-                let pill_w = state.layout.cell_w as f64 * 14.0;
-                let pill_h = state.layout.cell_h as f64 * 1.4;
-                let margin = state.layout.cell_h as f64 * 0.5;
-                let cx = state.layout.window_width as f64 / 2.0;
-                let left = cx - pill_w / 2.0;
-                let right = cx + pill_w / 2.0;
-                let bottom = term_bottom - margin;
-                let top = bottom - pill_h;
-                let x = state.cursor.cursor_x;
-                let y = state.cursor.cursor_y;
-                if x >= left && x <= right && y >= top && y <= bottom {
-                    state.tab_mut().scroll_offset = 0;
-                    return true;
-                }
-            }
-
-            if state.cursor.cursor_x >= sb_left
-                && state.cursor.cursor_y >= tab_bar_h
-                && state.cursor.cursor_y <= term_bottom
-            {
-                let frac = (state.cursor.cursor_y - tab_bar_h) / (term_bottom - tab_bar_h);
-                let max_scroll = state.tab().app.scrollback_len();
-                state.tab_mut().scroll_offset = ((1.0 - frac) * max_scroll as f64) as usize;
-                state.drag.dragging_terminal_scrollbar = true;
-                return true;
-            }
-
-            if !fullscreen
-                && state.cursor.cursor_y
-                    >= state.layout.window_height as f64 - SCROLLBAR_W_PX as f64
-                && state.cursor.cursor_x < sb_left
-            {
-                let pad_h = state.user_config.padding.horizontal as f64;
-                let track_w = (sb_left - 2.0 * pad_h).max(1.0);
-                let frac = ((state.cursor.cursor_x - pad_h) / track_w).clamp(0.0, 1.0);
-                let editor_text = state.tab().app.editor_snapshot();
-                let max_cols = editor_text
-                    .lines()
-                    .map(|line| line.chars().count())
-                    .max()
-                    .unwrap_or(0);
-                let visible_cols = if state.layout.cell_w > 0.0 {
-                    (track_w / state.layout.cell_w as f64).floor().max(1.0) as usize
-                } else {
-                    1
-                };
-                let max_scroll = max_cols.saturating_sub(visible_cols);
-                if max_scroll > 0 {
-                    state.tab_mut().editor_horizontal_scroll_offset =
-                        (frac * max_scroll as f64).round() as usize;
-                    state.drag.dragging_editor_horizontal_scrollbar = true;
-                    return true;
-                }
-            }
-
-            if !fullscreen
-                && state.cursor.cursor_x >= sb_left
-                && state.cursor.cursor_y > term_bottom
-            {
-                let edit_h_px = state.layout.window_height as f64 - term_bottom;
-                if edit_h_px > 0.0 {
-                    let frac = (state.cursor.cursor_y - term_bottom) / edit_h_px;
-                    let editor_text = state.tab().app.editor_snapshot();
-                    let total_lines = editor_text.lines().count().max(1);
-                    let pad_v = state.user_config.padding.vertical as f32;
-                    let visible_rows = if state.layout.cell_h > 0.0 {
-                        ((edit_h_px as f32 - pad_v) / state.layout.cell_h)
-                            .floor()
-                            .max(1.0) as usize
-                    } else {
-                        1
-                    };
-                    let max_scroll = total_lines.saturating_sub(visible_rows);
-                    state.tab_mut().editor_scroll_offset =
-                        (frac * max_scroll as f64).round() as usize;
-                    state.drag.dragging_editor_scrollbar = true;
-                }
-                return true;
-            }
-
-            // Open a detected terminal link without starting selection.
-            // macOS uses Command; Linux/Windows use Ctrl.
-            let open_link_modifier_down = {
-                #[cfg(target_os = "macos")]
-                {
-                    state.modifiers.super_down
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    state.modifiers.ctrl_down || state.modifiers.super_down
-                }
-            };
-            if open_link_modifier_down {
-                let pad_h = state.user_config.padding.horizontal as f32;
-                let pad_v = state.user_config.padding.vertical as f32;
-                let term_row_count = state.tab().term_row_count;
-                if let Some((row, col)) = cursor_to_terminal_cell(
-                    state.cursor.cursor_x,
-                    state.cursor.cursor_y,
-                    state.layout.window_width,
-                    state.layout.window_height,
-                    &TerminalLayout {
-                        split_ratio,
-                        cell_w_px: state.layout.cell_w,
-                        cell_h_px: state.layout.cell_h,
-                        term_row_count,
-                        tab_bar_h: tab_bar_h as f32,
-                        pad_h,
-                        pad_v,
-                    },
-                ) {
-                    let last_text = state.tab().last_terminal_text.clone();
-                    let term_cols = if state.layout.cell_w > 0.0 {
-                        let pad_h = state.user_config.padding.horizontal as f32;
-                        ((state.layout.window_width as f32 - 2.0 * pad_h) / state.layout.cell_w)
-                            .floor() as usize
-                    } else {
-                        0
-                    };
-                    let links = detect_terminal_links(&last_text, term_cols);
-                    if let Some((_, _, _, target)) = links
-                        .iter()
-                        .find(|(r, cs, ce, _)| *r == row && col >= *cs && col < *ce)
-                    {
-                        let cwd = state.tab().cwd.clone();
-                        let target = target.clone();
-                        open_link(&mut *state.shell_services, &target, &cwd);
-                        return true;
-                    }
-                }
-            }
-
             let term_row_count = state.tab().term_row_count;
             let pad_h = state.user_config.padding.horizontal as f32;
             let pad_v = state.user_config.padding.vertical as f32;
-            if let Some(cell) = cursor_to_terminal_cell(
+            if let Some((row, col)) = cursor_to_terminal_cell(
                 state.cursor.cursor_x,
                 state.cursor.cursor_y,
                 state.layout.window_width,
@@ -623,155 +345,459 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                     pad_v,
                 },
             ) {
-                // If a mouse reporting mode is active and neither Shift nor Alt/Option
-                // is held, forward the click to the PTY. Either modifier bypasses mouse
-                // reporting so the user can do a local text selection.
-                let mouse_mode = state.tab().app.mouse_mode();
-                if mouse_mode != 0 && !state.modifiers.shift_down && !state.modifiers.alt_down {
-                    let (row, col) = cell;
-                    let encode_mode = if state.tab().app.mouse_sgr() {
-                        1006
-                    } else {
-                        mouse_mode
-                    };
-                    let bytes = encode_mouse_btn(0, row, col, true, encode_mode);
-                    state.send_terminal_input(&bytes);
-                    state.cursor.mouse_btn_held = Some(0);
+                let encode_mode = if state.tab().app.mouse_sgr() {
+                    1006
+                } else {
+                    mouse_mode
+                };
+                let bytes = encode_mouse_btn(0, row, col, false, encode_mode);
+                state.send_terminal_input(&bytes);
+            }
+        }
+    }
+    if btn_state == ElementState::Pressed {
+        if matches!(
+            state.overlays.pending_update,
+            Some(crate::UpdateBanner::Available(_))
+        ) {
+            crate::updater::restart_app();
+            return true;
+        }
+
+        // Command palette click handler.
+        if state.command_palette.is_some() {
+            let palette_w_px = state.layout.cell_w as f64 * 50.0;
+            let win_w = state.layout.window_width as f64;
+            let win_h = state.layout.window_height as f64;
+            let tab_bar_h = state.tab_bar_h() as f64;
+            let palette_x0 = (win_w - palette_w_px) / 2.0;
+            let palette_x1 = palette_x0 + palette_w_px;
+            let header_h = state.layout.cell_h as f64 * 2.2;
+            let item_h = state.layout.cell_h as f64 * 1.4;
+            let palette_y0 = tab_bar_h + win_h * 0.08;
+            let n_visible = state
+                .command_palette
+                .as_ref()
+                .map(|cp| {
+                    cp.filtered
+                        .len()
+                        .saturating_sub(cp.scroll_offset)
+                        .min(crate::state::PALETTE_MAX_VISIBLE_PUB)
+                })
+                .unwrap_or(0);
+            let palette_y1 = palette_y0 + header_h + item_h * n_visible as f64;
+
+            let cx = state.cursor.cursor_x;
+            let cy = state.cursor.cursor_y;
+            if cx >= palette_x0 && cx <= palette_x1 && cy >= palette_y0 && cy <= palette_y1 {
+                // Click inside the palette: select + execute if on an item.
+                let items_y0 = palette_y0 + header_h;
+                if cy >= items_y0 {
+                    let row = ((cy - items_y0) / item_h) as usize;
+                    let scroll_offset = state
+                        .command_palette
+                        .as_ref()
+                        .map(|cp| cp.scroll_offset)
+                        .unwrap_or(0);
+                    let item_abs = scroll_offset + row;
+                    if let Some(cp) = state.command_palette.as_mut() {
+                        cp.selected = item_abs.min(cp.filtered.len().saturating_sub(1));
+                    }
+                    crate::input::keyboard::palette_execute_from_pointer(state);
+                }
+            } else {
+                // Click outside: close palette.
+                state.close_active_modal();
+            }
+            return true;
+        }
+
+        if let Some(menu) = state.overlays.context_menu.clone() {
+            if let Some(item) = menu.hovered_item {
+                match menu.kind {
+                    crate::state::ContextMenuKind::Tab { tab_idx } => {
+                        execute_context_menu_item(state, tab_idx, item);
+                    }
+                    crate::state::ContextMenuKind::Terminal => {
+                        execute_terminal_context_menu_item(state, item);
+                    }
+                    crate::state::ContextMenuKind::Editor => {
+                        execute_editor_context_menu_item(state, item);
+                    }
+                }
+            }
+            state.overlays.context_menu = None;
+            return true;
+        }
+
+        if state.tab().search.active
+            && let Some(hitbox) = search::search_panel_hitbox(
+                state.layout.window_width,
+                state.tab_bar_h(),
+                state.layout.cell_w,
+                state.layout.cell_h,
+                state.user_config.padding.horizontal as f32,
+                state.user_config.padding.vertical as f32,
+            )
+            && search::in_panel(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y)
+        {
+            if search::hit_close(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
+                let q = state.tab().search.query.clone();
+                if !q.is_empty() {
+                    state.overlays.last_search_query = Some(q);
+                }
+                search::close_search(state.tab_mut());
+            } else if search::hit_prev(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
+                search::prev_match(state.tab_mut());
+            } else if search::hit_next(&hitbox, state.cursor.cursor_x, state.cursor.cursor_y) {
+                search::next_match(state.tab_mut());
+            } else {
+                // Click inside the query input area — position the cursor.
+                let query_text_x = hitbox.panel_x
+                    + state.layout.cell_w as f64 * search::QUERY_TEXT_OFFSET_CELLS as f64;
+                let click_x = state.cursor.cursor_x - query_text_x;
+                let cell_w = state.layout.cell_w as f64;
+                let char_idx = if click_x <= 0.0 {
+                    0
+                } else {
+                    ((click_x + cell_w * 0.5) / cell_w) as usize
+                };
+                search::search_set_cursor(state.tab_mut(), char_idx);
+            }
+            return true;
+        }
+
+        let tab_bar_h = state.tab_bar_h() as f64;
+        if state.cursor.cursor_y < tab_bar_h {
+            let n = state.tabs.len();
+            let add_btn_w = state.layout.cell_w as f64 * 2.0;
+            let tab_area_w = state.layout.window_width as f64 - add_btn_w;
+
+            if state.cursor.cursor_x >= state.layout.window_width as f64 - add_btn_w {
+                state.add_new_tab();
+                return true;
+            }
+
+            let tab_w = tab_area_w / n as f64;
+            let tab_idx = (state.cursor.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
+            let close_w = state.layout.cell_w as f64 * 1.5;
+            let tab_right = (tab_idx + 1) as f64 * tab_w;
+            if state.cursor.cursor_x >= tab_right - close_w {
+                state.close_tab(tab_idx);
+            } else {
+                state.active_tab = tab_idx;
+                state.push_accessibility_tree();
+                state.drag.tab_drag = Some(tab_idx);
+                state.drag.tab_drag_start_x = state.cursor.cursor_x;
+            }
+            return true;
+        }
+
+        let split_ratio = state.tab().split_ratio;
+        let available_h = state.layout.window_height as f64 - tab_bar_h;
+        let sep_y_px = tab_bar_h + available_h * split_ratio as f64;
+        let fullscreen = state.tab().app.is_alternate_screen();
+
+        if !fullscreen && (state.cursor.cursor_y - sep_y_px).abs() < 6.0 {
+            state.drag.dragging_separator = true;
+            return true;
+        }
+
+        let sb_left = state.layout.window_width as f64 - SCROLLBAR_W_PX as f64;
+        let term_bottom = sep_y_px;
+
+        // Click on the "scrolled up" badge to jump back to bottom.
+        if state.tab().scroll_offset > 0 {
+            let pill_w = state.layout.cell_w as f64 * 14.0;
+            let pill_h = state.layout.cell_h as f64 * 1.4;
+            let margin = state.layout.cell_h as f64 * 0.5;
+            let cx = state.layout.window_width as f64 / 2.0;
+            let left = cx - pill_w / 2.0;
+            let right = cx + pill_w / 2.0;
+            let bottom = term_bottom - margin;
+            let top = bottom - pill_h;
+            let x = state.cursor.cursor_x;
+            let y = state.cursor.cursor_y;
+            if x >= left && x <= right && y >= top && y <= bottom {
+                state.tab_mut().scroll_offset = 0;
+                return true;
+            }
+        }
+
+        if state.cursor.cursor_x >= sb_left
+            && state.cursor.cursor_y >= tab_bar_h
+            && state.cursor.cursor_y <= term_bottom
+        {
+            let frac = (state.cursor.cursor_y - tab_bar_h) / (term_bottom - tab_bar_h);
+            let max_scroll = state.tab().app.scrollback_len();
+            state.tab_mut().scroll_offset = ((1.0 - frac) * max_scroll as f64) as usize;
+            state.drag.dragging_terminal_scrollbar = true;
+            return true;
+        }
+
+        if !fullscreen
+            && state.cursor.cursor_y >= state.layout.window_height as f64 - SCROLLBAR_W_PX as f64
+            && state.cursor.cursor_x < sb_left
+        {
+            let pad_h = state.user_config.padding.horizontal as f64;
+            let track_w = (sb_left - 2.0 * pad_h).max(1.0);
+            let frac = ((state.cursor.cursor_x - pad_h) / track_w).clamp(0.0, 1.0);
+            let editor_text = state.tab().app.editor_snapshot();
+            let max_cols = editor_text
+                .lines()
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0);
+            let visible_cols = if state.layout.cell_w > 0.0 {
+                (track_w / state.layout.cell_w as f64).floor().max(1.0) as usize
+            } else {
+                1
+            };
+            let max_scroll = max_cols.saturating_sub(visible_cols);
+            if max_scroll > 0 {
+                state.tab_mut().editor_horizontal_scroll_offset =
+                    (frac * max_scroll as f64).round() as usize;
+                state.drag.dragging_editor_horizontal_scrollbar = true;
+                return true;
+            }
+        }
+
+        if !fullscreen && state.cursor.cursor_x >= sb_left && state.cursor.cursor_y > term_bottom {
+            let edit_h_px = state.layout.window_height as f64 - term_bottom;
+            if edit_h_px > 0.0 {
+                let frac = (state.cursor.cursor_y - term_bottom) / edit_h_px;
+                let editor_text = state.tab().app.editor_snapshot();
+                let total_lines = editor_text.lines().count().max(1);
+                let pad_v = state.user_config.padding.vertical as f32;
+                let visible_rows = if state.layout.cell_h > 0.0 {
+                    ((edit_h_px as f32 - pad_v) / state.layout.cell_h)
+                        .floor()
+                        .max(1.0) as usize
+                } else {
+                    1
+                };
+                let max_scroll = total_lines.saturating_sub(visible_rows);
+                state.tab_mut().editor_scroll_offset = (frac * max_scroll as f64).round() as usize;
+                state.drag.dragging_editor_scrollbar = true;
+            }
+            return true;
+        }
+
+        // Open a detected terminal link without starting selection.
+        // macOS uses Command; Linux/Windows use Ctrl.
+        let open_link_modifier_down = {
+            #[cfg(target_os = "macos")]
+            {
+                state.modifiers.super_down
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                state.modifiers.ctrl_down || state.modifiers.super_down
+            }
+        };
+        if open_link_modifier_down {
+            let pad_h = state.user_config.padding.horizontal as f32;
+            let pad_v = state.user_config.padding.vertical as f32;
+            let term_row_count = state.tab().term_row_count;
+            if let Some((row, col)) = cursor_to_terminal_cell(
+                state.cursor.cursor_x,
+                state.cursor.cursor_y,
+                state.layout.window_width,
+                state.layout.window_height,
+                &TerminalLayout {
+                    split_ratio,
+                    cell_w_px: state.layout.cell_w,
+                    cell_h_px: state.layout.cell_h,
+                    term_row_count,
+                    tab_bar_h: tab_bar_h as f32,
+                    pad_h,
+                    pad_v,
+                },
+            ) {
+                let last_text = state.tab().last_terminal_text.clone();
+                let term_cols = if state.layout.cell_w > 0.0 {
+                    let pad_h = state.user_config.padding.horizontal as f32;
+                    ((state.layout.window_width as f32 - 2.0 * pad_h) / state.layout.cell_w).floor()
+                        as usize
+                } else {
+                    0
+                };
+                let links = detect_terminal_links(&last_text, term_cols);
+                if let Some((_, _, _, target)) = links
+                    .iter()
+                    .find(|(r, cs, ce, _)| *r == row && col >= *cs && col < *ce)
+                {
+                    let cwd = state.tab().cwd.clone();
+                    let target = target.clone();
+                    open_link(&mut *state.shell_services, &target, &cwd);
                     return true;
                 }
+            }
+        }
 
-                // Detect double/triple clicks.
-                const DOUBLE_CLICK_MS: u128 = 400;
-                let now = Instant::now();
-                let click_count = {
-                    if let (Some(last_t), Some(last_cell)) =
-                        (state.cursor.last_click_time, state.cursor.last_click_cell)
-                    {
-                        let elapsed = now.duration_since(last_t).as_millis();
-                        if elapsed <= DOUBLE_CLICK_MS && last_cell == cell {
-                            (state.cursor.click_count + 1).min(3)
-                        } else {
-                            1
-                        }
+        let term_row_count = state.tab().term_row_count;
+        let pad_h = state.user_config.padding.horizontal as f32;
+        let pad_v = state.user_config.padding.vertical as f32;
+        if let Some(cell) = cursor_to_terminal_cell(
+            state.cursor.cursor_x,
+            state.cursor.cursor_y,
+            state.layout.window_width,
+            state.layout.window_height,
+            &TerminalLayout {
+                split_ratio,
+                cell_w_px: state.layout.cell_w,
+                cell_h_px: state.layout.cell_h,
+                term_row_count,
+                tab_bar_h: tab_bar_h as f32,
+                pad_h,
+                pad_v,
+            },
+        ) {
+            // If a mouse reporting mode is active and neither Shift nor Alt/Option
+            // is held, forward the click to the PTY. Either modifier bypasses mouse
+            // reporting so the user can do a local text selection.
+            let mouse_mode = state.tab().app.mouse_mode();
+            if mouse_mode != 0 && !state.modifiers.shift_down && !state.modifiers.alt_down {
+                let (row, col) = cell;
+                let encode_mode = if state.tab().app.mouse_sgr() {
+                    1006
+                } else {
+                    mouse_mode
+                };
+                let bytes = encode_mouse_btn(0, row, col, true, encode_mode);
+                state.send_terminal_input(&bytes);
+                state.cursor.mouse_btn_held = Some(0);
+                return true;
+            }
+
+            // Detect double/triple clicks.
+            const DOUBLE_CLICK_MS: u128 = 400;
+            let now = Instant::now();
+            let click_count = {
+                if let (Some(last_t), Some(last_cell)) =
+                    (state.cursor.last_click_time, state.cursor.last_click_cell)
+                {
+                    let elapsed = now.duration_since(last_t).as_millis();
+                    if elapsed <= DOUBLE_CLICK_MS && last_cell == cell {
+                        (state.cursor.click_count + 1).min(3)
                     } else {
                         1
                     }
-                };
-                state.cursor.last_click_time = Some(now);
-                state.cursor.last_click_cell = Some(cell);
-                state.cursor.last_click_was_editor = false;
-                state.cursor.click_count = click_count;
+                } else {
+                    1
+                }
+            };
+            state.cursor.last_click_time = Some(now);
+            state.cursor.last_click_cell = Some(cell);
+            state.cursor.last_click_was_editor = false;
+            state.cursor.click_count = click_count;
 
-                if click_count == 3 {
-                    // Triple-click: select the entire line.
-                    let (row, _col) = cell;
-                    let n_cols = state.tab().term_row_count.max(1);
-                    // Find actual terminal columns from the text.
-                    let last_text = state.tab().last_terminal_text.clone();
-                    let line_len = last_text
-                        .lines()
-                        .nth(row)
-                        .map(|l| l.chars().count())
-                        .unwrap_or(0);
-                    let end_col = line_len.saturating_sub(1);
-                    let scroll = state.tab().scroll_offset;
-                    state.tab_mut().selection_anchor = Some((row, 0));
+            if click_count == 3 {
+                // Triple-click: select the entire line.
+                let (row, _col) = cell;
+                let n_cols = state.tab().term_row_count.max(1);
+                // Find actual terminal columns from the text.
+                let last_text = state.tab().last_terminal_text.clone();
+                let line_len = last_text
+                    .lines()
+                    .nth(row)
+                    .map(|l| l.chars().count())
+                    .unwrap_or(0);
+                let end_col = line_len.saturating_sub(1);
+                let scroll = state.tab().scroll_offset;
+                state.tab_mut().selection_anchor = Some((row, 0));
+                state.tab_mut().selection_anchor_scroll = scroll;
+                state.tab_mut().selection_end = Some((row, end_col.max(n_cols)));
+                state.tab_mut().selection_end_scroll = scroll;
+                state.tab_mut().is_selecting = false;
+            } else if click_count == 2 {
+                // Double-click: select word under cursor.
+                let (row, col) = cell;
+                let last_text = state.tab().last_terminal_text.clone();
+                let scroll = state.tab().scroll_offset;
+                if let Some(line) = last_text.lines().nth(row) {
+                    let chars: Vec<char> = line.chars().collect();
+                    let col = col.min(chars.len().saturating_sub(1));
+                    let is_word = |c: char| c.is_alphanumeric() || "_-./:~".contains(c);
+                    // Expand left.
+                    let mut start_col = col;
+                    while start_col > 0 && is_word(chars[start_col - 1]) {
+                        start_col -= 1;
+                    }
+                    // If the char at cursor isn't a word char, try single char.
+                    let mut end_col = if col < chars.len() && is_word(chars[col]) {
+                        col + 1
+                    } else {
+                        col.saturating_add(1)
+                    };
+                    while end_col < chars.len() && is_word(chars[end_col]) {
+                        end_col += 1;
+                    }
+                    state.tab_mut().selection_anchor = Some((row, start_col));
                     state.tab_mut().selection_anchor_scroll = scroll;
-                    state.tab_mut().selection_end = Some((row, end_col.max(n_cols)));
+                    state.tab_mut().selection_end =
+                        Some((row, end_col.saturating_sub(1).max(start_col)));
                     state.tab_mut().selection_end_scroll = scroll;
                     state.tab_mut().is_selecting = false;
-                } else if click_count == 2 {
-                    // Double-click: select word under cursor.
-                    let (row, col) = cell;
-                    let last_text = state.tab().last_terminal_text.clone();
-                    let scroll = state.tab().scroll_offset;
-                    if let Some(line) = last_text.lines().nth(row) {
-                        let chars: Vec<char> = line.chars().collect();
-                        let col = col.min(chars.len().saturating_sub(1));
-                        let is_word = |c: char| c.is_alphanumeric() || "_-./:~".contains(c);
-                        // Expand left.
-                        let mut start_col = col;
-                        while start_col > 0 && is_word(chars[start_col - 1]) {
-                            start_col -= 1;
-                        }
-                        // If the char at cursor isn't a word char, try single char.
-                        let mut end_col = if col < chars.len() && is_word(chars[col]) {
-                            col + 1
-                        } else {
-                            col.saturating_add(1)
-                        };
-                        while end_col < chars.len() && is_word(chars[end_col]) {
-                            end_col += 1;
-                        }
-                        state.tab_mut().selection_anchor = Some((row, start_col));
-                        state.tab_mut().selection_anchor_scroll = scroll;
-                        state.tab_mut().selection_end =
-                            Some((row, end_col.saturating_sub(1).max(start_col)));
-                        state.tab_mut().selection_end_scroll = scroll;
-                        state.tab_mut().is_selecting = false;
-                    }
-                } else {
-                    // Single click: start drag selection.
-                    state.tab_mut().selection_anchor = Some(cell);
-                    state.tab_mut().selection_anchor_scroll = state.tab().scroll_offset;
-                    state.tab_mut().selection_end = Some(cell);
-                    state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
-                    state.tab_mut().is_selecting = true;
                 }
-            } else if !fullscreen && state.cursor.cursor_y > term_bottom {
-                let edit_top_px = term_bottom + 2.0;
-                let editor_scroll_offset = state.tab().editor_scroll_offset;
-                let pad_h_f = state.user_config.padding.horizontal as f64;
-                let pad_v_f = state.user_config.padding.vertical as f64;
-                let row = ((state.cursor.cursor_y - edit_top_px - pad_v_f)
-                    / state.layout.cell_h as f64)
-                    .max(0.0)
-                    .floor() as usize
-                    + editor_scroll_offset;
-                let col = ((state.cursor.cursor_x - pad_h_f) / state.layout.cell_w as f64)
-                    .max(0.0)
-                    .floor() as usize
-                    + state.tab().editor_horizontal_scroll_offset;
-                // Clicking in the editor clears any terminal text selection.
-                state.tab_mut().selection_anchor = None;
-                state.tab_mut().selection_end = None;
-                state.tab_mut().is_selecting = false;
-                let text = state.tab().app.editor_snapshot();
-                let offset = editor_row_col_to_offset(&text, row, col);
-                const DOUBLE_CLICK_MS: u128 = 400;
-                let now = Instant::now();
-                let is_double_click = state.cursor.last_click_was_editor
-                    && state.cursor.last_click_cell == Some((row, col))
-                    && state.cursor.last_click_time.is_some_and(|last| {
-                        now.duration_since(last).as_millis() <= DOUBLE_CLICK_MS
-                    });
-                state.cursor.last_click_time = Some(now);
-                state.cursor.last_click_cell = Some((row, col));
-                state.cursor.last_click_was_editor = true;
-                if is_double_click {
-                    let (start, end) = editor_word_bounds(&text, offset);
-                    state.tab_mut().app.set_editor_cursor(start, false);
-                    state.tab_mut().app.set_editor_cursor(end, true);
-                    state.tab_mut().is_selecting_editor = false;
-                    state.cursor.click_count = 2;
-                } else {
-                    let extend = state.modifiers.shift_down;
-                    state.tab_mut().app.set_editor_cursor(offset, extend);
-                    state.tab_mut().is_selecting_editor = true;
-                    state.cursor.click_count = 1;
-                }
-                clamp_editor_scroll(state);
+            } else {
+                // Single click: start drag selection.
+                state.tab_mut().selection_anchor = Some(cell);
+                state.tab_mut().selection_anchor_scroll = state.tab().scroll_offset;
+                state.tab_mut().selection_end = Some(cell);
+                state.tab_mut().selection_end_scroll = state.tab().scroll_offset;
+                state.tab_mut().is_selecting = true;
             }
+        } else if !fullscreen && state.cursor.cursor_y > term_bottom {
+            let edit_top_px = term_bottom + 2.0;
+            let editor_scroll_offset = state.tab().editor_scroll_offset;
+            let pad_h_f = state.user_config.padding.horizontal as f64;
+            let pad_v_f = state.user_config.padding.vertical as f64;
+            let row = ((state.cursor.cursor_y - edit_top_px - pad_v_f) / state.layout.cell_h as f64)
+                .max(0.0)
+                .floor() as usize
+                + editor_scroll_offset;
+            let col = ((state.cursor.cursor_x - pad_h_f) / state.layout.cell_w as f64)
+                .max(0.0)
+                .floor() as usize
+                + state.tab().editor_horizontal_scroll_offset;
+            // Clicking in the editor clears any terminal text selection.
+            state.tab_mut().selection_anchor = None;
+            state.tab_mut().selection_end = None;
+            state.tab_mut().is_selecting = false;
+            let text = state.tab().app.editor_snapshot();
+            let offset = editor_row_col_to_offset(&text, row, col);
+            const DOUBLE_CLICK_MS: u128 = 400;
+            let now = Instant::now();
+            let is_double_click = state.cursor.last_click_was_editor
+                && state.cursor.last_click_cell == Some((row, col))
+                && state
+                    .cursor
+                    .last_click_time
+                    .is_some_and(|last| now.duration_since(last).as_millis() <= DOUBLE_CLICK_MS);
+            state.cursor.last_click_time = Some(now);
+            state.cursor.last_click_cell = Some((row, col));
+            state.cursor.last_click_was_editor = true;
+            if is_double_click {
+                let (start, end) = editor_word_bounds(&text, offset);
+                state.tab_mut().app.set_editor_cursor(start, false);
+                state.tab_mut().app.set_editor_cursor(end, true);
+                state.tab_mut().is_selecting_editor = false;
+                state.cursor.click_count = 2;
+            } else {
+                let extend = state.modifiers.shift_down;
+                state.tab_mut().app.set_editor_cursor(offset, extend);
+                state.tab_mut().is_selecting_editor = true;
+                state.cursor.click_count = 1;
+            }
+            clamp_editor_scroll(state);
         }
-        return true;
     }
+    true
+}
 
-    // Middle-click on tab bar: close that tab.
-    if let AppWindowEvent::MouseInput {
-        state: ElementState::Pressed,
-        button: MouseButton::Middle,
-    } = event
-    {
+fn handle_middle_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> bool {
+    if btn_state == ElementState::Pressed {
         let tab_bar_h = state.tab_bar_h() as f64;
         if state.cursor.cursor_y < tab_bar_h && state.tabs.len() > 1 {
             let n = state.tabs.len();
@@ -783,199 +809,190 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
                 state.close_tab(tab_idx);
             }
         }
-        return true;
+        true
+    } else {
+        false
     }
+}
 
-    if let AppWindowEvent::MouseInput {
-        state: btn_state,
-        button: MouseButton::Right,
-    } = event
-    {
-        if *btn_state == ElementState::Pressed {
-            state.overlays.context_menu = None;
+fn handle_right_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> bool {
+    if btn_state == ElementState::Pressed {
+        state.overlays.context_menu = None;
 
-            let tab_bar_h = state.tab_bar_h() as f64;
-            if state.cursor.cursor_y < tab_bar_h {
-                let n = state.tabs.len();
-                let add_btn_w = state.layout.cell_w as f64 * 2.0;
-                let tab_area_w = state.layout.window_width as f64 - add_btn_w;
-                if n > 0 && state.cursor.cursor_x < state.layout.window_width as f64 - add_btn_w {
-                    let tab_w = tab_area_w / n as f64;
-                    let tab_idx = (state.cursor.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
-                    state.overlays.context_menu = Some(crate::state::ContextMenuState {
-                        kind: crate::state::ContextMenuKind::Tab { tab_idx },
-                        x_px: state.cursor.cursor_x,
-                        y_px: tab_bar_h,
-                        hovered_item: None,
-                        items: TAB_MENU_ITEMS.iter().map(|s| (*s).to_owned()).collect(),
-                        enabled_items: vec![true; TAB_MENU_ITEMS.len()],
-                    });
-                }
-            } else {
-                // Terminal/editor pane right-click menu.
-                let available_h = state.layout.window_height as f64 - tab_bar_h;
-                let term_bottom = if state.tab().app.is_alternate_screen() {
-                    state.layout.window_height as f64
-                } else {
-                    tab_bar_h + available_h * state.tab().split_ratio as f64
-                };
-                if state.cursor.cursor_y >= tab_bar_h && state.cursor.cursor_y <= term_bottom {
-                    state.overlays.context_menu = Some(crate::state::ContextMenuState {
-                        kind: crate::state::ContextMenuKind::Terminal,
-                        x_px: state.cursor.cursor_x,
-                        y_px: state.cursor.cursor_y,
-                        hovered_item: None,
-                        items: TERMINAL_MENU_ITEMS
-                            .iter()
-                            .map(|s| (*s).to_owned())
-                            .collect(),
-                        enabled_items: vec![true; TERMINAL_MENU_ITEMS.len()],
-                    });
-                } else if state.cursor.cursor_y > term_bottom {
-                    let has_selection = state.tab().app.editor_selection().is_some();
-                    let has_text = !state.tab().app.editor_snapshot().is_empty();
-                    let can_paste = state
-                        .shell_services
-                        .clipboard_get()
-                        .is_some_and(|text| !text.is_empty());
-                    state.overlays.context_menu = Some(crate::state::ContextMenuState {
-                        kind: crate::state::ContextMenuKind::Editor,
-                        x_px: state.cursor.cursor_x,
-                        y_px: state.cursor.cursor_y,
-                        hovered_item: None,
-                        items: EDITOR_MENU_ITEMS.iter().map(|s| (*s).to_owned()).collect(),
-                        enabled_items: vec![
-                            state.tab().app.editor_can_undo(),
-                            state.tab().app.editor_can_redo(),
-                            has_selection,
-                            has_selection,
-                            can_paste,
-                            has_text,
-                        ],
-                    });
-                }
-            }
-        }
-        return true;
-    }
-
-    if let AppWindowEvent::MouseWheel { delta_lines } = event {
-        if state.overlays.context_menu.is_some() {
-            state.overlays.context_menu = None;
-        }
-        let lines = delta_lines.round().abs().max(1.0) as usize;
         let tab_bar_h = state.tab_bar_h() as f64;
-        let split_ratio = state.tab().split_ratio;
-        let term_bottom =
-            tab_bar_h + (state.layout.window_height as f64 - tab_bar_h) * split_ratio as f64;
-
-        if state.cursor.cursor_y > term_bottom {
-            let editor_text = state.tab().app.editor_snapshot();
-            if state.modifiers.shift_down {
-                let max_cols = editor_text
-                    .lines()
-                    .map(|line| line.chars().count())
-                    .max()
-                    .unwrap_or(0);
-                let visible_cols = if state.layout.cell_w > 0.0 {
-                    ((state.layout.window_width as f32
-                        - 2.0 * state.user_config.padding.horizontal as f32)
-                        / state.layout.cell_w)
-                        .floor()
-                        .max(1.0) as usize
-                } else {
-                    1
-                };
-                let max_scroll = max_cols.saturating_sub(visible_cols);
-                let prev = state.tab().editor_horizontal_scroll_offset;
-                state.tab_mut().editor_horizontal_scroll_offset = if *delta_lines > 0.0 {
-                    prev.saturating_sub(lines)
-                } else {
-                    prev.saturating_add(lines).min(max_scroll)
-                };
-                return true;
+        if state.cursor.cursor_y < tab_bar_h {
+            let n = state.tabs.len();
+            let add_btn_w = state.layout.cell_w as f64 * 2.0;
+            let tab_area_w = state.layout.window_width as f64 - add_btn_w;
+            if n > 0 && state.cursor.cursor_x < state.layout.window_width as f64 - add_btn_w {
+                let tab_w = tab_area_w / n as f64;
+                let tab_idx = (state.cursor.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
+                state.overlays.context_menu = Some(crate::state::ContextMenuState {
+                    kind: crate::state::ContextMenuKind::Tab { tab_idx },
+                    x_px: state.cursor.cursor_x,
+                    y_px: tab_bar_h,
+                    hovered_item: None,
+                    items: TAB_MENU_ITEMS.iter().map(|s| (*s).to_owned()).collect(),
+                    enabled_items: vec![true; TAB_MENU_ITEMS.len()],
+                });
             }
-            let total_lines = editor_text.lines().count().max(1);
-            let edit_h_px = state.layout.window_height as f64 - term_bottom;
-            let pad_v = state.user_config.padding.vertical as f32;
-            let visible_rows = if state.layout.cell_h > 0.0 {
-                ((edit_h_px as f32 - pad_v) / state.layout.cell_h)
+        } else {
+            // Terminal/editor pane right-click menu.
+            let available_h = state.layout.window_height as f64 - tab_bar_h;
+            let term_bottom = if state.tab().app.is_alternate_screen() {
+                state.layout.window_height as f64
+            } else {
+                tab_bar_h + available_h * state.tab().split_ratio as f64
+            };
+            if state.cursor.cursor_y >= tab_bar_h && state.cursor.cursor_y <= term_bottom {
+                state.overlays.context_menu = Some(crate::state::ContextMenuState {
+                    kind: crate::state::ContextMenuKind::Terminal,
+                    x_px: state.cursor.cursor_x,
+                    y_px: state.cursor.cursor_y,
+                    hovered_item: None,
+                    items: TERMINAL_MENU_ITEMS
+                        .iter()
+                        .map(|s| (*s).to_owned())
+                        .collect(),
+                    enabled_items: vec![true; TERMINAL_MENU_ITEMS.len()],
+                });
+            } else if state.cursor.cursor_y > term_bottom {
+                let has_selection = state.tab().app.editor_selection().is_some();
+                let has_text = !state.tab().app.editor_snapshot().is_empty();
+                let can_paste = state
+                    .shell_services
+                    .clipboard_get()
+                    .is_some_and(|text| !text.is_empty());
+                state.overlays.context_menu = Some(crate::state::ContextMenuState {
+                    kind: crate::state::ContextMenuKind::Editor,
+                    x_px: state.cursor.cursor_x,
+                    y_px: state.cursor.cursor_y,
+                    hovered_item: None,
+                    items: EDITOR_MENU_ITEMS.iter().map(|s| (*s).to_owned()).collect(),
+                    enabled_items: vec![
+                        state.tab().app.editor_can_undo(),
+                        state.tab().app.editor_can_redo(),
+                        has_selection,
+                        has_selection,
+                        can_paste,
+                        has_text,
+                    ],
+                });
+            }
+        }
+        true
+    } else {
+        false
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn handle_mouse_wheel(state: &mut GpuRuntimeState, delta_lines: f32) -> bool {
+    if state.overlays.context_menu.is_some() {
+        state.overlays.context_menu = None;
+    }
+    let lines = delta_lines.round().abs().max(1.0) as usize;
+    let tab_bar_h = state.tab_bar_h() as f64;
+    let split_ratio = state.tab().split_ratio;
+    let term_bottom =
+        tab_bar_h + (state.layout.window_height as f64 - tab_bar_h) * split_ratio as f64;
+
+    if state.cursor.cursor_y > term_bottom {
+        let editor_text = state.tab().app.editor_snapshot();
+        if state.modifiers.shift_down {
+            let max_cols = editor_text
+                .lines()
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0);
+            let visible_cols = if state.layout.cell_w > 0.0 {
+                ((state.layout.window_width as f32
+                    - 2.0 * state.user_config.padding.horizontal as f32)
+                    / state.layout.cell_w)
                     .floor()
                     .max(1.0) as usize
             } else {
                 1
             };
-            let max_scroll = total_lines.saturating_sub(visible_rows);
-            let prev = state.tab().editor_scroll_offset;
-            if *delta_lines > 0.0 {
-                state.tab_mut().editor_scroll_offset = prev.saturating_sub(lines);
+            let max_scroll = max_cols.saturating_sub(visible_cols);
+            let prev = state.tab().editor_horizontal_scroll_offset;
+            state.tab_mut().editor_horizontal_scroll_offset = if delta_lines > 0.0 {
+                prev.saturating_sub(lines)
             } else {
-                state.tab_mut().editor_scroll_offset = prev.saturating_add(lines).min(max_scroll);
-            }
-        } else {
-            let prev = state.tab().scroll_offset;
-            // When mouse reporting is active, send scroll events to the PTY
-            // instead of scrolling the local scrollback buffer.
-            let mouse_mode = state.tab().app.mouse_mode();
-            if mouse_mode != 0 {
-                let tab_bar_h_f = state.tab_bar_h() as f64;
-                let split_ratio = state.tab().split_ratio;
-                let term_row_count = state.tab().term_row_count;
-                let pad_h = state.user_config.padding.horizontal as f32;
-                let pad_v = state.user_config.padding.vertical as f32;
-                let term_bottom_for_scroll = tab_bar_h_f
-                    + (state.layout.window_height as f64 - tab_bar_h_f) * split_ratio as f64;
-                if state.cursor.cursor_y < term_bottom_for_scroll
-                    && let Some((row, col)) = cursor_to_terminal_cell(
-                        state.cursor.cursor_x,
-                        state.cursor.cursor_y,
-                        state.layout.window_width,
-                        state.layout.window_height,
-                        &TerminalLayout {
-                            split_ratio,
-                            cell_w_px: state.layout.cell_w,
-                            cell_h_px: state.layout.cell_h,
-                            term_row_count,
-                            tab_bar_h: tab_bar_h_f as f32,
-                            pad_h,
-                            pad_v,
-                        },
-                    )
-                {
-                    // Button 64 = scroll up, 65 = scroll down.
-                    let btn = if *delta_lines > 0.0 { 64u8 } else { 65u8 };
-                    let encode_mode = if state.tab().app.mouse_sgr() {
-                        1006
-                    } else {
-                        mouse_mode
-                    };
-                    for _ in 0..lines {
-                        let bytes = encode_mouse_btn(btn, row, col, true, encode_mode);
-                        state.send_terminal_input(&bytes);
-                    }
-                    return true;
-                }
-            }
-            if *delta_lines > 0.0 {
-                let max_scroll = state.tab().app.scrollback_len();
-                state.tab_mut().scroll_offset = prev.saturating_add(lines).min(max_scroll);
-            } else {
-                state.tab_mut().scroll_offset = prev.saturating_sub(lines);
-            }
-            state.push_accessibility_tree();
+                prev.saturating_add(lines).min(max_scroll)
+            };
+            return true;
         }
-        return true;
+        let total_lines = editor_text.lines().count().max(1);
+        let edit_h_px = state.layout.window_height as f64 - term_bottom;
+        let pad_v = state.user_config.padding.vertical as f32;
+        let visible_rows = if state.layout.cell_h > 0.0 {
+            ((edit_h_px as f32 - pad_v) / state.layout.cell_h)
+                .floor()
+                .max(1.0) as usize
+        } else {
+            1
+        };
+        let max_scroll = total_lines.saturating_sub(visible_rows);
+        let prev = state.tab().editor_scroll_offset;
+        if delta_lines > 0.0 {
+            state.tab_mut().editor_scroll_offset = prev.saturating_sub(lines);
+        } else {
+            state.tab_mut().editor_scroll_offset = prev.saturating_add(lines).min(max_scroll);
+        }
+    } else {
+        let prev = state.tab().scroll_offset;
+        // When mouse reporting is active, send scroll events to the PTY
+        // instead of scrolling the local scrollback buffer.
+        let mouse_mode = state.tab().app.mouse_mode();
+        if mouse_mode != 0 {
+            let tab_bar_h_f = state.tab_bar_h() as f64;
+            let split_ratio = state.tab().split_ratio;
+            let term_row_count = state.tab().term_row_count;
+            let pad_h = state.user_config.padding.horizontal as f32;
+            let pad_v = state.user_config.padding.vertical as f32;
+            let term_bottom_for_scroll = tab_bar_h_f
+                + (state.layout.window_height as f64 - tab_bar_h_f) * split_ratio as f64;
+            if state.cursor.cursor_y < term_bottom_for_scroll
+                && let Some((row, col)) = cursor_to_terminal_cell(
+                    state.cursor.cursor_x,
+                    state.cursor.cursor_y,
+                    state.layout.window_width,
+                    state.layout.window_height,
+                    &TerminalLayout {
+                        split_ratio,
+                        cell_w_px: state.layout.cell_w,
+                        cell_h_px: state.layout.cell_h,
+                        term_row_count,
+                        tab_bar_h: tab_bar_h_f as f32,
+                        pad_h,
+                        pad_v,
+                    },
+                )
+            {
+                // Button 64 = scroll up, 65 = scroll down.
+                let btn = if delta_lines > 0.0 { 64u8 } else { 65u8 };
+                let encode_mode = if state.tab().app.mouse_sgr() {
+                    1006
+                } else {
+                    mouse_mode
+                };
+                for _ in 0..lines {
+                    let bytes = encode_mouse_btn(btn, row, col, true, encode_mode);
+                    state.send_terminal_input(&bytes);
+                }
+                return true;
+            }
+        }
+        if delta_lines > 0.0 {
+            let max_scroll = state.tab().app.scrollback_len();
+            state.tab_mut().scroll_offset = prev.saturating_add(lines).min(max_scroll);
+        } else {
+            state.tab_mut().scroll_offset = prev.saturating_sub(lines);
+        }
+        state.push_accessibility_tree();
     }
-
-    if let AppWindowEvent::ModifiersChanged(mods) = event {
-        state.modifiers.ctrl_down = mods.control_key();
-        state.modifiers.super_down = mods.super_key();
-        state.modifiers.shift_down = mods.shift_key();
-        state.modifiers.alt_down = mods.alt_key();
-        return true;
-    }
-
-    false
+    true
 }
 
 fn editor_selected_text(state: &GpuRuntimeState) -> Option<String> {

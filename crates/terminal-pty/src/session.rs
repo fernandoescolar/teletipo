@@ -12,6 +12,10 @@ use crate::error::PtyError;
 
 type Result<T> = std::result::Result<T, PtyError>;
 
+/// A thread-safe callback that wakes the render loop when new PTY data arrives.
+/// Typically wraps an `EventLoopProxy::send_event()` call.
+pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
 /// Maximum number of read chunks (each up to [`READ_CHUNK_SIZE`] bytes) that
 /// may sit in the PTY → consumer channel before the reader thread blocks.
 ///
@@ -35,6 +39,10 @@ pub struct PortablePtySession {
     /// Handle to the reader thread, retained so `Drop` can join with a
     /// timeout. `Option` so the join can take ownership in `drop`.
     reader_handle: Option<thread::JoinHandle<()>>,
+    /// Optional waker callback shared with the reader thread; when set, the
+    /// reader calls it after each chunk so the event loop renders promptly.
+    #[allow(dead_code)] // retained to keep the Arc alive for the reader thread
+    waker: Option<Waker>,
 }
 
 // ── Shell integration ─────────────────────────────────────────────────────────
@@ -84,9 +92,9 @@ fn setup_shell_integration(shell: &str) -> Option<IntegrationSetup> {
         return None;
     }
 
-    let precmd_hook_posix = r#"_ret=$?; printf '\033]133;D;%d\007' "$_ret"; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' "$(hostname -f 2>/dev/null || hostname)" "$PWD""#;
+    let precmd_hook_posix = r#"_ret=$?; printf '\033]133;D;%d\007' "$_ret"; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' "$(hostname)" "$PWD""#;
     let preexec_hook_posix = r#"printf '\033]133;B\007'; printf '\033]133;C\007'"#;
-    let precmd_hook_fish = r#"set _ret $status; printf '\033]133;D;%d\007' $_ret; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' (hostname -f 2>/dev/null; or hostname) "$PWD""#;
+    let precmd_hook_fish = r#"set _ret $status; printf '\033]133;D;%d\007' $_ret; printf '\033]133;A\007'; printf '\033]7;file://%s%s\007' (hostname) "$PWD""#;
     let preexec_hook_fish = r#"printf '\033]133;B\007'; printf '\033]133;C\007'"#;
 
     match shell_name {
@@ -199,12 +207,13 @@ impl PortablePtySession {
     /// Returns `(session, integration_active)`.  When `integration_active` is
     /// `false` the shell does not emit OSC 133 and exit-code tracking is
     /// unavailable (fallback: all commands are saved to history).
-    #[tracing::instrument(skip(shell, cwd))]
+    #[tracing::instrument(skip(shell, cwd, waker))]
     pub fn spawn_shell(
         shell: &str,
         rows: u16,
         cols: u16,
         cwd: Option<&str>,
+        waker: Option<Waker>,
     ) -> Result<(Self, bool)> {
         let integration = setup_shell_integration(shell);
         let baseline_path = gui_shell_path();
@@ -263,6 +272,7 @@ impl PortablePtySession {
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
         let queued_chunks = Arc::new(AtomicUsize::new(0));
         let queued_chunks_for_thread = Arc::clone(&queued_chunks);
+        let waker_for_thread = waker.clone();
         let reader_handle = thread::spawn(move || {
             let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
@@ -277,6 +287,9 @@ impl PortablePtySession {
                                 queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                             metrics::gauge!("pty_channel_depth").set(depth as f64);
                             metrics::counter!("pty_read_bytes").increment(n as u64);
+                            if let Some(ref wake) = waker_for_thread {
+                                wake();
+                            }
                         }
                     }
                     Err(err) => {
@@ -294,17 +307,19 @@ impl PortablePtySession {
             rx,
             queued_chunks: Arc::clone(&queued_chunks),
             reader_handle: Some(reader_handle),
+            waker,
         };
         Ok((session, integration.is_some()))
     }
 
-    #[tracing::instrument(skip(program, args, cwd))]
+    #[tracing::instrument(skip(program, args, cwd, waker))]
     pub fn spawn_command(
         program: &str,
         args: &[&str],
         rows: u16,
         cols: u16,
         cwd: Option<&str>,
+        waker: Option<Waker>,
     ) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -345,6 +360,7 @@ impl PortablePtySession {
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
         let queued_chunks = Arc::new(AtomicUsize::new(0));
         let queued_chunks_for_thread = Arc::clone(&queued_chunks);
+        let waker_for_thread = waker.clone();
         let reader_handle = thread::spawn(move || {
             let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
@@ -359,6 +375,9 @@ impl PortablePtySession {
                                 queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                             metrics::gauge!("pty_channel_depth").set(depth as f64);
                             metrics::counter!("pty_read_bytes").increment(n as u64);
+                            if let Some(ref wake) = waker_for_thread {
+                                wake();
+                            }
                         }
                     }
                     Err(err) => {
@@ -376,6 +395,7 @@ impl PortablePtySession {
             rx,
             queued_chunks: Arc::clone(&queued_chunks),
             reader_handle: Some(reader_handle),
+            waker,
         })
     }
 
@@ -513,7 +533,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     fn spawn_command_delivers_output() {
         let mut session =
-            PortablePtySession::spawn_command("sh", &["-lc", "printf hi"], 24, 80, None)
+            PortablePtySession::spawn_command("sh", &["-lc", "printf hi"], 24, 80, None, None)
                 .expect("spawn command");
 
         let deadline = Instant::now() + Duration::from_secs(1);

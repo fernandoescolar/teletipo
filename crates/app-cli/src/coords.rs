@@ -61,9 +61,10 @@ pub(crate) fn clamp_editor_scroll(state: &mut GpuRuntimeState) {
         .chars()
         .count();
     let editor_h_px = (1.0 - tab.split_ratio) * (window_height as f32 - tab_bar_h);
-    // Text starts pad_v pixels below the pane top, so the usable row area is smaller.
+    // Text starts pad_v pixels below the pane top and ends pad_v above the
+    // bottom, so subtract both top and bottom padding from the usable area.
     let visible_rows = if cell_h > 0.0 {
-        ((editor_h_px - pad_v) / cell_h).floor().max(1.0) as usize
+        ((editor_h_px - 2.0 * pad_v) / cell_h).floor().max(1.0) as usize
     } else {
         1
     };

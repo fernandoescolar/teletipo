@@ -12,7 +12,7 @@ mod wgpu_compat;
 mod window;
 
 pub use window::{
-    run_gpu_window, run_gpu_window_live, run_gpu_window_live_with_events,
+    Redrawer, run_gpu_window, run_gpu_window_live, run_gpu_window_live_with_events,
     run_gpu_window_live_with_events_and_window,
 };
 

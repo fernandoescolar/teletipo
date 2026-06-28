@@ -91,6 +91,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         should_exit: false,
         last_editor_disabled: false,
         shell_services,
+        pty_waker: None,
     }
 }
 

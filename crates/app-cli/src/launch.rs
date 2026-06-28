@@ -55,13 +55,14 @@ pub(crate) fn enumerate_font_families() -> Vec<FontEntry> {
 
 // ── PTY spawning ──────────────────────────────────────────────────────────────
 
-#[tracing::instrument(skip(shell, exec, cwd))]
+#[tracing::instrument(skip(shell, exec, cwd, waker))]
 pub(crate) fn spawn_pty(
     shell: &str,
     rows: u16,
     cols: u16,
     exec: Option<&str>,
     cwd: Option<&str>,
+    waker: Option<terminal_pty::Waker>,
 ) -> anyhow::Result<(PortablePtySession, bool)> {
     match exec {
         Some(cmd) => {
@@ -74,16 +75,18 @@ pub(crate) fn spawn_pty(
                     rows,
                     cols,
                     cwd,
+                    waker,
                 )?;
                 Ok((pty, false))
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let pty = PortablePtySession::spawn_command(shell, &["-lc", cmd], rows, cols, cwd)?;
+                let pty =
+                    PortablePtySession::spawn_command(shell, &["-lc", cmd], rows, cols, cwd, waker)?;
                 Ok((pty, false))
             }
         }
-        None => Ok(PortablePtySession::spawn_shell(shell, rows, cols, cwd)?),
+        None => Ok(PortablePtySession::spawn_shell(shell, rows, cols, cwd, waker)?),
     }
 }
 
@@ -323,6 +326,7 @@ pub(crate) fn build_initial_state(
         should_exit: false,
         last_editor_disabled: false,
         shell_services: Box::new(crate::shell::SystemShell::new()),
+        pty_waker: None,
     };
 
     apply_theme_and_font_selection(&mut state);
@@ -453,6 +457,7 @@ fn build_single_tab(
             cols as u16,
             params.exec,
             restore_cwd,
+            None,
         ) {
             Ok((p, integ)) => (Some(p), integ),
             Err(err) => {
@@ -467,6 +472,7 @@ fn build_single_tab(
             cols as u16,
             None,
             restore_cwd,
+            None,
         )
         .map(|(p, integ)| (Some(p), integ))
         .unwrap_or((None, false))

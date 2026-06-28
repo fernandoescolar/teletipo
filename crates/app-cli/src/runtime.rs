@@ -178,11 +178,10 @@ impl EventCtx {
         input::handle_event(&mut state, event);
     }
 
-    pub(crate) fn install_window(&self, window: Box<dyn WindowControl>) {
-        self.state
-            .borrow_mut()
-            .shell_services
-            .install_window(window);
+    pub(crate) fn install_window(&self, window: Box<dyn WindowControl>, redrawer: render_glow::Redrawer) {
+        let mut state = self.state.borrow_mut();
+        state.shell_services.install_window(window);
+        state.install_pty_waker(redrawer);
     }
 }
 
@@ -224,6 +223,10 @@ pub(crate) struct GpuRuntimeState {
     /// Abstraction over host-OS capabilities (clipboard today). Boxed so tests
     /// can swap in a [`shell::NullShell`].
     pub(crate) shell_services: Box<dyn shell::AppShell>,
+    /// Thread-safe waker that PTY reader threads call to wake the render loop.
+    /// Installed once the event loop is ready; `None` before that (PTYs spawned
+    /// during startup still work — the event loop polls).
+    pub(crate) pty_waker: Option<terminal_pty::Waker>,
 }
 
 impl GpuRuntimeState {
@@ -288,6 +291,14 @@ impl GpuRuntimeState {
         } else {
             0.0
         }
+    }
+
+    /// Install the PTY waker once the event loop is ready. Existing tabs that
+    /// were spawned before the event loop started don't get the waker (they
+    /// still work because the loop polls), but all future tabs will.
+    pub(crate) fn install_pty_waker(&mut self, redrawer: render_glow::Redrawer) {
+        let waker: terminal_pty::Waker = std::sync::Arc::new(move || redrawer.request_redraw());
+        self.pty_waker = Some(waker);
     }
 
     /// Pump PTY output for ALL tabs; returns `true` if the active tab received data.
@@ -725,9 +736,11 @@ impl GpuRuntimeState {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(&self.shell);
-        let (pty, integration) = spawn_pty(chosen_shell, rows, cols, None, Some(&active_cwd))
-            .map(|(p, i)| (Some(p), i))
-            .unwrap_or((None, false));
+        let waker = self.pty_waker.clone();
+        let (pty, integration) =
+            spawn_pty(chosen_shell, rows, cols, None, Some(&active_cwd), waker)
+                .map(|(p, i)| (Some(p), i))
+                .unwrap_or((None, false));
         self.tabs.push(TabState {
             app,
             pty,
@@ -792,8 +805,9 @@ impl GpuRuntimeState {
             }
         };
         let active_cwd = self.tab().cwd.clone();
+        let waker = self.pty_waker.clone();
         let (pty, integration) =
-            spawn_pty(&self.shell, rows, cols, Some(command), Some(&active_cwd))
+            spawn_pty(&self.shell, rows, cols, Some(command), Some(&active_cwd), waker)
                 .map(|(p, i)| (Some(p), i))
                 .unwrap_or((None, false));
         self.tabs.push(TabState {
