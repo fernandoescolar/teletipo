@@ -481,7 +481,6 @@ impl GlPainter {
 
         self.warm_atlas(gl, snapshot);
 
-        // === NEW PATH: Scene-based geometry rendering ===
         // Build scene with background, tab bar, terminal background, and editor background
         let mut scene = render_model::build_scene(snapshot, &layout, target, metrics);
 
@@ -490,11 +489,6 @@ impl GlPainter {
         render_model::overlay::render_resize(&ctx, &mut scene);
         render_model::overlay::render_scroll_indicator(&ctx, &mut scene);
         render_model::components::render_toasts(&ctx, &mut scene);
-
-        // === NEW PATH: Components emit scene commands ===
-        // Terminal and editor components (background only for terminal; bg + text for editor)
-        render_model::components::Terminal::render(&ctx, &mut scene);
-        render_model::components::Editor::render(&ctx, &mut scene);
 
         // Phase 1: Core components to Scene
         render_model::components::render_highlights(&ctx, &mut scene);

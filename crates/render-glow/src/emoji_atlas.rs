@@ -70,9 +70,7 @@ impl ColorAtlas {
 
         // Check if it fits on the current row
         if self.alloc_x + width <= self.max_size {
-            if self.row_h == 0 {
-                self.row_h = height;
-            }
+            self.row_h = self.row_h.max(height);
             let x = self.alloc_x;
             let y = self.alloc_y;
             self.alloc_x += width + 1; // +1 for padding
@@ -117,4 +115,18 @@ impl ColorAtlas {
     // pub fn entry_count(&self) -> usize {
     //     self.char_cache.len()
     // }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocation_row_height_tracks_tallest_image_in_row() {
+        let mut atlas = ColorAtlas::new(10);
+
+        assert_eq!(atlas.allocate(2, 2), Some((0, 0)));
+        assert_eq!(atlas.allocate(2, 6), Some((3, 0)));
+        assert_eq!(atlas.allocate(10, 1), Some((0, 7)));
+    }
 }
