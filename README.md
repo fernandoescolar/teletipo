@@ -4,8 +4,8 @@
 
 A terminal emulator written in Rust — GPU-accelerated, multi-tab, with a code-editor-style command input.
 
-[<video src="https://github.com/fernandoescolar/teletipo/raw/refs/heads/main/docs/teletipo-screencast.mp4" width="400" controls></video>](https://github.com/user-attachments/assets/efce12b6-51e3-4c19-a56a-da197c350c41
-)
+https://github.com/user-attachments/assets/66ecd5a1-eaf3-41bd-8c4d-ba2e89aa797f
+
 
 ## Install
 
