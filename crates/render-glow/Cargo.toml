@@ -19,6 +19,6 @@ platform-abstraction = { path = "../platform-abstraction" }
 raw-window-handle = "0.5"
 rustybuzz = "0.14"
 tracing = { workspace = true }
-ttf-parser = "0.25"
+skrifa = "0.43"
 winit = { workspace = true }
 

@@ -3,10 +3,13 @@ use std::path::Path;
 
 use image::RgbaImage;
 use memmap2::Mmap;
+use skrifa::bitmap::BitmapData;
+use skrifa::instance::Size;
+use skrifa::{FontRef, MetadataProvider};
 
 /// Rasterises color emoji from bitmap-strike font tables.
 ///
-/// Supported formats (via `ttf_parser`):
+/// Supported formats (via `skrifa`):
 /// - **SBIX** – Apple Color Emoji (macOS)
 /// - **CBDT / CBLC** – Noto Color Emoji (Linux/Android)
 /// - **PNG-embedded SBIX strikes** – Windows / other vendors
@@ -74,17 +77,29 @@ impl ColorEmojiRasterizer {
 // ── Internal decoding helper ──────────────────────────────────────────────────
 
 fn decode(data: &[u8], face_index: u32, ch: char, ppem: u16) -> Option<RgbaImage> {
-    let face = ttf_parser::Face::parse(data, face_index).ok()?;
+    let face = FontRef::from_index(data, face_index).ok()?;
 
     // Map Unicode scalar to glyph id inside this face.
-    let glyph_id = face.glyph_index(ch)?;
+    let glyph_id = face.charmap().map(ch)?;
 
-    // Ask ttf-parser for the nearest bitmap strike ≥ ppem.
+    // Ask skrifa for the best matching bitmap strike for the requested size.
     // This covers both SBIX (Apple Color Emoji) and CBDT/CBLC (Noto Color Emoji).
-    let raster = face.glyph_raster_image(glyph_id, ppem)?;
+    let glyph = face
+        .bitmap_strikes()
+        .glyph_for_size(Size::new(f32::from(ppem)), glyph_id)?;
 
-    // The data is almost always a self-contained PNG (occasionally JPEG).
-    let img = image::load_from_memory(raster.data).ok()?.into_rgba8();
+    // Most emoji glyphs are PNG-backed; some fonts provide uncompressed BGRA.
+    let img = match glyph.data {
+        BitmapData::Png(bytes) => image::load_from_memory(bytes).ok()?.into_rgba8(),
+        BitmapData::Bgra(bytes) => {
+            let mut rgba = Vec::with_capacity(bytes.len());
+            for px in bytes.chunks_exact(4) {
+                rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+            }
+            RgbaImage::from_vec(glyph.width, glyph.height, rgba)?
+        }
+        BitmapData::Mask(_) => return None,
+    };
 
     if img.width() == 0 || img.height() == 0 {
         return None;
