@@ -455,6 +455,13 @@ impl GlPainter {
         render_model::components::render_scrollbar(&ctx, &mut scene);
         render_model::components::render_suggestion(&ctx, &mut scene);
 
+        // Phase 2: Overlay components to Scene
+        render_model::components::render_tab_bar(&ctx, &mut scene);
+        render_model::components::render_search_panel(&ctx, &mut scene);
+        render_model::components::render_command_palette(&ctx, &mut scene);
+        render_model::components::render_context_menu(&ctx, &mut scene);
+        render_model::components::render_dropdown(&ctx, &mut scene);
+
         // Render scene geometry (backgrounds, rectangles, text)
         self.render_scene(gl, &scene, metrics, layout.width, layout.height);
 

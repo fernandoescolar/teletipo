@@ -1,6 +1,6 @@
 /// Scene builder: backend-independent function to construct scenes from snapshots.
 
-use crate::{Background, CellMetrics, Editor, FrameLayout, RenderSnapshot, RenderTarget, Scene, TabBar, Terminal};
+use crate::{Background, CellMetrics, Editor, FrameLayout, RenderSnapshot, RenderTarget, Scene, Terminal};
 use crate::theme::ColorTheme;
 
 /// Rendering context: immutable data passed to all component render functions.
@@ -46,14 +46,13 @@ pub fn build_scene(
     // Emit background component
     Background::render(&ctx, &mut scene);
 
-    // Emit tab bar component (backgrounds only; text uses old path)
-    TabBar::render(&ctx, &mut scene);
-
     // Emit terminal component (background colors only; text uses old path)
     Terminal::render(&ctx, &mut scene);
 
     // Emit editor component (background only; text, cursor, selection use old path)
     Editor::render(&ctx, &mut scene);
+
+    // Tab bar is emitted later in Phase 2 from painter.rs
 
     scene
 }
