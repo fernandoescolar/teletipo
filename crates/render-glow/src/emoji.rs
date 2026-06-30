@@ -42,11 +42,11 @@ impl ColorEmojiRasterizer {
     pub(crate) fn new(path: &Path, face_index: u32) -> Option<Self> {
         let file = match std::fs::File::open(path) {
             Ok(f) => f,
-            Err(e) => {
+            Err(_e) => {
                 #[cfg(target_os = "linux")]
                 tracing::warn!(
                     path = %path.display(),
-                    error = %e,
+                    error = %_e,
                     "emoji rasterizer: failed to open color emoji font"
                 );
                 return None;
@@ -57,11 +57,11 @@ impl ColorEmojiRasterizer {
         // that is not expected to change.
         let mmap = match unsafe { Mmap::map(&file) } {
             Ok(m) => m,
-            Err(e) => {
+            Err(_e) => {
                 #[cfg(target_os = "linux")]
                 tracing::warn!(
                     path = %path.display(),
-                    error = %e,
+                    error = %_e,
                     "emoji rasterizer: failed to memory-map color emoji font"
                 );
                 return None;
