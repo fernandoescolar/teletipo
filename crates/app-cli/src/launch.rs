@@ -81,12 +81,20 @@ pub(crate) fn spawn_pty(
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let pty =
-                    PortablePtySession::spawn_command(shell, &["-lc", cmd], rows, cols, cwd, waker)?;
+                let pty = PortablePtySession::spawn_command(
+                    shell,
+                    &["-lc", cmd],
+                    rows,
+                    cols,
+                    cwd,
+                    waker,
+                )?;
                 Ok((pty, false))
             }
         }
-        None => Ok(PortablePtySession::spawn_shell(shell, rows, cols, cwd, waker)?),
+        None => Ok(PortablePtySession::spawn_shell(
+            shell, rows, cols, cwd, waker,
+        )?),
     }
 }
 

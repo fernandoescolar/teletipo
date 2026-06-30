@@ -235,10 +235,7 @@ where
     let window: &'static Window = Box::leak(Box::new(window));
     window.set_ime_allowed(true);
 
-    on_window_ready(
-        Box::new(WinitWindowControl { window }),
-        Redrawer { proxy },
-    );
+    on_window_ready(Box::new(WinitWindowControl { window }), Redrawer { proxy });
     apply_app_icon(APP_ICON_PNG);
     apply_titlebar_color(window, initial.theme.terminal_bg);
 

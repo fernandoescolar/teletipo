@@ -178,7 +178,11 @@ impl EventCtx {
         input::handle_event(&mut state, event);
     }
 
-    pub(crate) fn install_window(&self, window: Box<dyn WindowControl>, redrawer: render_glow::Redrawer) {
+    pub(crate) fn install_window(
+        &self,
+        window: Box<dyn WindowControl>,
+        redrawer: render_glow::Redrawer,
+    ) {
         let mut state = self.state.borrow_mut();
         state.shell_services.install_window(window);
         state.install_pty_waker(redrawer);
@@ -806,10 +810,16 @@ impl GpuRuntimeState {
         };
         let active_cwd = self.tab().cwd.clone();
         let waker = self.pty_waker.clone();
-        let (pty, integration) =
-            spawn_pty(&self.shell, rows, cols, Some(command), Some(&active_cwd), waker)
-                .map(|(p, i)| (Some(p), i))
-                .unwrap_or((None, false));
+        let (pty, integration) = spawn_pty(
+            &self.shell,
+            rows,
+            cols,
+            Some(command),
+            Some(&active_cwd),
+            waker,
+        )
+        .map(|(p, i)| (Some(p), i))
+        .unwrap_or((None, false));
         self.tabs.push(TabState {
             app,
             pty,
