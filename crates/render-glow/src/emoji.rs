@@ -40,11 +40,39 @@ impl ColorEmojiRasterizer {
     /// Open the font at `path` and set up a memory-mapped view.
     /// Returns `None` if the file cannot be opened or mapped.
     pub(crate) fn new(path: &Path, face_index: u32) -> Option<Self> {
-        let file = std::fs::File::open(path).ok()?;
+        let file = match std::fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) => {
+                #[cfg(target_os = "linux")]
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "emoji rasterizer: failed to open color emoji font"
+                );
+                return None;
+            }
+        };
         // SAFETY: we treat the mapping as read-only and never modify the file
         // while the process is running.  The font file is a system resource
         // that is not expected to change.
-        let mmap = unsafe { Mmap::map(&file) }.ok()?;
+        let mmap = match unsafe { Mmap::map(&file) } {
+            Ok(m) => m,
+            Err(e) => {
+                #[cfg(target_os = "linux")]
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "emoji rasterizer: failed to memory-map color emoji font"
+                );
+                return None;
+            }
+        };
+        #[cfg(target_os = "linux")]
+        tracing::info!(
+            path = %path.display(),
+            face_index,
+            "emoji rasterizer: loaded color emoji font"
+        );
         Some(Self {
             mmap,
             face_index,
@@ -63,6 +91,12 @@ impl ColorEmojiRasterizer {
         }
         let result = decode(&self.mmap, self.face_index, ch, ppem);
         if result.is_none() {
+            #[cfg(target_os = "linux")]
+            tracing::debug!(
+                codepoint = format_args!("U+{:04X}", ch as u32),
+                ppem,
+                "emoji rasterizer: no bitmap strike for character"
+            );
             self.missing.insert((ch, ppem));
         }
         result
@@ -82,11 +116,25 @@ fn decode(data: &[u8], face_index: u32, ch: char, ppem: u16) -> Option<RgbaImage
     // Map Unicode scalar to glyph id inside this face.
     let glyph_id = face.charmap().map(ch)?;
 
-    // Ask skrifa for the best matching bitmap strike for the requested size.
-    // This covers both SBIX (Apple Color Emoji) and CBDT/CBLC (Noto Color Emoji).
-    let glyph = face
-        .bitmap_strikes()
-        .glyph_for_size(Size::new(f32::from(ppem)), glyph_id)?;
+    // Ask skrifa for a bitmap strike for the requested size. Some Linux emoji
+    // fonts expose only large fixed strikes (for example 109/136 ppem), so we
+    // probe a small set of common fallback ppem values when the direct lookup
+    // fails.
+    let strikes = face.bitmap_strikes();
+    let mut glyph = strikes.glyph_for_size(Size::new(f32::from(ppem)), glyph_id);
+    if glyph.is_none() {
+        const FALLBACK_PPEM: &[u16] = &[16, 18, 20, 24, 32, 64, 96, 109, 128, 136, 160];
+        for &alt in FALLBACK_PPEM {
+            if alt == ppem {
+                continue;
+            }
+            glyph = strikes.glyph_for_size(Size::new(f32::from(alt)), glyph_id);
+            if glyph.is_some() {
+                break;
+            }
+        }
+    }
+    let glyph = glyph?;
 
     // Most emoji glyphs are PNG-backed; some fonts provide uncompressed BGRA.
     let img = match glyph.data {

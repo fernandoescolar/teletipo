@@ -534,15 +534,48 @@ fn find_emoji_font_path(db: &fontdb::Database, families: &[&str]) -> Option<(Pat
             families: &[Family::Name(family)],
             weight: Weight::NORMAL,
             ..Query::default()
-        })?;
+        });
+        let Some(id) = id else {
+            continue;
+        };
         let face_info = db.faces().find(|fi| fi.id == id)?;
         let path = match &face_info.source {
             fontdb::Source::File(p) => p.to_path_buf(),
             fontdb::Source::SharedFile(p, _) => p.to_path_buf(),
             fontdb::Source::Binary(_) => continue,
         };
+        #[cfg(target_os = "linux")]
+        tracing::info!(
+            family,
+            path = %path.display(),
+            face_index = face_info.index,
+            "emoji font: resolved from fontdb family query"
+        );
         return Some((path, face_info.index));
     }
+
+    #[cfg(target_os = "linux")]
+    {
+        let candidates = [
+            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+            "/usr/local/share/fonts/NotoColorEmoji.ttf",
+        ];
+        for path in candidates {
+            let pb = PathBuf::from(path);
+            if pb.is_file() {
+                tracing::info!(
+                    path = %pb.display(),
+                    "emoji font: resolved from direct Linux fallback path"
+                );
+                return Some((pb, 0));
+            }
+        }
+        tracing::warn!(
+            "emoji font: no usable color emoji font found via family query or Linux fallback paths"
+        );
+    }
+
     None
 }
 
