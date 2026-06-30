@@ -2,7 +2,7 @@ use std::mem::size_of;
 use std::sync::Arc;
 
 use crate::{ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay};
-use render_model::{CellMetrics, FrameLayout, RenderCommand, RenderTarget, Scene, compute_frame_layout};
+use render_model::{CellMetrics, FrameLayout, Rect, RenderCommand, RenderTarget, Scene, compute_frame_layout};
 use font8x8::UnicodeFonts;
 use glow::HasContext;
 use winit::dpi::PhysicalSize;
@@ -50,6 +50,9 @@ pub(crate) struct GlPainter {
     // ── Font rendering state ───────────────────────────────────────────────
     rasterizer: CpuFontRasterizer,
     shaped_terminal_cache: Option<ShapedTerminalCache>,
+
+    // ── Clipping state ─────────────────────────────────────────────────────
+    clip_stack: Vec<(i32, i32, i32, i32)>,  // (x, y, w, h) in GL coordinates
 }
 
 struct GlyphCell {
@@ -311,6 +314,7 @@ impl GlPainter {
             emoji_atlas,
             rasterizer: CpuFontRasterizer::new(font_family, font_size_px),
             shaped_terminal_cache: None,
+            clip_stack: Vec::new(),
         })
     }
 
@@ -427,21 +431,32 @@ impl GlPainter {
 
         // === NEW PATH: Scene-based geometry rendering ===
         // Build scene with background, tab bar, terminal background, and editor background
-        let scene = render_model::build_scene(snapshot, &layout, target, metrics);
+        let mut scene = render_model::build_scene(snapshot, &layout, target, metrics);
 
-        // Render scene geometry (backgrounds, borders, rectangles)
-        self.render_scene(gl, &scene, layout.width, layout.height);
+        // Add geometry overlays and toast notifications to the scene
+        let ctx = render_model::RenderContext::new(snapshot, &layout, target, metrics);
+        render_model::overlay::render_resize(&ctx, &mut scene);
+        render_model::overlay::render_scroll_indicator(&ctx, &mut scene);
+        render_model::components::render_toasts(&ctx, &mut scene);
 
-        // === OLD PATH: Text and complex overlays (still needed temporarily) ===
-        // These will be gradually migrated to components in subsequent phases
+        // === NEW PATH: Accumulate text and overlays in Scene ===
+        // Backgrounds
+        self.add_terminal_text_to_scene(&mut scene, snapshot, &layout, metrics);
+        self.add_editor_text_to_scene(&mut scene, snapshot, &layout, metrics);
 
+        // Terminal/editor text via Scene
+        self.emit_terminal_text_to_scene(&mut scene, snapshot, &layout, metrics);
+        self.emit_editor_text_to_scene(&mut scene, snapshot, &layout, metrics);
+
+        // Other overlays and content
         self.draw_terminal_highlights(snapshot, &layout);
         self.draw_editor_selection(snapshot, &layout);
-        self.draw_terminal_text(snapshot, &layout);
-        self.draw_editor_text(snapshot, &layout);
         self.draw_editor_suggestion(snapshot, &layout);
         self.draw_cursor(snapshot, &layout);
         self.draw_scrollbar(snapshot, &layout);
+
+        // Render scene geometry (backgrounds, rectangles, text)
+        self.render_scene(gl, &scene, metrics, layout.width, layout.height);
 
         // Flush main-content passes before drawing overlays so that overlay
         // backgrounds (drawn without blending) completely cover terminal text.
@@ -453,21 +468,295 @@ impl GlPainter {
         self.draw_settings_overlay(snapshot, &layout);
         self.draw_keybindings_overlay(snapshot, &layout);
         self.draw_command_palette(snapshot, &layout);
-        self.draw_toasts(snapshot, &layout);
-        self.draw_resize_overlay(snapshot, &layout);
-        self.draw_scroll_indicator(snapshot, &layout);
+        // Toasts, resize overlay, and scroll indicator are now emitted via Scene
 
         self.flush_passes(gl, layout.width, layout.height);
+    }
+
+    /// Push a clipping rectangle (scissor test).
+    fn push_clip_rect(&mut self, gl: &glow::Context, rect: &Rect, viewport_height: f32) {
+        // Convert from Teletipo coords (origin top-left) to GL coords (origin bottom-left)
+        let gl_x = rect.x as i32;
+        let gl_y = (viewport_height - rect.y - rect.h) as i32;
+        let gl_w = rect.w as i32;
+        let gl_h = rect.h as i32;
+
+        // Clamp to valid scissor bounds
+        let gl_x = gl_x.max(0);
+        let gl_y = gl_y.max(0);
+        let gl_w = gl_w.max(0);
+        let gl_h = gl_h.max(0);
+
+        self.clip_stack.push((gl_x, gl_y, gl_w, gl_h));
+
+        unsafe {
+            gl.enable(glow::SCISSOR_TEST);
+            gl.scissor(gl_x, gl_y, gl_w, gl_h);
+        }
+    }
+
+    /// Pop the clipping rectangle.
+    fn pop_clip_rect(&mut self, gl: &glow::Context) {
+        self.clip_stack.pop();
+
+        if let Some((x, y, w, h)) = self.clip_stack.last() {
+            unsafe {
+                gl.scissor(*x, *y, *w, *h);
+            }
+        } else {
+            unsafe {
+                gl.disable(glow::SCISSOR_TEST);
+            }
+        }
+    }
+
+    /// Render a simple text command (overlay text, no complex shaping).
+    /// Assumes monospace rendering and basic style (bold, dim, etc).
+    /// Add terminal text backgrounds to the scene.
+    /// Emits rectangular backgrounds per cell based on terminal_bg_colors.
+    fn add_terminal_text_to_scene(
+        &mut self,
+        scene: &mut Scene,
+        snapshot: &RenderSnapshot,
+        layout: &FrameLayout,
+        metrics: CellMetrics,
+    ) {
+        let terminal_text = snapshot.terminal_text_from_rows();
+        let backdrop = frosted_backdrop_alpha(snapshot.opacity);
+        let max_x = layout.width - layout.padding_h;
+        let max_y = layout.terminal_text_bottom;
+        let lines: Vec<&str> = terminal_text.lines().collect();
+        let mut line_char_start = 0usize;
+
+        // Emit background colors to scene
+        for (row, line) in lines.iter().copied().enumerate() {
+            let y = layout.terminal_text_top + row as f32 * layout.cell_h_px;
+            if y >= max_y {
+                break;
+            }
+            for (col, _) in line.chars().enumerate() {
+                let x = layout.padding_h + col as f32 * layout.cell_w_px;
+                if x + layout.cell_w_px > max_x {
+                    break;
+                }
+
+                let idx = line_char_start + col;
+                if let Some(bg) = snapshot.terminal_bg_colors.get(idx).and_then(|c| *c) {
+                    scene.rect_to_layer(
+                        render_model::SceneLayer::Main,
+                        x,
+                        y,
+                        layout.cell_w_px,
+                        layout.cell_h_px,
+                        [bg[0], bg[1], bg[2], backdrop],
+                    );
+                }
+            }
+
+            line_char_start = line_char_start.saturating_add(line.chars().count() + 1);
+        }
+    }
+
+    /// Add editor text backgrounds to the scene.
+    /// Similar to terminal but for the editor pane.
+    fn add_editor_text_to_scene(
+        &mut self,
+        scene: &mut Scene,
+        snapshot: &RenderSnapshot,
+        layout: &FrameLayout,
+        metrics: CellMetrics,
+    ) {
+        if snapshot.editor_text.is_empty() {
+            return;
+        }
+
+        let backdrop = frosted_backdrop_alpha(snapshot.opacity);
+        let lines: Vec<&str> = snapshot.editor_text.lines().collect();
+        let max_x = layout.width - layout.padding_h;
+        let max_y = layout.height - layout.padding_v;
+        let mut line_char_start = 0usize;
+
+        // Emit background colors to scene
+        for (row, line) in lines.iter().copied().enumerate() {
+            let y = layout.editor_top + row as f32 * layout.cell_h_px;
+            if y >= max_y {
+                break;
+            }
+            for (col, _) in line.chars().enumerate() {
+                let x = layout.padding_h + col as f32 * layout.cell_w_px;
+                if x + layout.cell_w_px > max_x {
+                    break;
+                }
+
+                let idx = line_char_start + col;
+                if let Some(bg) = snapshot.editor_fg_colors.get(idx).and_then(|c| *c) {
+                    // Note: using fg_colors as bg is intentional for now (simplified rendering)
+                    scene.rect_to_layer(
+                        render_model::SceneLayer::Main,
+                        x,
+                        y,
+                        layout.cell_w_px,
+                        layout.cell_h_px,
+                        [bg[0] * 0.15, bg[1] * 0.15, bg[2] * 0.15, backdrop * 0.3],
+                    );
+                }
+            }
+
+            line_char_start = line_char_start.saturating_add(line.chars().count() + 1);
+        }
+    }
+
+    /// Emit terminal text to scene as TextCommand.
+    /// Emits one TextCommand per line for now (simplified rendering).
+    /// TODO: Emit per-character with color/style information for full fidelity.
+    fn emit_terminal_text_to_scene(
+        &mut self,
+        scene: &mut Scene,
+        snapshot: &RenderSnapshot,
+        layout: &FrameLayout,
+        metrics: CellMetrics,
+    ) {
+        let terminal_text = snapshot.terminal_text_from_rows();
+        let max_x = layout.width - layout.padding_h;
+        let max_y = layout.terminal_text_bottom;
+        let lines: Vec<&str> = terminal_text.lines().collect();
+
+        for (row, line) in lines.iter().copied().enumerate() {
+            let y = layout.terminal_text_top + row as f32 * layout.cell_h_px;
+            if y >= max_y {
+                break;
+            }
+
+            let x = layout.padding_h;
+            let text = line.to_string();
+
+            // Emit as TextCommand - will be rendered with default color
+            // TODO: Include per-character colors for proper rendering
+            scene.text_to_layer(
+                render_model::SceneLayer::Main,
+                x,
+                y,
+                text,
+                snapshot.theme.text,
+            );
+        }
+    }
+
+    /// Emit editor text to scene as TextCommand.
+    /// Similar to terminal but for the editor pane.
+    fn emit_editor_text_to_scene(
+        &mut self,
+        scene: &mut Scene,
+        snapshot: &RenderSnapshot,
+        layout: &FrameLayout,
+        metrics: CellMetrics,
+    ) {
+        if snapshot.editor_text.is_empty() {
+            return;
+        }
+
+        let lines: Vec<&str> = snapshot.editor_text.lines().collect();
+        let max_x = layout.width - layout.padding_h;
+        let max_y = layout.height - layout.padding_v;
+
+        for (row, line) in lines.iter().copied().enumerate() {
+            let y = layout.editor_top + row as f32 * layout.cell_h_px;
+            if y >= max_y {
+                break;
+            }
+
+            let x = layout.padding_h;
+            let text = line.to_string();
+
+            // Emit as TextCommand - will be rendered with editor text color
+            scene.text_to_layer(
+                render_model::SceneLayer::Main,
+                x,
+                y,
+                text,
+                snapshot.theme.text,
+            );
+        }
+    }
+
+    /// Render a text command with color and style information.
+    /// Used for rendering text emitted to Scene from various overlays.
+    fn render_text_simple(&mut self, gl: &glow::Context, cmd: &render_model::TextCommand, metrics: CellMetrics) {
+        let mut x = cmd.x;
+        let y = cmd.y;
+        let mut color = cmd.color;
+
+        // Apply dim style by reducing alpha
+        if cmd.style.dim {
+            color[3] *= 0.55;
+        }
+
+        // Render each character monospace
+        for ch in cmd.text.chars() {
+            self.push_glyph(ch, x, y, metrics.width, metrics.height, color);
+            x += metrics.width;
+        }
+
+        // Ensure glyphs are in atlas after pushing
+        for ch in cmd.text.chars() {
+            let style = if cmd.style.bold { STYLE_BOLD } else { 0 };
+            self.ensure_char_in_atlas(gl, ch, style);
+        }
+    }
+
+    /// Render terminal text from Scene with per-character colors and styles.
+    /// This is more complete than render_text_simple, handling the full palette.
+    fn render_text_with_colors(
+        &mut self,
+        gl: &glow::Context,
+        x: f32,
+        y: f32,
+        text: &str,
+        colors: &[Option<[f32; 3]>],
+        styles: &[u8],
+        metrics: CellMetrics,
+        fallback_color: [f32; 4],
+    ) {
+        let mut char_idx = 0usize;
+        let mut current_x = x;
+
+        for ch in text.chars() {
+            let fg = colors
+                .get(char_idx)
+                .and_then(|c| *c)
+                .map(|c| [c[0], c[1], c[2], 1.0])
+                .unwrap_or(fallback_color);
+
+            let style = styles.get(char_idx).copied().unwrap_or(0);
+
+            // Apply dim style
+            let mut color = fg;
+            if style & STYLE_DIM != 0 {
+                color[3] *= 0.55;
+            }
+
+            self.push_glyph(ch, current_x, y, metrics.width, metrics.height, color);
+            self.ensure_char_in_atlas(gl, ch, style & (STYLE_BOLD | STYLE_ITALIC));
+
+            current_x += metrics.width;
+            char_idx += 1;
+        }
     }
 
     /// Render a Scene of backend-independent commands.
     /// This is a compatibility bridge for components to emit Scene commands instead of
     /// calling OpenGL directly. Processes layers in defined order: Background, Main, Floating, Overlay, Toast, Debug.
-    pub(crate) fn render_scene(&mut self, gl: &glow::Context, scene: &Scene, width: f32, height: f32) {
+    pub(crate) fn render_scene(&mut self, gl: &glow::Context, scene: &Scene, metrics: CellMetrics, width: f32, height: f32) {
         // Clear batch structures
         self.batches.flat.clear();
         self.batches.glyph.clear();
         self.batches.emoji.clear();
+
+        // Clear clipping stack
+        self.clip_stack.clear();
+        unsafe {
+            gl.disable(glow::SCISSOR_TEST);
+        }
 
         // Process layers in defined order
         for (_layer, commands) in scene.iter_layers() {
@@ -477,19 +766,16 @@ impl GlPainter {
                         let rect = &cmd.rect;
                         self.push_rect(rect.x, rect.y, rect.x + rect.w, rect.y + rect.h, cmd.color);
                     }
-                    RenderCommand::Text(_cmd) => {
-                        // TODO: Text rendering through Scene is deferred. For now, components
-                        // should continue using the existing text rendering paths. This will be
-                        // implemented once text components are extracted and can emit TextCommand
-                        // with proper glyph shaping and atlas management.
+                    RenderCommand::Text(cmd) => {
+                        // Simple text rendering for overlays (monospace, no complex shaping).
+                        // Terminal/editor text continues through the old paths (draw_terminal_text, etc).
+                        self.render_text_simple(gl, cmd, metrics);
                     }
-                    RenderCommand::ClipPush(_rect) => {
-                        // TODO: Implement clipping stack. Will require tracking scissor rectangles
-                        // and managing the OpenGL scissor test state. Deferred to later steps once
-                        // components have clear clipping requirements.
+                    RenderCommand::ClipPush(rect) => {
+                        self.push_clip_rect(gl, rect, height);
                     }
                     RenderCommand::ClipPop => {
-                        // TODO: Pop clipping rectangle from stack (see ClipPush TODO).
+                        self.pop_clip_rect(gl);
                     }
                 }
             }

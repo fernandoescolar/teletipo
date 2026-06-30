@@ -6,6 +6,9 @@
 pub mod resize;
 pub mod scroll_indicator;
 
+pub use resize::render as render_resize;
+pub use scroll_indicator::render as render_scroll_indicator;
+
 use crate::{RenderContext, Scene, SceneLayer};
 use crate::components::panel::{render_panel, PanelStyle};
 use crate::Rect;

@@ -13,3 +13,4 @@ pub use background::Background;
 pub use editor::Editor;
 pub use tab_bar::TabBar;
 pub use terminal::Terminal;
+pub use toast::render as render_toasts;

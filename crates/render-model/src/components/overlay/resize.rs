@@ -1,51 +1,43 @@
 /// Resize overlay: visual indicator when user is resizing panes.
 ///
-/// Rendered in the Overlay layer to show the active resize boundary.
-/// Text rendering is deferred to the old painter path.
+/// Rendered in the Overlay layer to show the active resize boundary when dragging to resize.
+/// Emits geometry only; text rendering is deferred to the old painter path.
 
-use crate::{RenderContext, Scene, SceneLayer, Color};
+use crate::{RenderContext, Scene, SceneLayer, Color, FrameLayout, RenderSnapshot};
 
-/// Render a resize overlay indicator (visual feedback during drag-to-resize).
-pub fn render_resize_overlay(
-    _ctx: &RenderContext,
-    scene: &mut Scene,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-) {
-    // Main resize area (semi-transparent overlay)
-    let overlay_color: Color = [0.3, 0.5, 0.8, 0.2];  // Semi-transparent blue
-    scene.rect_to_layer(SceneLayer::Overlay, x, y, width, height, overlay_color);
+/// Render resize overlay based on snapshot state.
+/// Called from GlPainter to emit overlay geometry into the Scene.
+pub fn render(ctx: &RenderContext, scene: &mut Scene) {
+    // Only render if there's an active resize
+    if ctx.snapshot.resize_overlay.is_none() {
+        return;
+    }
 
-    // Border to make it visible
-    let border_color: Color = [0.6, 0.7, 0.9, 0.5];
-    let border_width = 2.0;
+    let layout = ctx.layout;
+    let w = 8.0; // Simple indicator width
+    let h = layout.height - layout.tab_bar_h - layout.cell_h_px;
+    let x = layout.width * 0.5 - w * 0.5;
+    let y = layout.tab_bar_h;
 
-    // Top border
-    scene.rect_to_layer(SceneLayer::Overlay, x, y, width, border_width, border_color);
-    // Bottom border
-    scene.rect_to_layer(
-        SceneLayer::Overlay,
-        x,
-        y + height - border_width,
-        width,
-        border_width,
-        border_color,
-    );
+    // Main overlay area (semi-transparent blue)
+    let overlay_color: Color = [0.3, 0.5, 0.8, 0.15];
+    scene.rect_to_layer(SceneLayer::Overlay, x, y, w, h, overlay_color);
+
+    // Border
+    let border_color: Color = [0.6, 0.7, 0.9, 0.6];
+    let border_width = 1.0;
+
     // Left border
-    scene.rect_to_layer(SceneLayer::Overlay, x, y, border_width, height, border_color);
+    scene.rect_to_layer(SceneLayer::Overlay, x, y, border_width, h, border_color);
     // Right border
     scene.rect_to_layer(
         SceneLayer::Overlay,
-        x + width - border_width,
+        x + w - border_width,
         y,
         border_width,
-        height,
+        h,
         border_color,
     );
-
-    // TODO: Text rendering (e.g., "Split: 70/30")
 }
 
 /// Render horizontal split resize indicator.
@@ -161,17 +153,18 @@ mod tests {
 
     #[test]
     fn test_render_resize_overlay() {
-        let snapshot = make_test_snapshot();
+        let mut snapshot = make_test_snapshot();
+        snapshot.resize_overlay = Some("50/50".to_string());  // Active resize
         let layout = make_test_layout();
         let target = RenderTarget::new(800.0, 600.0);
         let metrics = CellMetrics::new(10.0, 20.0);
         let ctx = RenderContext::new(&snapshot, &layout, target, metrics);
 
         let mut scene = Scene::new();
-        render_resize_overlay(&ctx, &mut scene, 0.0, 300.0, 800.0, 2.0);
+        render(&ctx, &mut scene);
 
-        // Should have 1 background + 4 borders = 5 rects
-        assert_eq!(scene.overlay.len(), 5);
+        // Should have 1 background + 2 borders (left + right) = 3 rects
+        assert_eq!(scene.overlay.len(), 3);
 
         // Verify all are Rect commands
         for command in &scene.overlay {

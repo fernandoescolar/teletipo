@@ -1,5 +1,5 @@
 mod builder;
-mod components;
+pub mod components;
 mod event;
 mod layout;
 mod overlays;
@@ -10,7 +10,7 @@ mod stats;
 mod theme;
 
 pub use builder::{RenderContext, build_scene};
-pub use components::{Background, Editor, TabBar, Terminal};
+pub use components::{Background, Editor, TabBar, Terminal, overlay};
 pub use event::AppWindowEvent;
 pub use layout::{
     CellMetrics, FrameLayout, RenderTarget, compute_frame_layout, SEPARATOR_WIDTH_PX,
