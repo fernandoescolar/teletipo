@@ -4,8 +4,7 @@
 
 A terminal emulator written in Rust — GPU-accelerated, multi-tab, with a code-editor-style command input.
 
-https://github.com/user-attachments/assets/66ecd5a1-eaf3-41bd-8c4d-ba2e89aa797f
-
+https://github.com/user-attachments/assets/fb1303c9-5e50-4b6c-960e-951305da9ffc
 
 ## Install
 
