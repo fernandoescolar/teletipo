@@ -12,10 +12,11 @@ use winit::event::{ElementState, MouseButton};
 const TAB_MENU_ITEMS: &[&str] = &["New Tab", "Close Tab", "Move Left", "Move Right"];
 const TERMINAL_MENU_ITEMS: &[&str] = &["Copy", "Paste", "Scroll to Bottom"];
 const EDITOR_MENU_ITEMS: &[&str] = &["Undo", "Redo", "Copy", "Cut", "Paste", "Select All"];
+const CONTEXT_MENU_ROW_HEIGHT_FACTOR: f64 = 1.4;
 
 fn context_menu_width_px(cell_w: f32, items: &[String]) -> f64 {
     let max_chars = items.iter().map(|s| s.chars().count()).max().unwrap_or(8);
-    cell_w as f64 * (max_chars.max(8) as f64 + 2.0)
+    cell_w as f64 * (max_chars as f64 + 2.0)
 }
 
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) -> bool {
@@ -107,7 +108,7 @@ fn handle_cursor_moved(state: &mut GpuRuntimeState, x: f64, y: f64) -> bool {
 
     if let Some(menu) = state.overlays.context_menu.as_mut() {
         let menu_w = context_menu_width_px(state.layout.cell_w, &menu.items);
-        let menu_item_h = state.layout.cell_h as f64 * 1.15;
+        let menu_item_h = state.layout.cell_h as f64 * CONTEXT_MENU_ROW_HEIGHT_FACTOR;
         let menu_h = menu_item_h * menu.items.len() as f64;
         let mx = menu
             .x_px

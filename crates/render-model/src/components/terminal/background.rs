@@ -80,15 +80,16 @@ mod tests {
         // terminal_text_from_rows() will regenerate text from rows, so we need to populate rows properly
         let mut terminal_rows = Vec::new();
         for line in &lines {
-            let mut row = RenderRow::default();
-            row.cells = line
-                .chars()
-                .map(|ch| {
-                    let mut cell = crate::RenderCell::default();
-                    cell.ch = ch;
-                    cell
-                })
-                .collect();
+            let row = RenderRow {
+                cells: line
+                    .chars()
+                    .map(|ch| crate::RenderCell {
+                        ch,
+                        ..crate::RenderCell::default()
+                    })
+                    .collect(),
+                ..RenderRow::default()
+            };
             terminal_rows.push(row);
         }
 

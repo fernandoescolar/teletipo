@@ -218,7 +218,7 @@ mod tests {
 
         // Should have at least some commands from background component
         assert!(
-            scene.len() > 0,
+            !scene.is_empty(),
             "Scene should have commands from components"
         );
     }
@@ -234,7 +234,7 @@ mod tests {
 
         // Should still create a valid scene with different dimensions
         assert!(!scene.is_empty());
-        assert!(scene.background.len() > 0);
+        assert!(!scene.background.is_empty());
     }
 
     #[test]

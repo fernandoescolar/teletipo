@@ -9,7 +9,7 @@ LINUX_TARGET := x86_64-unknown-linux-gnu
 WINDOWS_TARGET := x86_64-pc-windows-gnu
 INSTALLER_DIR := scripts/install
 
-.PHONY: release release-macos release-linux release-windows release-installers verify-installers clean test lint fmt doc perf ci
+.PHONY: release release-macos release-linux release-windows release-installers verify-installers clean test lint fmt doc deny perf ci
 
 release: release-macos release-linux release-windows release-installers
 
@@ -130,17 +130,21 @@ test:
 	cargo test --workspace
 
 lint:
-	cargo clippy --all -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
 
 fmt:
+	cargo fmt --all
 	cargo fmt --all -- --check
 
 doc:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+deny:
+	cargo deny check advisories bans licenses sources
 
 perf:
 	cargo bench --workspace
 
 # Local CI: same gates the CI pipeline enforces (formatting, lint, docs, tests).
 # Run with `make ci` before pushing.
-ci: fmt lint doc test
+ci: fmt lint doc deny test
