@@ -904,7 +904,9 @@ impl GlPainter {
             gl.disable(glow::SCISSOR_TEST);
         }
 
-        // Process layers in defined order
+        // Process layers in defined order.
+        // Flush after each layer so overlay rectangles cannot end up beneath
+        // terminal/editor text due to cross-layer batch coalescing.
         for (_layer, commands) in scene.iter_layers() {
             for command in commands {
                 match command {
@@ -925,9 +927,10 @@ impl GlPainter {
                     }
                 }
             }
-        }
 
-        self.flush_passes(gl, width, height);
+            // Keep layering strict: each layer is fully rendered before the next.
+            self.flush_passes(gl, width, height);
+        }
     }
 
     fn render_pane_backgrounds(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {

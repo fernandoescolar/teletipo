@@ -26,7 +26,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         y - 1.0,
         panel_w + 2.0,
         panel_h + 2.0,
-        [0.30, 0.45, 0.70, 0.95],
+        [0.30, 0.45, 0.70, 1.0],
     );
     scene.rect_to_layer(
         SceneLayer::Overlay,
@@ -34,7 +34,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         y,
         panel_w,
         panel_h,
-        [0.09, 0.11, 0.18, 0.96],
+        [0.09, 0.11, 0.18, 1.0],
     );
     scene.text_to_layer(
         SceneLayer::Overlay,
@@ -54,7 +54,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             ey,
             ew,
             layout.cell_h_px * 1.3,
-            [0.22, 0.08, 0.08, 0.96],
+            [0.22, 0.08, 0.08, 1.0],
         );
         let err_text: String = err.chars().take(48).collect();
         scene.text_to_layer(

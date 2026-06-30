@@ -18,6 +18,11 @@ fn mix_color(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     ]
 }
 
+fn with_alpha(mut c: [f32; 4], alpha: f32) -> [f32; 4] {
+    c[3] = alpha.clamp(0.0, 1.0);
+    c
+}
+
 fn settings_item_display_val<'a>(
     item: &'a crate::SettingsItem,
     overlay: &'a SettingsOverlay,
@@ -56,7 +61,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         0.0,
         layout.width,
         layout.height,
-        [0.0, 0.0, 0.0, 0.68],
+        [0.0, 0.0, 0.0, 0.65],
     );
 
     let title_h = layout.cell_h_px * 2.2;
@@ -76,20 +81,20 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let key_col = x0 + layout.cell_w_px * 1.5;
     let val_col = x0 + panel_w * 0.50;
 
-    let bg = clamp_color(theme.terminal_bg, 0.01);
-    let border = theme.separator_focused;
-    let title = clamp_color(theme.terminal_bg, -0.01);
-    let section = clamp_color(theme.terminal_bg, 0.04);
-    let select = mix_color(
+    let bg = with_alpha(clamp_color(theme.terminal_bg, 0.01), 0.92);
+    let border = with_alpha(theme.separator_focused, 0.96);
+    let title = with_alpha(clamp_color(theme.terminal_bg, -0.01), 0.94);
+    let section = with_alpha(clamp_color(theme.terminal_bg, 0.04), 0.90);
+    let select = with_alpha(mix_color(
         clamp_color(theme.terminal_bg, 0.08),
         theme.separator_focused,
         0.20,
-    );
-    let edit = mix_color(
+    ), 0.93);
+    let edit = with_alpha(mix_color(
         clamp_color(theme.terminal_bg, 0.08),
         theme.separator_focused,
         0.28,
-    );
+    ), 0.93);
 
     scene.rect_to_layer(
         SceneLayer::Overlay,

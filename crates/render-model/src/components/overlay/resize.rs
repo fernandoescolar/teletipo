@@ -21,7 +21,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let x = (layout.width - panel_w) * 0.5;
     let y = (layout.height - panel_h) * 0.5;
 
-    let border_color: Color = [0.35, 0.55, 0.90, 0.95];
+    let border_color: Color = [0.35, 0.55, 0.90, 1.0];
     scene.rect_to_layer(
         SceneLayer::Overlay,
         x - border_w,
@@ -31,7 +31,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         border_color,
     );
 
-    let bg_color: Color = [0.08, 0.10, 0.16, 0.92];
+    let bg_color: Color = [0.08, 0.10, 0.16, 1.0];
     scene.rect_to_layer(SceneLayer::Overlay, x, y, panel_w, panel_h, bg_color);
 
     let text_color: Color = [0.92, 0.94, 0.98, 1.0];

@@ -39,7 +39,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         y0 - 1.0,
         panel_w + 2.0,
         panel_h + 2.0,
-        [0.30, 0.45, 0.70, 0.95],
+        [0.30, 0.45, 0.70, 1.0],
     );
     scene.rect_to_layer(
         SceneLayer::Floating,
@@ -47,7 +47,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         y0,
         panel_w,
         panel_h,
-        [0.09, 0.11, 0.18, 0.97],
+        [0.09, 0.11, 0.18, 1.0],
     );
 
     for i in 0..visible {
@@ -60,7 +60,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
                 row_y,
                 panel_w,
                 row_h,
-                [0.20, 0.32, 0.58, 0.70],
+                [0.20, 0.32, 0.58, 1.0],
             );
         }
         let fg = if idx == dropdown.selected {
@@ -90,7 +90,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             y0,
             sb_x1 - sb_x0,
             y1 - y0,
-            [0.17, 0.19, 0.26, 0.97],
+            [0.17, 0.19, 0.26, 1.0],
         );
         let thumb_frac = visible as f32 / total as f32;
         let thumb_h = panel_h * thumb_frac;
@@ -103,7 +103,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             thumb_top,
             sb_x1 - sb_x0,
             thumb_h,
-            [0.30, 0.45, 0.70, 0.95],
+            [0.30, 0.45, 0.70, 1.0],
         );
     }
 }

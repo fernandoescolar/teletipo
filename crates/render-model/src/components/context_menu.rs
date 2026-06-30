@@ -27,7 +27,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         y - 1.0,
         menu_w + 2.0,
         menu_h + 2.0,
-        [0.35, 0.55, 0.90, 0.95],
+        [0.35, 0.55, 0.90, 1.0],
     );
     scene.rect_to_layer(
         SceneLayer::Floating,
@@ -35,7 +35,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         y,
         menu_w,
         menu_h,
-        [0.09, 0.11, 0.18, 0.97],
+        [0.09, 0.11, 0.18, 1.0],
     );
 
     for (i, item) in menu.items.iter().enumerate() {
@@ -47,7 +47,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
                 item_y,
                 menu_w,
                 row_h,
-                [0.20, 0.32, 0.58, 0.75],
+                [0.20, 0.32, 0.58, 1.0],
             );
         }
         let item_text: String = item.chars().take(36).collect();

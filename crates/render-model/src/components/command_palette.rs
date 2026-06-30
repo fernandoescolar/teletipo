@@ -45,7 +45,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             y0,
             x1 - x0,
             y1 - y0,
-            [0.09, 0.11, 0.18, 0.97],
+            [0.09, 0.11, 0.18, 1.0],
         );
         scene.rect_to_layer(
             SceneLayer::Overlay,
@@ -53,7 +53,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             y0 + label_h - 1.0,
             x1 - x0,
             1.0,
-            [0.30, 0.45, 0.70, 0.80],
+            [0.30, 0.45, 0.70, 1.0],
         );
         scene.text_to_layer(
             SceneLayer::Overlay,
@@ -88,7 +88,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         y0,
         x1 - x0,
         y1 - y0,
-        [0.09, 0.11, 0.18, 0.97],
+        [0.09, 0.11, 0.18, 1.0],
     );
     scene.rect_to_layer(
         SceneLayer::Overlay,
@@ -96,7 +96,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         y0 + header_h - 1.0,
         x1 - x0,
         1.0,
-        [0.30, 0.45, 0.70, 0.80],
+        [0.30, 0.45, 0.70, 1.0],
     );
     scene.text_to_layer(
         SceneLayer::Overlay,
@@ -119,7 +119,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
                 row_y,
                 x1 - x0,
                 item_h,
-                [0.20, 0.32, 0.58, 0.70],
+                [0.20, 0.32, 0.58, 1.0],
             );
         }
         scene.text_to_layer(

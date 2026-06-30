@@ -16,6 +16,11 @@ fn mix_color(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     ]
 }
 
+fn opaque(mut c: [f32; 4]) -> [f32; 4] {
+    c[3] = 1.0;
+    c
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_rows(
     scene: &mut Scene,
@@ -122,20 +127,20 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let key_col = x0 + layout.cell_w_px * 2.0;
     let bind_col = x0 + panel_w * 0.55;
 
-    let bg = clamp_color(theme.terminal_bg, 0.01);
-    let border = theme.separator_focused;
-    let title = clamp_color(theme.terminal_bg, -0.01);
-    let row_alt = clamp_color(theme.terminal_bg, 0.03);
-    let select = mix_color(
+    let bg = opaque(clamp_color(theme.terminal_bg, 0.01));
+    let border = opaque(theme.separator_focused);
+    let title = opaque(clamp_color(theme.terminal_bg, -0.01));
+    let row_alt = opaque(clamp_color(theme.terminal_bg, 0.03));
+    let select = opaque(mix_color(
         clamp_color(theme.terminal_bg, 0.08),
         theme.separator_focused,
         0.22,
-    );
-    let record = mix_color(
+    ));
+    let record = opaque(mix_color(
         clamp_color(theme.terminal_bg, 0.06),
         [0.9, 0.5, 0.1, 1.0],
         0.20,
-    );
+    ));
 
     scene.rect_to_layer(
         SceneLayer::Overlay,
@@ -143,7 +148,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         0.0,
         layout.width,
         layout.height,
-        [0.0, 0.0, 0.0, 0.65],
+        [0.0, 0.0, 0.0, 1.0],
     );
     scene.rect_to_layer(
         SceneLayer::Overlay,
@@ -190,7 +195,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             y0 + title_h,
             sb_w,
             track_h,
-            [0.3, 0.3, 0.3, 0.3],
+            [0.3, 0.3, 0.3, 1.0],
         );
         scene.rect_to_layer(SceneLayer::Overlay, sb_x, thumb_y, sb_w, thumb_h, border);
     }
