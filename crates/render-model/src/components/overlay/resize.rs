@@ -2,8 +2,7 @@
 ///
 /// Rendered in the Overlay layer to show the active resize boundary when dragging to resize.
 /// Emits geometry only; text rendering is deferred to the old painter path.
-
-use crate::{RenderContext, Scene, SceneLayer, Color, FrameLayout, RenderSnapshot};
+use crate::{Color, RenderContext, Scene, SceneLayer};
 
 /// Render resize overlay based on snapshot state.
 /// Called from GlPainter to emit overlay geometry into the Scene.
@@ -51,7 +50,14 @@ pub fn render_horizontal_split_resize(
     let height = 4.0;
     let color: Color = [0.6, 0.7, 0.9, 0.8];
 
-    scene.rect_to_layer(SceneLayer::Overlay, x, y - height / 2.0, width, height, color);
+    scene.rect_to_layer(
+        SceneLayer::Overlay,
+        x,
+        y - height / 2.0,
+        width,
+        height,
+        color,
+    );
 
     // TODO: Cursor indication (e.g., resize cursor icon)
 }
@@ -67,7 +73,14 @@ pub fn render_vertical_split_resize(
     let width = 4.0;
     let color: Color = [0.6, 0.7, 0.9, 0.8];
 
-    scene.rect_to_layer(SceneLayer::Overlay, x - width / 2.0, y, width, height, color);
+    scene.rect_to_layer(
+        SceneLayer::Overlay,
+        x - width / 2.0,
+        y,
+        width,
+        height,
+        color,
+    );
 
     // TODO: Cursor indication (e.g., resize cursor icon)
 }
@@ -75,7 +88,10 @@ pub fn render_vertical_split_resize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot, RenderTarget};
+    use crate::{
+        CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot,
+        RenderTarget,
+    };
     use std::sync::Arc;
 
     fn make_test_snapshot() -> RenderSnapshot {
@@ -154,7 +170,7 @@ mod tests {
     #[test]
     fn test_render_resize_overlay() {
         let mut snapshot = make_test_snapshot();
-        snapshot.resize_overlay = Some("50/50".to_string());  // Active resize
+        snapshot.resize_overlay = Some("50/50".to_string()); // Active resize
         let layout = make_test_layout();
         let target = RenderTarget::new(800.0, 600.0);
         let metrics = CellMetrics::new(10.0, 20.0);

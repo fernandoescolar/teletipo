@@ -1,7 +1,6 @@
 /// Editor text selection: highlighted background for selected text.
 ///
 /// Renders semi-transparent rectangles over selected text in the editor pane.
-
 use crate::{RenderContext, Scene, SceneLayer};
 
 /// Render editor text selection background.
@@ -49,7 +48,8 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
 
             if to > from {
                 let horizontal_scroll = snapshot.editor_horizontal_scroll_offset as f32;
-                let y = layout.editor_top + layout.padding_v + visible_row as f32 * layout.cell_h_px;
+                let y =
+                    layout.editor_top + layout.padding_v + visible_row as f32 * layout.cell_h_px;
                 let x0 = layout.padding_h + (from as f32 - horizontal_scroll) * layout.cell_w_px;
                 let x1 = layout.padding_h + (to as f32 - horizontal_scroll) * layout.cell_w_px;
 

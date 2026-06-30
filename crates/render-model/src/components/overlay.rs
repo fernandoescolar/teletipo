@@ -2,16 +2,15 @@
 ///
 /// These emit to SceneLayer::Overlay and render on top of main content.
 /// Text rendering is deferred to the old painter path for now.
-
 pub mod resize;
 pub mod scroll_indicator;
 
 pub use resize::render as render_resize;
 pub use scroll_indicator::render as render_scroll_indicator;
 
-use crate::{RenderContext, Scene, SceneLayer};
-use crate::components::panel::{render_panel, PanelStyle};
 use crate::Rect;
+use crate::components::panel::{PanelStyle, render_panel};
+use crate::{RenderContext, Scene, SceneLayer};
 
 /// Render a simple modal/overlay panel with title area.
 /// Demonstrates the pattern for overlay rendering.
@@ -73,7 +72,10 @@ pub fn render_dropdown_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot, RenderTarget};
+    use crate::{
+        CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot,
+        RenderTarget,
+    };
     use std::sync::Arc;
 
     fn make_test_snapshot() -> RenderSnapshot {
@@ -181,7 +183,15 @@ mod tests {
         let ctx = RenderContext::new(&snapshot, &layout, target, metrics);
 
         let mut scene = Scene::new();
-        render_dropdown_panel(&ctx, &mut scene, 50.0, 50.0, 200.0, 150.0, SceneLayer::Floating);
+        render_dropdown_panel(
+            &ctx,
+            &mut scene,
+            50.0,
+            50.0,
+            200.0,
+            150.0,
+            SceneLayer::Floating,
+        );
 
         // Should have background + 4 borders
         assert_eq!(scene.floating.len(), 5);
@@ -196,7 +206,15 @@ mod tests {
         let ctx = RenderContext::new(&snapshot, &layout, target, metrics);
 
         let mut scene = Scene::new();
-        render_dropdown_panel(&ctx, &mut scene, 50.0, 50.0, 200.0, 150.0, SceneLayer::Overlay);
+        render_dropdown_panel(
+            &ctx,
+            &mut scene,
+            50.0,
+            50.0,
+            200.0,
+            150.0,
+            SceneLayer::Overlay,
+        );
 
         // Should have background + 4 borders in overlay layer
         assert_eq!(scene.overlay.len(), 5);

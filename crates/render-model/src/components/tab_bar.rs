@@ -6,7 +6,6 @@
 /// - Tab labels and close buttons as text
 /// - Add button (+)
 /// - Drag insertion indicator line
-
 use crate::{RenderContext, Scene, SceneLayer};
 
 /// Helper: lighten/darken RGB by delta, keeping alpha.
@@ -106,7 +105,13 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
 
         // Truncate label to 18 chars max
         let label_truncated: String = label.chars().take(18).collect();
-        scene.text_to_layer(SceneLayer::Main, text_x, text_y, label_truncated, text_color);
+        scene.text_to_layer(
+            SceneLayer::Main,
+            text_x,
+            text_y,
+            label_truncated,
+            text_color,
+        );
 
         // Close button '×' at the right edge
         let close_x = x1 - layout.cell_w_px * 1.4;

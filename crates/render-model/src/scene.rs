@@ -1,3 +1,4 @@
+/// A collection of rendering commands organized by layer.
 /// Neutral, backend-independent scene representation for rendering.
 /// Components emit `RenderCommand`s instead of calling OpenGL directly.
 ///
@@ -8,8 +9,6 @@
 /// 4. Overlay - settings, keybindings, command palette, modal overlays
 /// 5. Toast - transient notifications
 /// 6. Debug - debugging overlays (unused for now)
-
-/// A collection of rendering commands organized by layer.
 #[derive(Debug, Clone)]
 pub struct Scene {
     /// Layer 0: Pane backgrounds, separators, basic geometry
@@ -68,26 +67,21 @@ pub struct TextCommand {
     pub text: String,
     pub color: Color,
     pub style: TextStyle,
+    /// Per-character colors (optional). If provided, overrides `color` for each character.
+    /// Length should match character count in `text`.
+    pub char_colors: Option<Vec<Color>>,
+    /// Per-character styles (optional). If provided, overrides `style` for each character.
+    /// Length should match character count in `text`.
+    pub char_styles: Option<Vec<TextStyle>>,
 }
 
 /// Text style flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TextStyle {
     pub bold: bool,
     pub italic: bool,
     pub dim: bool,
     pub strike: bool,
-}
-
-impl Default for TextStyle {
-    fn default() -> Self {
-        Self {
-            bold: false,
-            italic: false,
-            dim: false,
-            strike: false,
-        }
-    }
 }
 
 /// Layer identifier for scene commands.
@@ -138,7 +132,15 @@ impl Scene {
     }
 
     /// Emit a solid rectangle to a specific layer.
-    pub fn rect_to_layer(&mut self, layer: SceneLayer, x: f32, y: f32, w: f32, h: f32, color: Color) {
+    pub fn rect_to_layer(
+        &mut self,
+        layer: SceneLayer,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: Color,
+    ) {
         self.push_to_layer(
             layer,
             RenderCommand::Rect(RectCommand {
@@ -154,7 +156,14 @@ impl Scene {
     }
 
     /// Emit a text command with default style to a specific layer.
-    pub fn text_to_layer(&mut self, layer: SceneLayer, x: f32, y: f32, text: impl Into<String>, color: Color) {
+    pub fn text_to_layer(
+        &mut self,
+        layer: SceneLayer,
+        x: f32,
+        y: f32,
+        text: impl Into<String>,
+        color: Color,
+    ) {
         self.text_styled_to_layer(layer, x, y, text, color, TextStyle::default());
     }
 
@@ -181,6 +190,32 @@ impl Scene {
                 text: text.into(),
                 color,
                 style,
+                char_colors: None,
+                char_styles: None,
+            }),
+        );
+    }
+
+    /// Emit a text command with per-character colors to a specific layer.
+    pub fn text_with_colors_to_layer(
+        &mut self,
+        layer: SceneLayer,
+        x: f32,
+        y: f32,
+        text: impl Into<String>,
+        char_colors: Vec<Color>,
+        color: Color,
+    ) {
+        self.push_to_layer(
+            layer,
+            RenderCommand::Text(TextCommand {
+                x,
+                y,
+                text: text.into(),
+                color,
+                style: TextStyle::default(),
+                char_colors: Some(char_colors),
+                char_styles: None,
             }),
         );
     }

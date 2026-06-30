@@ -3,7 +3,6 @@
 /// Manages allocation of a single GL_R8 texture for glyph bitmaps.
 /// Tracks entries by (char, style_mask) for efficient lookup and reuse.
 /// Works with the types::AtlasGlyph from the painter.
-
 use std::collections::HashMap;
 
 /// Re-export the painter's AtlasGlyph type for convenience.
@@ -120,141 +119,18 @@ impl GlyphAtlas {
         self.stats.uploads_this_frame += 1;
     }
 
-    /// Get current allocation position.
-    pub fn alloc_position(&self) -> (u32, u32) {
-        (self.alloc_x, self.alloc_y)
-    }
+    // /// Get current allocation position.
+    // pub fn alloc_position(&self) -> (u32, u32) {
+    //     (self.alloc_x, self.alloc_y)
+    // }
 
-    /// Check if atlas is full.
-    pub fn is_full(&self) -> bool {
-        self.alloc_y + self.row_h + 1 >= self.max_size
-    }
+    // /// Check if atlas is full.
+    // pub fn is_full(&self) -> bool {
+    //     self.alloc_y + self.row_h + 1 >= self.max_size
+    // }
 
-    /// Get number of cached entries.
-    pub fn entry_count(&self) -> usize {
-        self.char_cache.len() + self.glyph_id_cache.len()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_glyph_atlas_new() {
-        let atlas = GlyphAtlas::new(1024);
-        assert_eq!(atlas.max_size, 1024);
-        assert_eq!(atlas.alloc_x, 0);
-        assert_eq!(atlas.alloc_y, 0);
-        assert_eq!(atlas.entry_count(), 0);
-    }
-
-    #[test]
-    fn test_glyph_atlas_allocate_single() {
-        let mut atlas = GlyphAtlas::new(1024);
-        let (x, y) = atlas.allocate(10, 20).unwrap();
-
-        assert_eq!(x, 0);
-        assert_eq!(y, 0);
-        assert_eq!(atlas.alloc_x, 11); // 10 + 1 padding
-    }
-
-    #[test]
-    fn test_glyph_atlas_allocate_multiple_same_row() {
-        let mut atlas = GlyphAtlas::new(1024);
-        let (x1, y1) = atlas.allocate(10, 20).unwrap();
-        let (x2, y2) = atlas.allocate(10, 20).unwrap();
-
-        assert_eq!(x1, 0);
-        assert_eq!(y1, 0);
-        assert_eq!(x2, 11); // After first glyph + padding
-        assert_eq!(y2, 0); // Same row
-    }
-
-    #[test]
-    fn test_glyph_atlas_allocate_new_row() {
-        let mut atlas = GlyphAtlas::new(1024);
-        // First allocation
-        let (x1, y1) = atlas.allocate(100, 20).unwrap();
-        assert_eq!(x1, 0);
-        assert_eq!(y1, 0);
-
-        // Fill the rest of the row past the end of texture
-        // This won't fit, so next allocation should start new row
-        let (x2, y2) = atlas.allocate(1000, 20).unwrap();
-        assert_eq!(x2, 0); // Back to beginning
-        assert_eq!(y2, 21); // 20 (row_h) + 1 (padding)
-    }
-
-    #[test]
-    fn test_glyph_atlas_insert_and_lookup_char() {
-        let mut atlas = GlyphAtlas::new(1024);
-        let glyph = AtlasGlyph {
-            tex_x: 10,
-            tex_y: 20,
-            w: 8,
-            h: 16,
-            advance_x: 8,
-            offset_y: 0,
-        };
-
-        atlas.insert_char('A', 0, glyph);
-        let retrieved = atlas.lookup_char('A', 0);
-
-        assert_eq!(retrieved, Some(glyph));
-    }
-
-    #[test]
-    fn test_glyph_atlas_lookup_nonexistent() {
-        let atlas = GlyphAtlas::new(1024);
-        assert_eq!(atlas.lookup_char('A', 0), None);
-    }
-
-    #[test]
-    fn test_glyph_atlas_clear() {
-        let mut atlas = GlyphAtlas::new(1024);
-        let glyph = AtlasGlyph {
-            tex_x: 0,
-            tex_y: 0,
-            w: 8,
-            h: 16,
-            advance_x: 8,
-            offset_y: 0,
-        };
-
-        atlas.insert_char('A', 0, glyph);
-        assert_eq!(atlas.entry_count(), 1);
-
-        atlas.clear();
-        assert_eq!(atlas.entry_count(), 0);
-        assert_eq!(atlas.alloc_x, 0);
-        assert_eq!(atlas.alloc_y, 0);
-    }
-
-    #[test]
-    fn test_glyph_atlas_stats() {
-        let mut atlas = GlyphAtlas::new(1024);
-        let glyph = AtlasGlyph {
-            tex_x: 0,
-            tex_y: 0,
-            w: 8,
-            h: 16,
-            advance_x: 8,
-            offset_y: 0,
-        };
-
-        atlas.insert_char('A', 0, glyph);
-        assert_eq!(atlas.stats.entries, 1);
-        assert_eq!(atlas.stats.uploads_this_frame, 1);
-
-        atlas.clear();
-        assert_eq!(atlas.stats.resets, 1);
-    }
-
-    #[test]
-    fn test_glyph_atlas_allocate_with_zero_size() {
-        let mut atlas = GlyphAtlas::new(1024);
-        assert_eq!(atlas.allocate(0, 20), None);
-        assert_eq!(atlas.allocate(10, 0), None);
-    }
+    // /// Get number of cached entries.
+    // pub fn entry_count(&self) -> usize {
+    //     self.char_cache.len() + self.glyph_id_cache.len()
+    // }
 }

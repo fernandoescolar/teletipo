@@ -1,5 +1,4 @@
 /// Editor background: pane background and disabled dimming overlay.
-
 use crate::{RenderContext, Scene, SceneLayer};
 
 /// Emit editor background rectangle.
@@ -46,7 +45,10 @@ fn frosted_backdrop_alpha(opacity: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot, RenderTarget};
+    use crate::{
+        CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot,
+        RenderTarget,
+    };
     use std::sync::Arc;
 
     fn make_test_snapshot(editor_disabled: bool, opacity: f32) -> RenderSnapshot {

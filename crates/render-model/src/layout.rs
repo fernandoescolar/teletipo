@@ -1,5 +1,4 @@
 /// Frame layout computation: backend-independent calculation of pane geometries.
-
 use crate::RenderSnapshot;
 
 /// Frame layout constants.

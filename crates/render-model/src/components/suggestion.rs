@@ -2,7 +2,6 @@
 ///
 /// Renders a dimmed suggestion string at the cursor position to preview
 /// what text would be inserted if the user accepts the suggestion.
-
 use crate::{RenderContext, Scene, SceneLayer};
 
 /// Convert text offset to (row, col) in the text.
@@ -63,6 +62,12 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     }
 
     if !visible_suggestion.is_empty() {
-        scene.text_to_layer(SceneLayer::Floating, base_x, y, visible_suggestion, suggestion_color);
+        scene.text_to_layer(
+            SceneLayer::Floating,
+            base_x,
+            y,
+            visible_suggestion,
+            suggestion_color,
+        );
     }
 }

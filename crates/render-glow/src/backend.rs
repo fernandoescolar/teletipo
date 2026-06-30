@@ -1,12 +1,10 @@
+#![allow(dead_code)]
+
 /// Backend module: GPU rendering infrastructure.
 ///
 /// Organizes OpenGL state, pipelines, batches, and atlas structures
 /// into logical units for gradual refactoring toward GlowBackend.
-
-pub use crate::batch::{FlatBatch, GlyphBatch, EmojiBatch};
-pub use crate::glyph_atlas::GlyphAtlas;
-pub use crate::emoji_atlas::ColorAtlas;
-pub use crate::pipelines::{FlatPipeline, GlyphPipeline, EmojiPipeline};
+pub use crate::batch::{EmojiBatch, FlatBatch, GlyphBatch};
 
 use glow::HasContext;
 
@@ -28,6 +26,7 @@ impl BatchContainer {
     }
 
     /// Clear all batches (called at start of each frame).
+    #[allow(dead_code)]
     pub(crate) fn clear_all(&mut self) {
         self.flat.clear();
         self.glyph.clear();
@@ -73,6 +72,7 @@ pub(crate) struct EmojiPipelineState {
 
 impl GpuState {
     /// Create GPU state from individual pipeline components.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         flat_program: glow::Program,
         flat_vbo: glow::Buffer,

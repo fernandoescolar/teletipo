@@ -1,12 +1,14 @@
+#![allow(dead_code)]
+
+/// Batch for flat-color geometry.
+/// Format: [x, y, r, g, b, a] × 2 per quad (6 vertices per quad)
+///
 /// Vertex batching: organizing commands into efficient GPU uploads.
 ///
 /// Manages vertex buffers for different pipeline types:
 /// - Flat color geometry (backgrounds, borders, solids)
 /// - Glyph quads with atlas UV coordinates
 /// - Emoji quads with color atlas UV coordinates
-
-/// Batch for flat-color geometry.
-/// Format: [x, y, r, g, b, a] × 2 per quad (6 vertices per quad)
 pub struct FlatBatch {
     pub vertices: Vec<f32>,
 }
@@ -25,7 +27,18 @@ impl FlatBatch {
     }
 
     /// Push a colored quad (2 triangles = 6 vertices).
-    pub fn push_quad(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, r: f32, g: f32, b: f32, a: f32) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_quad(
+        &mut self,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    ) {
         // Triangle 1: (x0,y0) - (x1,y0) - (x0,y1)
         self.vertices.extend_from_slice(&[x0, y0, r, g, b, a]);
         self.vertices.extend_from_slice(&[x1, y0, r, g, b, a]);
@@ -84,6 +97,7 @@ impl GlyphBatch {
     }
 
     /// Push a textured quad with UV coordinates.
+    #[allow(clippy::too_many_arguments)]
     pub fn push_quad(
         &mut self,
         x0: f32,
@@ -100,14 +114,20 @@ impl GlyphBatch {
         a: f32,
     ) {
         // Triangle 1
-        self.vertices.extend_from_slice(&[x0, y0, u0, v0, r, g, b, a]);
-        self.vertices.extend_from_slice(&[x1, y0, u1, v0, r, g, b, a]);
-        self.vertices.extend_from_slice(&[x0, y1, u0, v1, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x0, y0, u0, v0, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x1, y0, u1, v0, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x0, y1, u0, v1, r, g, b, a]);
 
         // Triangle 2
-        self.vertices.extend_from_slice(&[x1, y0, u1, v0, r, g, b, a]);
-        self.vertices.extend_from_slice(&[x1, y1, u1, v1, r, g, b, a]);
-        self.vertices.extend_from_slice(&[x0, y1, u0, v1, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x1, y0, u1, v0, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x1, y1, u1, v1, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x0, y1, u0, v1, r, g, b, a]);
     }
 
     /// Get the number of quads in the batch.
@@ -155,6 +175,7 @@ impl EmojiBatch {
     }
 
     /// Push a textured emoji quad with UV coordinates.
+    #[allow(clippy::too_many_arguments)]
     pub fn push_quad(
         &mut self,
         x0: f32,
@@ -171,14 +192,20 @@ impl EmojiBatch {
         a: f32,
     ) {
         // Triangle 1
-        self.vertices.extend_from_slice(&[x0, y0, u0, v0, r, g, b, a]);
-        self.vertices.extend_from_slice(&[x1, y0, u1, v0, r, g, b, a]);
-        self.vertices.extend_from_slice(&[x0, y1, u0, v1, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x0, y0, u0, v0, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x1, y0, u1, v0, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x0, y1, u0, v1, r, g, b, a]);
 
         // Triangle 2
-        self.vertices.extend_from_slice(&[x1, y0, u1, v0, r, g, b, a]);
-        self.vertices.extend_from_slice(&[x1, y1, u1, v1, r, g, b, a]);
-        self.vertices.extend_from_slice(&[x0, y1, u0, v1, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x1, y0, u1, v0, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x1, y1, u1, v1, r, g, b, a]);
+        self.vertices
+            .extend_from_slice(&[x0, y1, u0, v1, r, g, b, a]);
     }
 
     /// Get the number of quads in the batch.

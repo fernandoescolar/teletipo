@@ -1,6 +1,5 @@
 /// Background component: renders pane backgrounds, separator, and bell overlay.
 /// Emits Scene commands without calling OpenGL directly.
-
 use crate::{RenderContext, Scene, SceneLayer};
 
 /// Marker struct for the background component (used for organization).
@@ -91,7 +90,10 @@ fn frosted_backdrop_alpha(opacity: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot, RenderTarget};
+    use crate::{
+        CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot,
+        RenderTarget,
+    };
     use std::sync::Arc;
 
     fn make_test_snapshot(

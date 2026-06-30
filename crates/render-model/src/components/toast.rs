@@ -2,8 +2,7 @@
 ///
 /// Rendered in the Toast layer at bottom-right corner.
 /// Emits geometry and text commands to Scene.
-
-use crate::{RenderContext, Scene, SceneLayer, Color, Toast, ToastKind};
+use crate::{RenderContext, Scene, SceneLayer, ToastKind};
 
 /// Render all active toasts based on snapshot state.
 /// Called from GlPainter to emit toast notifications into the Scene.

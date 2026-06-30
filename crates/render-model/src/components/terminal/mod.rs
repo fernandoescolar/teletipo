@@ -5,7 +5,6 @@
 /// - Step 7b: Text rendering (deferred - requires glyph atlas/shaping)
 /// - Step 7c: Selection/highlights (deferred - complex geometry)
 /// - Step 7d: Cursor (deferred - animation state)
-
 pub mod background;
 
 use crate::{RenderContext, Scene};

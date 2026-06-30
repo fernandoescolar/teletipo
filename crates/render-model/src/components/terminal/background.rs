@@ -1,5 +1,4 @@
 /// Terminal background colors: one rectangle per cell with background color.
-
 use crate::{RenderContext, Scene};
 
 /// Emit background color rectangles for terminal cells.
@@ -66,7 +65,10 @@ fn frosted_backdrop_alpha(opacity: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot, RenderTarget};
+    use crate::{
+        CellMetrics, DamageRegion, FrameLayout, RenderCommand, RenderRow, RenderSnapshot,
+        RenderTarget,
+    };
     use std::sync::Arc;
 
     fn make_test_snapshot(
@@ -79,11 +81,14 @@ mod tests {
         let mut terminal_rows = Vec::new();
         for line in &lines {
             let mut row = RenderRow::default();
-            row.cells = line.chars().map(|ch| {
-                let mut cell = crate::RenderCell::default();
-                cell.ch = ch;
-                cell
-            }).collect();
+            row.cells = line
+                .chars()
+                .map(|ch| {
+                    let mut cell = crate::RenderCell::default();
+                    cell.ch = ch;
+                    cell
+                })
+                .collect();
             terminal_rows.push(row);
         }
 
@@ -308,7 +313,6 @@ mod tests {
             _ => panic!("Expected Rect command"),
         }
     }
-
 
     #[test]
     fn test_terminal_background_opacity_applied() {

@@ -4,8 +4,7 @@
 /// - Terminal vertical scrollbar (right edge)
 /// - Editor vertical scrollbar (right edge)
 /// - Editor horizontal scrollbar (bottom)
-
-use crate::{RenderContext, Scene, SceneLayer, SCROLLBAR_W_PX};
+use crate::{RenderContext, SCROLLBAR_W_PX, Scene, SceneLayer};
 
 /// Render all visible scrollbars based on scroll state.
 /// Called from GlPainter to emit scrollbar geometry into the Scene.
@@ -43,8 +42,8 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             let visible_rows = (track_h / layout.cell_h_px).floor();
             let total_rows = visible_rows + snapshot.scrollback_lines as f32;
             let thumb_h = (visible_rows / total_rows).clamp(0.05, 1.0) * track_h;
-            let scroll_pos = (snapshot.scroll_offset as f32 / snapshot.scrollback_lines as f32)
-                .clamp(0.0, 1.0);
+            let scroll_pos =
+                (snapshot.scroll_offset as f32 / snapshot.scrollback_lines as f32).clamp(0.0, 1.0);
             let thumb_top = track_top + (1.0 - scroll_pos) * (track_h - thumb_h);
 
             scene.rect_to_layer(
@@ -77,7 +76,8 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         );
 
         // Calculate and draw thumb
-        let thumb_h = (visible_rows / snapshot.editor_line_count as f32).clamp(0.05, 1.0) * editor_h;
+        let thumb_h =
+            (visible_rows / snapshot.editor_line_count as f32).clamp(0.05, 1.0) * editor_h;
         let max_scroll = snapshot.editor_line_count as f32 - visible_rows;
         let scroll_pos = (snapshot.editor_scroll_offset as f32 / max_scroll).clamp(0.0, 1.0);
         let thumb_top = layout.editor_top + scroll_pos * (editor_h - thumb_h);
@@ -122,7 +122,8 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         // Calculate and draw thumb
         let thumb_w = (visible_cols / max_cols as f32).clamp(0.05, 1.0) * track_w;
         let max_scroll = max_cols as f32 - visible_cols;
-        let scroll_pos = (snapshot.editor_horizontal_scroll_offset as f32 / max_scroll).clamp(0.0, 1.0);
+        let scroll_pos =
+            (snapshot.editor_horizontal_scroll_offset as f32 / max_scroll).clamp(0.0, 1.0);
         let thumb_left = track_left + scroll_pos * (track_w - thumb_w);
 
         scene.rect_to_layer(

@@ -24,7 +24,7 @@ pub(crate) const COLOR_ATLAS_TEX_SIZE: u32 = 2048;
 // ── Atlas glyph descriptor ────────────────────────────────────────────────────
 
 /// A glyph that has been packed into the GPU atlas texture.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AtlasGlyph {
     /// Normalised UV coordinates inside the atlas.
     pub u0: f32,
@@ -46,7 +46,7 @@ pub struct AtlasGlyph {
 // ── Font / shaping types ──────────────────────────────────────────────────────
 
 /// A color emoji glyph packed into the RGBA color atlas texture.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColorAtlasEntry {
     /// Normalised UV coordinates inside the color atlas.
     pub u0: f32,
@@ -78,11 +78,11 @@ pub(crate) struct FontSource {
 pub(crate) struct ShapedGlyph {
     pub(crate) glyph_id: u16,
     pub(crate) source_char: char,
-    pub(crate) col: usize,
-    pub(crate) span_cols: usize,
+    // pub(crate) col: usize,
+    // pub(crate) span_cols: usize,
     pub(crate) full_char_idx: usize,
-    pub(crate) x_offset_px: f32,
-    pub(crate) y_offset_px: f32,
+    //     pub(crate) x_offset_px: f32,
+    //     pub(crate) y_offset_px: f32,
 }
 
 pub(crate) type ShapedLines = Vec<Vec<ShapedGlyph>>;

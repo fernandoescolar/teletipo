@@ -4,7 +4,6 @@
 /// - Block: full cell (default for terminal)
 /// - Underline: thin line at cell bottom
 /// - Vertical bar: thin line at cell left
-
 use crate::{RenderContext, Scene, SceneLayer};
 
 /// Convert text offset to (row, col) in the text.
@@ -52,7 +51,14 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             + (col as f32 - snapshot.editor_horizontal_scroll_offset as f32) * layout.cell_w_px;
         let y = layout.editor_top + layout.padding_v + visible_row as f32 * layout.cell_h_px;
 
-        scene.rect_to_layer(SceneLayer::Main, x, y, layout.cell_w_px, layout.cell_h_px, color);
+        scene.rect_to_layer(
+            SceneLayer::Main,
+            x,
+            y,
+            layout.cell_w_px,
+            layout.cell_h_px,
+            color,
+        );
         return;
     }
 

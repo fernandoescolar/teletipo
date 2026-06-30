@@ -1,7 +1,8 @@
-/// Scene builder: backend-independent function to construct scenes from snapshots.
-
-use crate::{Background, CellMetrics, Editor, FrameLayout, RenderSnapshot, RenderTarget, Scene, Terminal};
 use crate::theme::ColorTheme;
+/// Scene builder: backend-independent function to construct scenes from snapshots.
+use crate::{
+    Background, CellMetrics, Editor, FrameLayout, RenderSnapshot, RenderTarget, Scene, Terminal,
+};
 
 /// Rendering context: immutable data passed to all component render functions.
 #[derive(Debug, Clone)]
@@ -177,7 +178,10 @@ mod tests {
         let scene = build_scene(&snapshot, &layout, target, metrics);
 
         // Should have background commands from components
-        assert!(!scene.background.is_empty(), "Background layer should not be empty");
+        assert!(
+            !scene.background.is_empty(),
+            "Background layer should not be empty"
+        );
         // Should have main layer commands from tab bar, terminal, editor
         assert!(!scene.main.is_empty(), "Main layer should not be empty");
         // Other layers may be empty depending on snapshot state
@@ -213,7 +217,10 @@ mod tests {
         let scene = build_scene(&snapshot, &layout, target, metrics);
 
         // Should have at least some commands from background component
-        assert!(scene.len() > 0, "Scene should have commands from components");
+        assert!(
+            scene.len() > 0,
+            "Scene should have commands from components"
+        );
     }
 
     #[test]
@@ -240,14 +247,21 @@ mod tests {
         let scene = build_scene(&snapshot, &layout, target, metrics);
 
         // Background should be layer 0 (rendered first)
-        assert!(!scene.background.is_empty(), "Background layer should have content");
+        assert!(
+            !scene.background.is_empty(),
+            "Background layer should have content"
+        );
 
         // Main should be layer 1
         assert!(!scene.main.is_empty(), "Main layer should have content");
 
         // Verify total count equals sum of all layers
-        let sum_of_layers = scene.background.len() + scene.main.len() + scene.floating.len() +
-                           scene.overlay.len() + scene.toast.len() + scene.debug.len();
+        let sum_of_layers = scene.background.len()
+            + scene.main.len()
+            + scene.floating.len()
+            + scene.overlay.len()
+            + scene.toast.len()
+            + scene.debug.len();
         assert_eq!(scene.len(), sum_of_layers);
     }
 }

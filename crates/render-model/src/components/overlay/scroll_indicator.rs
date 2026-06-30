@@ -2,8 +2,7 @@
 ///
 /// Rendered in the Overlay layer to show user they can scroll.
 /// Emits geometry only; text rendering is deferred to the old painter path.
-
-use crate::{RenderContext, Scene, SceneLayer, Color};
+use crate::{Color, RenderContext, Scene, SceneLayer};
 
 /// Render scroll indicator based on snapshot state.
 /// Called from GlPainter to emit scroll position feedback into the Scene.

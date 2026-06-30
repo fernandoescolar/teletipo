@@ -13,14 +13,16 @@ pub use builder::{RenderContext, build_scene};
 pub use components::{Background, Editor, Terminal, overlay};
 pub use event::AppWindowEvent;
 pub use layout::{
-    CellMetrics, FrameLayout, RenderTarget, compute_frame_layout, SEPARATOR_WIDTH_PX,
-    TAB_HEIGHT_MULTIPLIER,
+    CellMetrics, FrameLayout, RenderTarget, SEPARATOR_WIDTH_PX, TAB_HEIGHT_MULTIPLIER,
+    compute_frame_layout,
 };
 pub use overlays::{
     CommandPalette, ContextMenu, KeybindingRow, KeybindingsOverlay, SettingsItem, SettingsOverlay,
     SuggestionDropdown, Toast, ToastKind,
 };
-pub use scene::{Color, Rect, RectCommand, RenderCommand, Scene, SceneLayer, TextCommand, TextStyle};
+pub use scene::{
+    Color, Rect, RectCommand, RenderCommand, Scene, SceneLayer, TextCommand, TextStyle,
+};
 pub use screen::{DamageRegion, RenderCell, RenderRow};
 pub use snapshot::{RenderSnapshot, SearchPanel, SnapshotImage, TerminalLink};
 pub use stats::RenderStats;

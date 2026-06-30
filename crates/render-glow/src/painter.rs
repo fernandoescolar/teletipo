@@ -1,22 +1,25 @@
+#![allow(dead_code, unused_variables)]
+
 use std::mem::size_of;
 use std::sync::Arc;
 
 use crate::{ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay};
-use render_model::{CellMetrics, FrameLayout, Rect, RenderCommand, RenderTarget, Scene, compute_frame_layout};
 use font8x8::UnicodeFonts;
 use glow::HasContext;
+use render_model::{
+    CellMetrics, FrameLayout, Rect, RenderCommand, RenderTarget, Scene, compute_frame_layout,
+};
 use winit::dpi::PhysicalSize;
 
-use crate::backend::{GpuState, BatchContainer};
+use crate::backend::{BatchContainer, GpuState};
 use crate::emoji_atlas::ColorAtlas;
 use crate::font::CpuFontRasterizer;
-use crate::glyph_atlas::{GlyphAtlas, AtlasGlyph};
+use crate::glyph_atlas::{AtlasGlyph, GlyphAtlas};
 use crate::shaders::{compile_atlas_program, compile_color_atlas_program, compile_program};
 use crate::types::{
-    ATLAS_TEX_SIZE, COLOR_ATLAS_TEX_SIZE, ColorAtlasEntry, GlyphBitmap,
-    PALETTE_MAX_VISIBLE, SETTINGS_MAX_VISIBLE_SEARCH, STYLE_BOLD, STYLE_DIM,
-    STYLE_ITALIC, STYLE_STRIKE, ShapedLines, ShapedTerminalCache, clamp_color,
-    mix_color,
+    ATLAS_TEX_SIZE, COLOR_ATLAS_TEX_SIZE, ColorAtlasEntry, GlyphBitmap, PALETTE_MAX_VISIBLE,
+    SETTINGS_MAX_VISIBLE_SEARCH, STYLE_BOLD, STYLE_DIM, STYLE_ITALIC, STYLE_STRIKE, ShapedLines,
+    ShapedTerminalCache, clamp_color, mix_color,
 };
 use crate::util::{
     char_col_width, editor_offset_to_row_col, hash_text, is_icon_like, normalize_rect_selection,
@@ -31,6 +34,7 @@ fn frosted_backdrop_alpha(opacity: f32) -> f32 {
     0.55 + 0.45 * opacity
 }
 
+#[allow(dead_code)]
 fn with_backdrop_alpha(mut color: [f32; 4], opacity: f32) -> [f32; 4] {
     color[3] = (color[3] * frosted_backdrop_alpha(opacity)).clamp(0.0, 1.0);
     color
@@ -52,7 +56,7 @@ pub(crate) struct GlPainter {
     shaped_terminal_cache: Option<ShapedTerminalCache>,
 
     // ── Clipping state ─────────────────────────────────────────────────────
-    clip_stack: Vec<(i32, i32, i32, i32)>,  // (x, y, w, h) in GL coordinates
+    clip_stack: Vec<(i32, i32, i32, i32)>, // (x, y, w, h) in GL coordinates
 }
 
 struct GlyphCell {
@@ -297,9 +301,22 @@ impl GlPainter {
 
         // Create GPU state
         let gpu_state = GpuState::new(
-            program, vbo, vao, u_screen,
-            atlas_texture, atlas_program, atlas_vbo, atlas_vao, atlas_u_screen, atlas_u_sampler,
-            color_atlas_texture, color_atlas_program, color_atlas_vbo, color_atlas_vao, color_atlas_u_screen, color_atlas_u_sampler,
+            program,
+            vbo,
+            vao,
+            u_screen,
+            atlas_texture,
+            atlas_program,
+            atlas_vbo,
+            atlas_vao,
+            atlas_u_screen,
+            atlas_u_sampler,
+            color_atlas_texture,
+            color_atlas_program,
+            color_atlas_vbo,
+            color_atlas_vao,
+            color_atlas_u_screen,
+            color_atlas_u_sampler,
         );
 
         // Create batches and atlases
@@ -526,7 +543,7 @@ impl GlPainter {
         scene: &mut Scene,
         snapshot: &RenderSnapshot,
         layout: &FrameLayout,
-        metrics: CellMetrics,
+        _metrics: CellMetrics,
     ) {
         let terminal_text = snapshot.terminal_text_from_rows();
         let backdrop = frosted_backdrop_alpha(snapshot.opacity);
@@ -621,12 +638,12 @@ impl GlPainter {
         scene: &mut Scene,
         snapshot: &RenderSnapshot,
         layout: &FrameLayout,
-        metrics: CellMetrics,
+        _metrics: CellMetrics,
     ) {
         let terminal_text = snapshot.terminal_text_from_rows();
-        let max_x = layout.width - layout.padding_h;
         let max_y = layout.terminal_text_bottom;
         let lines: Vec<&str> = terminal_text.lines().collect();
+        let mut char_offset = 0usize;
 
         for (row, line) in lines.iter().copied().enumerate() {
             let y = layout.terminal_text_top + row as f32 * layout.cell_h_px;
@@ -636,16 +653,42 @@ impl GlPainter {
 
             let x = layout.padding_h;
             let text = line.to_string();
+            let char_count = text.chars().count();
 
-            // Emit as TextCommand - will be rendered with default color
-            // TODO: Include per-character colors for proper rendering
-            scene.text_to_layer(
-                render_model::SceneLayer::Main,
-                x,
-                y,
-                text,
-                snapshot.theme.text,
-            );
+            // Collect per-character colors from snapshot
+            let colors: Vec<[f32; 4]> = (0..char_count)
+                .map(|i| {
+                    let idx = char_offset + i;
+                    snapshot
+                        .terminal_fg_colors
+                        .get(idx)
+                        .and_then(|c| *c)
+                        .map(|c| [c[0], c[1], c[2], 1.0])
+                        .unwrap_or(snapshot.theme.text)
+                })
+                .collect();
+
+            // Emit TextCommand with per-character colors
+            if !colors.is_empty() && colors.len() == char_count {
+                scene.text_with_colors_to_layer(
+                    render_model::SceneLayer::Main,
+                    x,
+                    y,
+                    text,
+                    colors,
+                    snapshot.theme.text,
+                );
+            } else {
+                scene.text_to_layer(
+                    render_model::SceneLayer::Main,
+                    x,
+                    y,
+                    text,
+                    snapshot.theme.text,
+                );
+            }
+
+            char_offset += char_count + 1;
         }
     }
 
@@ -687,21 +730,43 @@ impl GlPainter {
     }
 
     /// Render a text command with color and style information.
-    /// Used for rendering text emitted to Scene from various overlays.
-    fn render_text_simple(&mut self, gl: &glow::Context, cmd: &render_model::TextCommand, metrics: CellMetrics) {
+    /// Supports both global and per-character colors.
+    fn render_text_simple(
+        &mut self,
+        gl: &glow::Context,
+        cmd: &render_model::TextCommand,
+        metrics: CellMetrics,
+    ) {
         let mut x = cmd.x;
         let y = cmd.y;
-        let mut color = cmd.color;
 
-        // Apply dim style by reducing alpha
-        if cmd.style.dim {
-            color[3] *= 0.55;
-        }
+        // Use per-character colors if provided, otherwise use global color
+        if let Some(char_colors) = &cmd.char_colors {
+            for (i, ch) in cmd.text.chars().enumerate() {
+                let mut color = char_colors.get(i).copied().unwrap_or(cmd.color);
 
-        // Render each character monospace
-        for ch in cmd.text.chars() {
-            self.push_glyph(ch, x, y, metrics.width, metrics.height, color);
-            x += metrics.width;
+                // Apply dim style
+                if cmd.style.dim {
+                    color[3] *= 0.55;
+                }
+
+                self.push_glyph(ch, x, y, metrics.width, metrics.height, color);
+                x += metrics.width;
+            }
+        } else {
+            // Fallback to global color
+            let mut color = cmd.color;
+
+            // Apply dim style by reducing alpha
+            if cmd.style.dim {
+                color[3] *= 0.55;
+            }
+
+            // Render each character monospace
+            for ch in cmd.text.chars() {
+                self.push_glyph(ch, x, y, metrics.width, metrics.height, color);
+                x += metrics.width;
+            }
         }
 
         // Ensure glyphs are in atlas after pushing
@@ -713,6 +778,7 @@ impl GlPainter {
 
     /// Render terminal text from Scene with per-character colors and styles.
     /// This is more complete than render_text_simple, handling the full palette.
+    #[allow(clippy::too_many_arguments)]
     fn render_text_with_colors(
         &mut self,
         gl: &glow::Context,
@@ -724,10 +790,9 @@ impl GlPainter {
         metrics: CellMetrics,
         fallback_color: [f32; 4],
     ) {
-        let mut char_idx = 0usize;
         let mut current_x = x;
 
-        for ch in text.chars() {
+        for (char_idx, ch) in text.chars().enumerate() {
             let fg = colors
                 .get(char_idx)
                 .and_then(|c| *c)
@@ -746,14 +811,20 @@ impl GlPainter {
             self.ensure_char_in_atlas(gl, ch, style & (STYLE_BOLD | STYLE_ITALIC));
 
             current_x += metrics.width;
-            char_idx += 1;
         }
     }
 
     /// Render a Scene of backend-independent commands.
     /// This is a compatibility bridge for components to emit Scene commands instead of
     /// calling OpenGL directly. Processes layers in defined order: Background, Main, Floating, Overlay, Toast, Debug.
-    pub(crate) fn render_scene(&mut self, gl: &glow::Context, scene: &Scene, metrics: CellMetrics, width: f32, height: f32) {
+    pub(crate) fn render_scene(
+        &mut self,
+        gl: &glow::Context,
+        scene: &Scene,
+        metrics: CellMetrics,
+        width: f32,
+        height: f32,
+    ) {
         // Clear batch structures
         self.batches.flat.clear();
         self.batches.glyph.clear();
@@ -860,7 +931,11 @@ impl GlPainter {
                     gl.uniform_2_f32(Some(loc), width, height);
                 }
 
-                gl.draw_arrays(glow::TRIANGLES, 0, (self.batches.flat.vertices.len() / 6) as i32);
+                gl.draw_arrays(
+                    glow::TRIANGLES,
+                    0,
+                    (self.batches.flat.vertices.len() / 6) as i32,
+                );
 
                 gl.bind_buffer(glow::ARRAY_BUFFER, None);
                 gl.bind_vertex_array(None);
@@ -898,7 +973,11 @@ impl GlPainter {
                     gl.uniform_1_i32(Some(loc), 0);
                 }
 
-                gl.draw_arrays(glow::TRIANGLES, 0, (self.batches.glyph.vertices.len() / 8) as i32);
+                gl.draw_arrays(
+                    glow::TRIANGLES,
+                    0,
+                    (self.batches.glyph.vertices.len() / 8) as i32,
+                );
 
                 gl.bind_texture(glow::TEXTURE_2D, None);
                 gl.bind_buffer(glow::ARRAY_BUFFER, None);
@@ -953,176 +1032,7 @@ impl GlPainter {
         }
     }
 
-    fn draw_terminal_text(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
-        let terminal_text = snapshot.terminal_text_from_rows();
-        let backdrop = frosted_backdrop_alpha(snapshot.opacity);
-        let fallback_fg = [
-            snapshot.theme.text[0],
-            snapshot.theme.text[1],
-            snapshot.theme.text[2],
-            1.0,
-        ];
-        let max_x = layout.width - layout.padding_h;
-        let max_y = layout.terminal_text_bottom;
-        let lines: Vec<&str> = terminal_text.lines().collect();
-        let shaped_lines = self.shape_terminal_lines_cached(snapshot, &terminal_text);
-        let mut line_char_start = 0usize;
-
-        // Draw background color cells first so shaped glyph runs can paint on top.
-        // Clip on the row's *top* edge so floating-point rounding in terminal_h
-        // never silently drops the last row (its bottom may exceed max_y by <1px).
-        for (row, line) in lines.iter().copied().enumerate() {
-            let y = layout.terminal_text_top + row as f32 * layout.cell_h_px;
-            if y >= max_y {
-                break;
-            }
-            for (col, _) in line.chars().enumerate() {
-                let x = layout.padding_h + col as f32 * layout.cell_w_px;
-                if x + layout.cell_w_px > max_x {
-                    break;
-                }
-
-                let idx = line_char_start + col;
-                if let Some(bg) = snapshot.terminal_bg_colors.get(idx).and_then(|c| *c) {
-                    self.push_rect(
-                        x,
-                        y,
-                        x + layout.cell_w_px,
-                        y + layout.cell_h_px,
-                        [bg[0], bg[1], bg[2], backdrop],
-                    );
-                }
-            }
-
-            line_char_start = line_char_start.saturating_add(line.chars().count() + 1);
-        }
-
-        line_char_start = 0;
-        for (row, line) in lines.iter().copied().enumerate() {
-            let y = layout.terminal_text_top + row as f32 * layout.cell_h_px;
-            if y >= max_y {
-                break;
-            }
-
-            if let Some(shaped) = shaped_lines.as_ref().and_then(|all| all.get(row)) {
-                for sg in shaped {
-                    let x = layout.padding_h + sg.col as f32 * layout.cell_w_px;
-                    let w = layout.cell_w_px * sg.span_cols as f32;
-                    if x + w > max_x {
-                        continue;
-                    }
-
-                    let style = snapshot
-                        .terminal_styles
-                        .get(sg.full_char_idx)
-                        .copied()
-                        .unwrap_or(0);
-                    let fg = snapshot
-                        .terminal_fg_colors
-                        .get(sg.full_char_idx)
-                        .and_then(|c| *c)
-                        .map(|c| [c[0], c[1], c[2], 1.0])
-                        .unwrap_or_else(|| {
-                            if style & STYLE_DIM != 0 {
-                                [
-                                    fallback_fg[0] * 0.55,
-                                    fallback_fg[1] * 0.55,
-                                    fallback_fg[2] * 0.55,
-                                    1.0,
-                                ]
-                            } else {
-                                fallback_fg
-                            }
-                        });
-
-                    if sg.glyph_id == 0 {
-                        // Primary font has no glyph for this character.
-                        // Try the color-emoji atlas (SBIX / CBDT), then the
-                        // outline char atlas, and finally silently skip.
-                        if !self.push_color_emoji(sg.source_char, x, y, w, layout.cell_h_px) {
-                            self.push_glyph_styled(
-                                sg.source_char,
-                                &GlyphCell {
-                                    x,
-                                    y,
-                                    w,
-                                    h: layout.cell_h_px,
-                                    color: fg,
-                                    style,
-                                },
-                            );
-                        }
-                    } else if !self.push_shaped_glyph(
-                        sg.source_char,
-                        sg.glyph_id,
-                        &GlyphCell {
-                            x,
-                            y,
-                            w,
-                            h: layout.cell_h_px,
-                            color: fg,
-                            style,
-                        },
-                        sg.x_offset_px,
-                        sg.y_offset_px,
-                    ) {
-                        self.push_glyph_styled(
-                            sg.source_char,
-                            &GlyphCell {
-                                x,
-                                y,
-                                w,
-                                h: layout.cell_h_px,
-                                color: fg,
-                                style,
-                            },
-                        );
-                    }
-                }
-            } else {
-                for (col, ch) in line.chars().enumerate() {
-                    let x = layout.padding_h + col as f32 * layout.cell_w_px;
-                    if x + layout.cell_w_px > max_x {
-                        break;
-                    }
-
-                    let idx = line_char_start + col;
-                    let style = snapshot.terminal_styles.get(idx).copied().unwrap_or(0);
-                    let fg = snapshot
-                        .terminal_fg_colors
-                        .get(idx)
-                        .and_then(|c| *c)
-                        .map(|c| [c[0], c[1], c[2], 1.0])
-                        .unwrap_or_else(|| {
-                            if style & STYLE_DIM != 0 {
-                                [
-                                    fallback_fg[0] * 0.55,
-                                    fallback_fg[1] * 0.55,
-                                    fallback_fg[2] * 0.55,
-                                    1.0,
-                                ]
-                            } else {
-                                fallback_fg
-                            }
-                        });
-
-                    self.push_glyph_styled(
-                        ch,
-                        &GlyphCell {
-                            x,
-                            y,
-                            w: layout.cell_w_px,
-                            h: layout.cell_h_px,
-                            color: fg,
-                            style,
-                        },
-                    );
-                }
-            }
-
-            line_char_start = line_char_start.saturating_add(line.chars().count() + 1);
-        }
-    }
+    // draw_terminal_text: REMOVED - migrated to emit_terminal_text_to_scene()
 
     fn draw_editor_text(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
         let dim = if snapshot.editor_disabled { 0.35 } else { 1.0 };
@@ -2621,7 +2531,20 @@ impl GlPainter {
         let (u0, v0, u1, v1) = (entry.u0, entry.v0, entry.u1, entry.v1);
         let a = 1.0_f32;
 
-        self.batches.emoji.push_quad(ox, oy, ox + draw_w, oy + draw_h, u0, v0, u1, v1, 0.0, 0.0, 0.0, a);
+        self.batches.emoji.push_quad(
+            ox,
+            oy,
+            ox + draw_w,
+            oy + draw_h,
+            u0,
+            v0,
+            u1,
+            v1,
+            0.0,
+            0.0,
+            0.0,
+            a,
+        );
 
         true
     }
@@ -2697,7 +2620,11 @@ impl GlPainter {
         }
         let style_key = style & STYLE_BOLD;
         // Check atlas
-        if self.glyph_atlas.lookup_glyph_id(glyph_id, style_key).is_some() {
+        if self
+            .glyph_atlas
+            .lookup_glyph_id(glyph_id, style_key)
+            .is_some()
+        {
             return;
         }
         let Some(glyph) = self.rasterizer.glyph_indexed(glyph_id, style_key) else {
@@ -2820,12 +2747,27 @@ impl GlPainter {
         let bot_y = origin_y + draw_h;
         let (u0, v0, u1, v1) = (ag.u0, ag.v0, ag.u1, ag.v1);
 
-        self.batches.glyph.push_quad(tl_x, top_y, br_x, bot_y, u0, v0, u1, v1, r, g, b, a);
+        self.batches
+            .glyph
+            .push_quad(tl_x, top_y, br_x, bot_y, u0, v0, u1, v1, r, g, b, a);
 
         // Synthetic bold: second pass shifted right
         if style & STYLE_BOLD != 0 {
             let shift = (draw_w * 0.08).max(0.5);
-            self.batches.glyph.push_quad(tl_x + shift, top_y, br_x + shift, bot_y, u0, v0, u1, v1, r, g, b, a);
+            self.batches.glyph.push_quad(
+                tl_x + shift,
+                top_y,
+                br_x + shift,
+                bot_y,
+                u0,
+                v0,
+                u1,
+                v1,
+                r,
+                g,
+                b,
+                a,
+            );
         }
     }
 
@@ -3004,7 +2946,9 @@ impl GlPainter {
             return;
         }
 
-        self.batches.flat.push_quad(x0, y0, x1, y1, color[0], color[1], color[2], color[3]);
+        self.batches
+            .flat
+            .push_quad(x0, y0, x1, y1, color[0], color[1], color[2], color[3]);
     }
 }
 

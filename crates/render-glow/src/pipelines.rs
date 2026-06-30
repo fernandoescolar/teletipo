@@ -1,7 +1,8 @@
+#![allow(dead_code, unused_variables)]
+
 /// GPU pipelines: shader programs, VAOs, VBOs, and uniform state.
 ///
 /// Organizes flat-color, glyph-atlas, and color-emoji rendering pipelines.
-
 use glow::HasContext;
 
 /// Flat-color rendering pipeline (backgrounds, borders, overlays).
@@ -123,17 +124,5 @@ impl EmojiPipeline {
             u_sampler,
             color_atlas_texture,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_flat_pipeline_creation() {
-        // Note: Can't actually create GL objects in tests without context.
-        // This is a placeholder for documentation.
-        // Real tests would require a GL context.
     }
 }

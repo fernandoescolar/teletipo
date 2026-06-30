@@ -5,7 +5,6 @@ use fontdb::{Family, Query, Weight};
 
 use crate::emoji::ColorEmojiRasterizer;
 use crate::types::{FontSource, GlyphBitmap, STYLE_BOLD, STYLE_ITALIC, ShapedGlyph};
-use crate::util::char_col_width;
 
 // ── CPU font rasterizer ───────────────────────────────────────────────────────
 
@@ -160,13 +159,14 @@ impl CpuFontRasterizer {
         if units_per_em <= 0.0 {
             return None;
         }
-        let px_per_unit = self.font_size_px.max(1.0) / units_per_em;
+        //let px_per_unit = self.font_size_px.max(1.0) / units_per_em;
 
         let mut result = Vec::new();
         let mut full_char_offset = 0usize;
 
         for line in text.split('\n') {
-            result.push(shape_line(&face, line, full_char_offset, px_per_unit));
+            //result.push(shape_line(&face, line, full_char_offset, px_per_unit));
+            result.push(shape_line(&face, line, full_char_offset));
             full_char_offset = full_char_offset.saturating_add(line.chars().count() + 1);
         }
 
@@ -180,7 +180,7 @@ pub(crate) fn shape_line(
     face: &rustybuzz::Face<'_>,
     line: &str,
     full_char_offset: usize,
-    px_per_unit: f32,
+    //px_per_unit: f32,
 ) -> Vec<ShapedGlyph> {
     if line.is_empty() {
         return Vec::new();
@@ -191,7 +191,7 @@ pub(crate) fn shape_line(
         .enumerate()
         .map(|(char_i, (byte_off, ch))| (byte_off as u32, (char_i, ch)))
         .collect();
-    let line_char_count = line.chars().count();
+    // let line_char_count = line.chars().count();
 
     let mut buf = rustybuzz::UnicodeBuffer::new();
     buf.push_str(line);
@@ -201,36 +201,37 @@ pub(crate) fn shape_line(
     let positions = shaped.glyph_positions();
     let mut result = Vec::with_capacity(infos.len());
 
-    for (i, (info, pos)) in infos.iter().zip(positions.iter()).enumerate() {
+    //for (i, (info, pos)) in infos.iter().zip(positions.iter()).enumerate() {
+    for (info, _pos) in infos.iter().zip(positions.iter()) {
         let cluster = info.cluster;
         let Some(&(col, source_char)) = byte_to_info.get(&cluster) else {
             continue;
         };
 
-        let span_cols_from_clusters = if i + 1 < infos.len() {
-            let next_cluster = infos[i + 1].cluster;
-            let next_col = byte_to_info
-                .get(&next_cluster)
-                .map(|&(c, _)| c)
-                .unwrap_or(col + 1);
-            (next_col.saturating_sub(col)).max(1)
-        } else {
-            (line_char_count.saturating_sub(col)).max(1)
-        };
+        // let span_cols_from_clusters = if i + 1 < infos.len() {
+        //     let next_cluster = infos[i + 1].cluster;
+        //     let next_col = byte_to_info
+        //         .get(&next_cluster)
+        //         .map(|&(c, _)| c)
+        //         .unwrap_or(col + 1);
+        //     (next_col.saturating_sub(col)).max(1)
+        // } else {
+        //     (line_char_count.saturating_sub(col)).max(1)
+        // };
         // Wide characters (emoji, CJK) always occupy at least 2 columns.
         // The terminal grid stores a '\0' placeholder after wide chars; that
         // placeholder makes the cluster-distance calculation return 1 instead
         // of 2, giving a 1-column slot that causes left-overflow in rendering.
-        let span_cols = span_cols_from_clusters.max(char_col_width(source_char));
+        //let span_cols = span_cols_from_clusters.max(char_col_width(source_char));
 
         result.push(ShapedGlyph {
             glyph_id: info.glyph_id.min(u16::MAX as u32) as u16,
             source_char,
-            col,
-            span_cols,
+            // col,
+            // span_cols,
             full_char_idx: full_char_offset + col,
-            x_offset_px: pos.x_offset as f32 * px_per_unit,
-            y_offset_px: pos.y_offset as f32 * px_per_unit,
+            // x_offset_px: pos.x_offset as f32 * px_per_unit,
+            // y_offset_px: pos.y_offset as f32 * px_per_unit,
         });
     }
 

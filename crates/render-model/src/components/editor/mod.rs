@@ -6,7 +6,6 @@
 /// - Step 8c: Selection highlighting (deferred - complex geometry)
 /// - Step 8d: Cursor (deferred - animation/style state)
 /// - Step 8e: Suggestion dropdown (deferred - complex positioning)
-
 pub mod background;
 
 use crate::{RenderContext, Scene};

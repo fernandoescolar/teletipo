@@ -1,6 +1,5 @@
 /// Reusable panel drawing helper.
 /// Panels are rectangular UI containers with background and border.
-
 use crate::{Color, Rect, Scene, SceneLayer};
 
 /// Configuration for a panel's visual appearance.
