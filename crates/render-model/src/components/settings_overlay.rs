@@ -85,16 +85,22 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let border = with_alpha(theme.separator_focused, 0.96);
     let title = with_alpha(clamp_color(theme.terminal_bg, -0.01), 0.94);
     let section = with_alpha(clamp_color(theme.terminal_bg, 0.04), 0.90);
-    let select = with_alpha(mix_color(
-        clamp_color(theme.terminal_bg, 0.08),
-        theme.separator_focused,
-        0.20,
-    ), 0.93);
-    let edit = with_alpha(mix_color(
-        clamp_color(theme.terminal_bg, 0.08),
-        theme.separator_focused,
-        0.28,
-    ), 0.93);
+    let select = with_alpha(
+        mix_color(
+            clamp_color(theme.terminal_bg, 0.08),
+            theme.separator_focused,
+            0.20,
+        ),
+        0.93,
+    );
+    let edit = with_alpha(
+        mix_color(
+            clamp_color(theme.terminal_bg, 0.08),
+            theme.separator_focused,
+            0.28,
+        ),
+        0.93,
+    );
 
     scene.rect_to_layer(
         SceneLayer::Overlay,

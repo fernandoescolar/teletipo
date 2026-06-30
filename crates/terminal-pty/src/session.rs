@@ -1,7 +1,7 @@
 use std::io::{self, Read, Write};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -12,9 +12,11 @@ use crate::error::PtyError;
 
 type Result<T> = std::result::Result<T, PtyError>;
 
-/// A thread-safe callback that wakes the render loop when new PTY data arrives.
-/// Typically wraps an `EventLoopProxy::send_event()` call.
-pub type Waker = Arc<dyn Fn() + Send + Sync>;
+/// A thread-safe callback holder that wakes the render loop when new PTY data
+/// arrives. The callback itself only needs `Send`; `Mutex` provides shared
+/// synchronization so non-`Sync` capturers (like some macOS event proxies)
+/// can still be used safely from the PTY reader thread.
+pub type Waker = Arc<Mutex<dyn Fn() + Send>>;
 
 /// Maximum number of read chunks (each up to [`READ_CHUNK_SIZE`] bytes) that
 /// may sit in the PTY → consumer channel before the reader thread blocks.
@@ -287,8 +289,10 @@ impl PortablePtySession {
                                 queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                             metrics::gauge!("pty_channel_depth").set(depth as f64);
                             metrics::counter!("pty_read_bytes").increment(n as u64);
-                            if let Some(ref wake) = waker_for_thread {
-                                wake();
+                            if let Some(ref wake) = waker_for_thread
+                                && let Ok(cb) = wake.lock()
+                            {
+                                (cb)();
                             }
                         }
                     }
@@ -375,8 +379,10 @@ impl PortablePtySession {
                                 queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                             metrics::gauge!("pty_channel_depth").set(depth as f64);
                             metrics::counter!("pty_read_bytes").increment(n as u64);
-                            if let Some(ref wake) = waker_for_thread {
-                                wake();
+                            if let Some(ref wake) = waker_for_thread
+                                && let Ok(cb) = wake.lock()
+                            {
+                                (cb)();
                             }
                         }
                     }

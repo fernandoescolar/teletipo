@@ -301,7 +301,8 @@ impl GpuRuntimeState {
     /// were spawned before the event loop started don't get the waker (they
     /// still work because the loop polls), but all future tabs will.
     pub(crate) fn install_pty_waker(&mut self, redrawer: render_glow::Redrawer) {
-        let waker: terminal_pty::Waker = std::sync::Arc::new(move || redrawer.request_redraw());
+        let waker: terminal_pty::Waker =
+            std::sync::Arc::new(std::sync::Mutex::new(move || redrawer.request_redraw()));
         self.pty_waker = Some(waker);
     }
 
