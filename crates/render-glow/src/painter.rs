@@ -17,7 +17,7 @@ use crate::font::CpuFontRasterizer;
 use crate::glyph_atlas::{AtlasGlyph, GlyphAtlas};
 use crate::shaders::{compile_atlas_program, compile_color_atlas_program, compile_program};
 use crate::types::{
-    ATLAS_TEX_SIZE, COLOR_ATLAS_TEX_SIZE, ColorAtlasEntry, GlyphBitmap, PALETTE_MAX_VISIBLE,
+    ATLAS_TEX_SIZE, COLOR_ATLAS_TEX_SIZE, ColorAtlasEntry, GlyphBitmap,
     SETTINGS_MAX_VISIBLE_SEARCH, STYLE_BOLD, STYLE_DIM, STYLE_ITALIC, STYLE_STRIKE, ShapedLines,
     ShapedTerminalCache, clamp_color, mix_color,
 };
@@ -503,6 +503,8 @@ impl GlPainter {
         render_model::components::render_command_palette(&ctx, &mut scene);
         render_model::components::render_context_menu(&ctx, &mut scene);
         render_model::components::render_dropdown(&ctx, &mut scene);
+        render_model::components::render_settings_overlay(&ctx, &mut scene);
+        render_model::components::render_keybindings_overlay(&ctx, &mut scene);
 
         // Render scene geometry (backgrounds, rectangles, text)
         self.render_scene(gl, &scene, metrics, layout.width, layout.height);
@@ -511,12 +513,6 @@ impl GlPainter {
         // backgrounds (drawn without blending) completely cover terminal text.
         self.flush_passes(gl, layout.width, layout.height);
 
-        self.draw_search_panel(snapshot, &layout);
-        self.draw_suggestion_dropdown(snapshot, &layout);
-        self.draw_context_menu(snapshot, &layout);
-        self.draw_settings_overlay(snapshot, &layout);
-        self.draw_keybindings_overlay(snapshot, &layout);
-        self.draw_command_palette(snapshot, &layout);
         // Toasts, resize overlay, and scroll indicator are now emitted via Scene
 
         self.flush_passes(gl, layout.width, layout.height);
@@ -2173,121 +2169,6 @@ impl GlPainter {
         }
         self.draw_keybindings_rows(overlay, &geom, layout, th, &colors);
         self.draw_keybindings_footer(overlay, &geom, layout, th, &colors);
-    }
-
-    fn draw_command_palette(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
-        let Some(cp) = &snapshot.command_palette else {
-            return;
-        };
-        let visible = cp
-            .items
-            .len()
-            .saturating_sub(cp.scroll_offset)
-            .min(PALETTE_MAX_VISIBLE);
-        let palette_w = layout.cell_w_px * 50.0;
-        let header_h = layout.cell_h_px * 2.2;
-        let item_h = layout.cell_h_px * 1.4;
-        let cx = layout.width * 0.5;
-        let x0 = (cx - palette_w * 0.5).max(0.0);
-        let x1 = (cx + palette_w * 0.5).min(layout.width);
-        let y0 = layout.tab_bar_h + layout.height * 0.08;
-
-        if let Some(ref label) = cp.sub_prompt_label {
-            // Sub-prompt mode: show a two-row box (label + input), no item list.
-            let label_h = layout.cell_h_px * 1.4;
-            let input_h = layout.cell_h_px * 1.8;
-            let total_h = label_h + input_h;
-            let y1 = (y0 + total_h).min(layout.height);
-            self.push_rect(
-                x0 - 2.0,
-                y0 - 2.0,
-                x1 + 2.0,
-                y1 + 2.0,
-                [0.35, 0.55, 0.90, 1.0],
-            );
-            self.push_rect(x0, y0, x1, y1, [0.09, 0.11, 0.18, 0.97]);
-            // Label row
-            for (ci, ch) in label.chars().take(48).enumerate() {
-                self.push_glyph(
-                    ch,
-                    x0 + layout.cell_w_px * 0.8 + ci as f32 * layout.cell_w_px,
-                    y0 + (label_h - layout.cell_h_px) * 0.5,
-                    layout.cell_w_px,
-                    layout.cell_h_px,
-                    [0.65, 0.75, 0.95, 1.0],
-                );
-            }
-            // Divider
-            self.push_rect(
-                x0,
-                y0 + label_h - 1.0,
-                x1,
-                y0 + label_h,
-                [0.30, 0.45, 0.70, 0.80],
-            );
-            // Input row
-            let input_text = format!("> {}", cp.query);
-            for (ci, ch) in input_text.chars().take(48).enumerate() {
-                self.push_glyph(
-                    ch,
-                    x0 + layout.cell_w_px * 0.8 + ci as f32 * layout.cell_w_px,
-                    y0 + label_h + (input_h - layout.cell_h_px) * 0.5,
-                    layout.cell_w_px,
-                    layout.cell_h_px,
-                    [0.92, 0.94, 0.98, 1.0],
-                );
-            }
-            return;
-        }
-
-        let palette_h = header_h + item_h * visible as f32;
-        let y1 = (y0 + palette_h).min(layout.height);
-        self.push_rect(
-            x0 - 2.0,
-            y0 - 2.0,
-            x1 + 2.0,
-            y1 + 2.0,
-            [0.35, 0.55, 0.90, 1.0],
-        );
-        self.push_rect(x0, y0, x1, y1, [0.09, 0.11, 0.18, 0.97]);
-        self.push_rect(
-            x0,
-            y0 + header_h - 1.0,
-            x1,
-            y0 + header_h,
-            [0.30, 0.45, 0.70, 0.80],
-        );
-        let query = format!("> {}", cp.query);
-        for (ci, ch) in query.chars().take(48).enumerate() {
-            self.push_glyph(
-                ch,
-                x0 + layout.cell_w_px * 0.8 + ci as f32 * layout.cell_w_px,
-                y0 + (header_h - layout.cell_h_px) * 0.5,
-                layout.cell_w_px,
-                layout.cell_h_px,
-                [0.92, 0.94, 0.98, 1.0],
-            );
-        }
-        for i in 0..visible {
-            let idx = cp.scroll_offset + i;
-            if idx >= cp.items.len() {
-                break;
-            }
-            let ry = y0 + header_h + i as f32 * item_h;
-            if idx == cp.selected {
-                self.push_rect(x0, ry, x1, ry + item_h, [0.20, 0.32, 0.58, 0.70]);
-            }
-            for (ci, ch) in cp.items[idx].chars().take(48).enumerate() {
-                self.push_glyph(
-                    ch,
-                    x0 + layout.cell_w_px * 0.8 + ci as f32 * layout.cell_w_px,
-                    ry + (item_h - layout.cell_h_px) * 0.5,
-                    layout.cell_w_px,
-                    layout.cell_h_px,
-                    [0.92, 0.94, 0.98, 1.0],
-                );
-            }
-        }
     }
 
     fn draw_toasts(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {

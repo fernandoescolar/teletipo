@@ -9,7 +9,6 @@ pub(crate) const STYLE_DIM: u8 = 0b1000;
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
-pub(crate) const PALETTE_MAX_VISIBLE: usize = 10;
 pub(crate) const SETTINGS_MAX_VISIBLE_SEARCH: usize = 8;
 
 // ── Atlas constant ────────────────────────────────────────────────────────────
