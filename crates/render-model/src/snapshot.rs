@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::overlays::{
-    CommandPalette, ContextMenu, KeybindingsOverlay, SettingsOverlay, SuggestionDropdown, Toast,
+    CommandPalette, ContextMenu, KeybindingsOverlay, SettingsOverlay, StickyCommandOverlay,
+    SuggestionDropdown, Toast,
 };
 use crate::screen::{DamageRegion, RenderRow};
 use crate::theme::ColorTheme;
@@ -136,6 +137,8 @@ pub struct RenderSnapshot {
     pub suggestion_dropdown: Option<SuggestionDropdown>,
     /// Inline terminal search panel shown near the top-right of the terminal pane.
     pub search_panel: Option<SearchPanel>,
+    /// Fixed top overlay that anchors to the current command prompt.
+    pub sticky_command_overlay: Option<StickyCommandOverlay>,
     /// File paths and URLs detected in the terminal output.  Populated only
     /// when the Cmd key is held so the renderer can draw link underlines.
     pub terminal_links: Vec<TerminalLink>,

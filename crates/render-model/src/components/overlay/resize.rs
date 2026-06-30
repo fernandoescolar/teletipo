@@ -3,6 +3,11 @@
 /// Rendered in the Overlay layer as a centered panel with the new terminal size.
 use crate::{Color, RenderContext, Scene, SceneLayer};
 
+fn with_alpha(mut c: [f32; 4], alpha: f32) -> [f32; 4] {
+    c[3] = alpha.clamp(0.0, 1.0);
+    c
+}
+
 /// Render resize overlay based on snapshot state.
 /// Called from GlPainter to emit overlay geometry into the Scene.
 pub fn render(ctx: &RenderContext, scene: &mut Scene) {
@@ -14,6 +19,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     };
 
     let layout = ctx.layout;
+    let theme = &ctx.snapshot.theme;
     let border_w = 1.0;
     let panel_w = (text.chars().count() as f32 * layout.cell_w_px + layout.cell_w_px * 2.0)
         .min(layout.width * 0.8);
@@ -21,7 +27,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let x = (layout.width - panel_w) * 0.5;
     let y = (layout.height - panel_h) * 0.5;
 
-    let border_color: Color = [0.35, 0.55, 0.90, 1.0];
+    let border_color: Color = with_alpha(theme.separator_focused, 0.96);
     scene.rect_to_layer(
         SceneLayer::Overlay,
         x - border_w,
@@ -31,10 +37,10 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         border_color,
     );
 
-    let bg_color: Color = [0.08, 0.10, 0.16, 1.0];
+    let bg_color: Color = with_alpha(theme.terminal_bg, 0.95);
     scene.rect_to_layer(SceneLayer::Overlay, x, y, panel_w, panel_h, bg_color);
 
-    let text_color: Color = [0.92, 0.94, 0.98, 1.0];
+    let text_color: Color = with_alpha(theme.text, 1.0);
     let text_x = x + (panel_w - text.chars().count() as f32 * layout.cell_w_px) * 0.5;
     let text_y = y + (panel_h - layout.cell_h_px) * 0.5;
     scene.text_to_layer(SceneLayer::Overlay, text_x, text_y, text, text_color);
@@ -90,6 +96,7 @@ mod tests {
             editor_suggestion: String::new(),
             suggestion_dropdown: None,
             search_panel: None,
+            sticky_command_overlay: None,
             terminal_links: Vec::new(),
             request_exit: false,
             cursor_shape: 0,

@@ -10,7 +10,8 @@ use crate::theme;
 use editor_lang::{LanguageHighlighter, ShellLikeHighlighter};
 use render_model::{
     ColorTheme, CommandPalette, ContextMenu, DamageRegion, RenderCell, RenderRow, RenderSnapshot,
-    SearchPanel, SnapshotImage, SuggestionDropdown, TerminalLink, Toast, ToastKind,
+    SearchPanel, SnapshotImage, StickyCommandOverlay, SuggestionDropdown, TerminalLink, Toast,
+    ToastKind,
 };
 
 /// Truncate `s` to at most `max_chars` Unicode scalar values, appending `…`
@@ -22,6 +23,15 @@ fn truncate_display(s: &str, max_chars: usize) -> String {
         None => s.to_owned(),
         Some((byte_pos, _)) => format!("{}…", &s[..byte_pos]),
     }
+}
+
+fn truncate_overlay_command(s: &str, max_chars: usize) -> String {
+    let first = s.lines().next().unwrap_or("");
+    let compact = first.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.is_empty() {
+        return "command".to_owned();
+    }
+    truncate_display(&compact, max_chars)
 }
 
 fn tab_button_label(index: usize, title: Option<&str>, cwd: &str, max_chars: usize) -> String {
@@ -139,6 +149,9 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
     let context_menu = build_context_menu(state);
     let toast_stack = collect_toasts(state);
     let command_palette = build_command_palette_snapshot(state);
+    let sticky_command_overlay = build_sticky_command_overlay(state, active);
+    state.overlays.sticky_command_prompt_row =
+        sticky_command_overlay.as_ref().map(|o| o.prompt_row);
 
     assemble_snapshot(
         state,
@@ -172,6 +185,7 @@ pub(crate) fn build_snapshot(state: &mut GpuRuntimeState) -> RenderSnapshot {
             toast_stack,
             suggestion_dropdown,
             command_palette,
+            sticky_command_overlay,
         },
     )
 }
@@ -206,6 +220,7 @@ struct ComputedFrame {
     toast_stack: Vec<Toast>,
     suggestion_dropdown: Option<SuggestionDropdown>,
     command_palette: Option<CommandPalette>,
+    sticky_command_overlay: Option<StickyCommandOverlay>,
 }
 
 /// Assemble the final `RenderSnapshot` from all pre-computed parts.
@@ -256,6 +271,7 @@ fn assemble_snapshot(state: &GpuRuntimeState, active: usize, f: ComputedFrame) -
         title_cwd: build_title_cwd(state),
         editor_suggestion: f.editor_suggestion,
         search_panel: f.search_panel,
+        sticky_command_overlay: f.sticky_command_overlay,
         terminal_links: f.terminal_links,
         request_exit: state.should_exit,
         cursor_shape: state.tabs[active].app.cursor_shape(),
@@ -274,6 +290,84 @@ fn assemble_snapshot(state: &GpuRuntimeState, active: usize, f: ComputedFrame) -
         command_palette: f.command_palette,
         opacity: state.user_config.terminal.opacity,
     }
+}
+
+fn build_sticky_command_overlay(
+    state: &GpuRuntimeState,
+    active: usize,
+) -> Option<StickyCommandOverlay> {
+    let tab = &state.tabs[active];
+    if tab.app.is_alternate_screen() {
+        return None;
+    }
+    if state.overlays.active_modal.is_some()
+        || state.command_palette.is_some()
+        || state.overlays.context_menu.is_some()
+    {
+        return None;
+    }
+
+    let visible_rows = tab.term_row_count.max(1);
+    let scrollback = tab.app.scrollback_len();
+    let total_rows = scrollback.saturating_add(visible_rows);
+    if total_rows == 0 {
+        return None;
+    }
+    let window_start = total_rows
+        .saturating_sub(visible_rows)
+        .saturating_sub(tab.scroll_offset.min(scrollback));
+    let window_end = window_start.saturating_add(visible_rows);
+
+    let prompt_marks = tab.app.prompt_marks();
+    if prompt_marks.is_empty() {
+        return None;
+    }
+
+    let mut sticky_candidates: Vec<(usize, usize, usize)> = Vec::new();
+    for (idx, &prompt_row) in prompt_marks.iter().enumerate() {
+        let end_row = prompt_marks
+            .get(idx + 1)
+            .copied()
+            .map(|next| next.saturating_sub(1))
+            .unwrap_or_else(|| total_rows.saturating_sub(1));
+        let intersects_view = prompt_row < window_end && end_row >= window_start;
+        let prompt_hidden = prompt_row < window_start;
+        let first_non_prompt_visible = window_start.max(prompt_row.saturating_add(1));
+        let has_visible_non_prompt_rows =
+            first_non_prompt_visible < window_end && first_non_prompt_visible <= end_row;
+        if intersects_view && prompt_hidden && has_visible_non_prompt_rows {
+            sticky_candidates.push((idx, prompt_row, end_row));
+        }
+    }
+
+    let (block_idx, prompt_row, _end_row) = sticky_candidates
+        .into_iter()
+        .max_by_key(|(_, prompt_row, _)| *prompt_row)?;
+
+    let zones_len = tab.app.terminal.command_zones().len();
+    let is_current_block = block_idx >= zones_len;
+    let raw_command = if is_current_block {
+        tab.pending_cmd.clone().unwrap_or_default()
+    } else {
+        let history_offset = tab.history.len().saturating_sub(zones_len);
+        tab.history
+            .get(history_offset.saturating_add(block_idx))
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    let max_chars = if state.layout.cell_w > 0.0 {
+        ((state.layout.window_width as f32 / state.layout.cell_w).floor() as usize)
+            .saturating_sub(4)
+            .max(8)
+    } else {
+        80
+    };
+
+    Some(StickyCommandOverlay {
+        text: truncate_overlay_command(&raw_command, max_chars),
+        prompt_row,
+    })
 }
 
 /// Build per-character syntax colors for the command editor.

@@ -468,6 +468,31 @@ fn handle_left_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> b
             return true;
         }
 
+        if let Some(prompt_row) = state.overlays.sticky_command_prompt_row
+            && let Some(hitbox) = search::sticky_command_hitbox(
+                state.layout.window_width,
+                state.tab_bar_h(),
+                state.layout.cell_h,
+            )
+            && search::in_sticky_command_overlay(
+                &hitbox,
+                state.cursor.cursor_x,
+                state.cursor.cursor_y,
+            )
+        {
+            let visible_rows = state.tab().term_row_count.max(1);
+            let scrollback = state.tab().app.scrollback_len();
+            let total_rows = scrollback.saturating_add(visible_rows);
+            let max_start = total_rows.saturating_sub(visible_rows);
+            let clamped_start = prompt_row.min(max_start);
+            state.tab_mut().scroll_offset = total_rows
+                .saturating_sub(visible_rows)
+                .saturating_sub(clamped_start)
+                .min(scrollback);
+            state.push_accessibility_tree();
+            return true;
+        }
+
         let tab_bar_h = state.tab_bar_h() as f64;
         if state.cursor.cursor_y < tab_bar_h {
             let n = state.tabs.len();

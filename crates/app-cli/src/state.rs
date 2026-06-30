@@ -99,6 +99,8 @@ pub(crate) struct OverlayState {
     pub(crate) toasts: VecDeque<Toast>,
     /// The last search query entered by the user so it can be restored on re-open.
     pub(crate) last_search_query: Option<String>,
+    /// Absolute prompt row target when sticky command overlay is visible.
+    pub(crate) sticky_command_prompt_row: Option<usize>,
     /// Currently active modal overlay, if any.
     pub(crate) active_modal: Option<ModalOverlay>,
 }
@@ -298,6 +300,7 @@ impl Default for OverlayState {
             cursor_blink_phase: true,
             toasts: VecDeque::new(),
             last_search_query: None,
+            sticky_command_prompt_row: None,
             active_modal: None,
         }
     }

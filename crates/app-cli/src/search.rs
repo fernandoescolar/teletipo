@@ -73,6 +73,14 @@ pub(crate) struct SearchPanelHitbox {
     pub(crate) button_w: f64,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct StickyCommandHitbox {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) w: f64,
+    pub(crate) h: f64,
+}
+
 /// Recompute search matches against the full terminal snapshot.
 pub(crate) fn refresh_search(tab: &mut TabState) {
     let full_text = tab.app.terminal_snapshot_with_scrollback();
@@ -184,6 +192,26 @@ pub(crate) fn in_panel(hitbox: &SearchPanelHitbox, x: f64, y: f64) -> bool {
         && x <= hitbox.panel_x + hitbox.panel_w
         && y >= hitbox.panel_y
         && y <= hitbox.panel_y + hitbox.panel_h
+}
+
+pub(crate) fn sticky_command_hitbox(
+    window_width: u32,
+    tab_bar_h: f32,
+    cell_h: f32,
+) -> Option<StickyCommandHitbox> {
+    if window_width == 0 || cell_h <= 0.0 {
+        return None;
+    }
+    Some(StickyCommandHitbox {
+        x: 0.0,
+        y: tab_bar_h as f64,
+        w: window_width as f64,
+        h: (cell_h * 1.4) as f64,
+    })
+}
+
+pub(crate) fn in_sticky_command_overlay(hitbox: &StickyCommandHitbox, x: f64, y: f64) -> bool {
+    x >= hitbox.x && x <= hitbox.x + hitbox.w && y >= hitbox.y && y <= hitbox.y + hitbox.h
 }
 
 fn in_button(hitbox: &SearchPanelHitbox, button_x: f64, x: f64, y: f64) -> bool {

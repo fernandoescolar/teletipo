@@ -18,7 +18,7 @@ pub use layout::{
 };
 pub use overlays::{
     CommandPalette, ContextMenu, KeybindingRow, KeybindingsOverlay, SettingsItem, SettingsOverlay,
-    SuggestionDropdown, Toast, ToastKind,
+    StickyCommandOverlay, SuggestionDropdown, Toast, ToastKind,
 };
 pub use scene::{
     Color, Rect, RectCommand, RenderCommand, Scene, SceneLayer, TextCommand, TextStyle,

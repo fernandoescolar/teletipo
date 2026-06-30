@@ -139,6 +139,10 @@ struct KeybindingsPanelColors {
 }
 
 impl GlPainter {
+    fn is_keycap_base(ch: char) -> bool {
+        ch.is_ascii_digit() || ch == '#' || ch == '*'
+    }
+
     pub(crate) fn new(
         gl: &glow::Context,
         font_family: Option<String>,
@@ -504,6 +508,7 @@ impl GlPainter {
         // Phase 2: Overlay components to Scene
         render_model::components::render_tab_bar(&ctx, &mut scene);
         render_model::components::render_search_panel(&ctx, &mut scene);
+        render_model::components::render_sticky_command_overlay(&ctx, &mut scene);
         render_model::components::render_command_palette(&ctx, &mut scene);
         render_model::components::render_context_menu(&ctx, &mut scene);
         render_model::components::render_dropdown(&ctx, &mut scene);
@@ -2457,6 +2462,9 @@ impl GlPainter {
 
     /// Ensure `ch` has a color-emoji entry in the RGBA atlas.
     fn ensure_color_emoji_in_atlas(&mut self, gl: &glow::Context, ch: char) {
+        if Self::is_keycap_base(ch) {
+            return;
+        }
         // Check atlas
         if self.emoji_atlas.lookup(ch).is_some() {
             return;
@@ -2471,6 +2479,9 @@ impl GlPainter {
     /// Push a color-emoji quad for `ch` into the color atlas vertex buffer.
     /// Returns `true` if a color atlas entry exists and was queued for drawing.
     fn push_color_emoji(&mut self, ch: char, x: f32, y: f32, w: f32, h: f32) -> bool {
+        if Self::is_keycap_base(ch) {
+            return false;
+        }
         let Some(entry) = self.emoji_atlas.lookup(ch) else {
             return false;
         };

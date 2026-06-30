@@ -173,6 +173,7 @@ mod tests {
             editor_suggestion: String::new(),
             suggestion_dropdown: None,
             search_panel: None,
+            sticky_command_overlay: None,
             terminal_links: Vec::new(),
             request_exit: false,
             cursor_shape: 0,

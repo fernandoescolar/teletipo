@@ -46,6 +46,15 @@ pub struct CommandPalette {
     pub sub_prompt_label: Option<String>,
 }
 
+/// Sticky command overlay shown when a single command block spans beyond view.
+#[derive(Debug, Clone)]
+pub struct StickyCommandOverlay {
+    /// Truncated one-line command text to render.
+    pub text: String,
+    /// Absolute prompt row to jump to when the overlay is clicked.
+    pub prompt_row: usize,
+}
+
 /// State passed to the renderer to draw a floating context menu.
 #[derive(Debug, Clone)]
 pub struct ContextMenu {

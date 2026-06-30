@@ -7,12 +7,33 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
 
+fn with_alpha(mut c: [f32; 4], alpha: f32) -> [f32; 4] {
+    c[3] = alpha.clamp(0.0, 1.0);
+    c
+}
+
+fn mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    ]
+}
+
 #[allow(clippy::too_many_lines)]
 pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let Some(cp) = &ctx.snapshot.command_palette else {
         return;
     };
     let layout = ctx.layout;
+    let theme = &ctx.snapshot.theme;
+    let border = with_alpha(theme.separator_focused, 0.96);
+    let bg = with_alpha(theme.terminal_bg, 0.97);
+    let divider = with_alpha(mix(theme.separator, theme.separator_focused, 0.35), 0.95);
+    let label_color = with_alpha(mix(theme.text, theme.cursor, 0.2), 0.95);
+    let selected = with_alpha(mix(theme.cursor, theme.separator_focused, 0.35), 0.88);
+    let text = with_alpha(theme.text, 1.0);
     let visible = cp
         .items
         .len()
@@ -37,37 +58,30 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             y0 - 2.0,
             (x1 + 2.0) - (x0 - 2.0),
             (y1 + 2.0) - (y0 - 2.0),
-            [0.35, 0.55, 0.90, 1.0],
+            border,
         );
-        scene.rect_to_layer(
-            SceneLayer::Overlay,
-            x0,
-            y0,
-            x1 - x0,
-            y1 - y0,
-            [0.09, 0.11, 0.18, 1.0],
-        );
+        scene.rect_to_layer(SceneLayer::Overlay, x0, y0, x1 - x0, y1 - y0, bg);
         scene.rect_to_layer(
             SceneLayer::Overlay,
             x0,
             y0 + label_h - 1.0,
             x1 - x0,
             1.0,
-            [0.30, 0.45, 0.70, 1.0],
+            divider,
         );
         scene.text_to_layer(
             SceneLayer::Overlay,
             x0 + layout.cell_w_px * 0.8,
             y0 + (label_h - layout.cell_h_px) * 0.5,
             truncate_chars(label, PALETTE_MAX_CHARS),
-            [0.65, 0.75, 0.95, 1.0],
+            label_color,
         );
         scene.text_to_layer(
             SceneLayer::Overlay,
             x0 + layout.cell_w_px * 0.8,
             y0 + label_h + (input_h - layout.cell_h_px) * 0.5,
             truncate_chars(&format!("> {}", cp.query), PALETTE_MAX_CHARS),
-            [0.92, 0.94, 0.98, 1.0],
+            text,
         );
         return;
     }
@@ -80,30 +94,23 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         y0 - 2.0,
         (x1 + 2.0) - (x0 - 2.0),
         (y1 + 2.0) - (y0 - 2.0),
-        [0.35, 0.55, 0.90, 1.0],
+        border,
     );
-    scene.rect_to_layer(
-        SceneLayer::Overlay,
-        x0,
-        y0,
-        x1 - x0,
-        y1 - y0,
-        [0.09, 0.11, 0.18, 1.0],
-    );
+    scene.rect_to_layer(SceneLayer::Overlay, x0, y0, x1 - x0, y1 - y0, bg);
     scene.rect_to_layer(
         SceneLayer::Overlay,
         x0,
         y0 + header_h - 1.0,
         x1 - x0,
         1.0,
-        [0.30, 0.45, 0.70, 1.0],
+        divider,
     );
     scene.text_to_layer(
         SceneLayer::Overlay,
         x0 + layout.cell_w_px * 0.8,
         y0 + (header_h - layout.cell_h_px) * 0.5,
         truncate_chars(&format!("> {}", cp.query), PALETTE_MAX_CHARS),
-        [0.92, 0.94, 0.98, 1.0],
+        text,
     );
 
     for i in 0..visible {
@@ -113,21 +120,14 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         }
         let row_y = y0 + header_h + i as f32 * item_h;
         if idx == cp.selected {
-            scene.rect_to_layer(
-                SceneLayer::Overlay,
-                x0,
-                row_y,
-                x1 - x0,
-                item_h,
-                [0.20, 0.32, 0.58, 1.0],
-            );
+            scene.rect_to_layer(SceneLayer::Overlay, x0, row_y, x1 - x0, item_h, selected);
         }
         scene.text_to_layer(
             SceneLayer::Overlay,
             x0 + layout.cell_w_px * 0.8,
             row_y + (item_h - layout.cell_h_px) * 0.5,
             truncate_chars(&cp.items[idx], PALETTE_MAX_CHARS),
-            [0.92, 0.94, 0.98, 1.0],
+            text,
         );
     }
 }
