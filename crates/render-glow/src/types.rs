@@ -78,11 +78,11 @@ pub(crate) struct FontSource {
 pub(crate) struct ShapedGlyph {
     pub(crate) glyph_id: u16,
     pub(crate) source_char: char,
-    // pub(crate) col: usize,
-    // pub(crate) span_cols: usize,
+    pub(crate) col: usize,
+    pub(crate) span_cols: usize,
     pub(crate) full_char_idx: usize,
-    //     pub(crate) x_offset_px: f32,
-    //     pub(crate) y_offset_px: f32,
+    pub(crate) x_offset_px: f32,
+    pub(crate) y_offset_px: f32,
 }
 
 pub(crate) type ShapedLines = Vec<Vec<ShapedGlyph>>;

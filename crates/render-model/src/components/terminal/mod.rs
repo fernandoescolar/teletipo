@@ -1,10 +1,12 @@
 /// Terminal component: renders terminal pane content.
 ///
-/// Staged implementation:
-/// - Step 7a: Background colors per cell (moved to Scene)
-/// - Step 7b: Text rendering (deferred - requires glyph atlas/shaping)
-/// - Step 7c: Selection/highlights (deferred - complex geometry)
-/// - Step 7d: Cursor (deferred - animation state)
+/// Renders:
+/// - Background colors per cell
+/// - Selection/highlights (via separate components)
+/// - Cursor (via separate component)
+///
+/// Note: Terminal text rendering uses font shaping (rustybuzz) and is handled
+/// directly in painter.rs for proper ligature and complex script support.
 pub mod background;
 
 use crate::{RenderContext, Scene};
@@ -13,9 +15,8 @@ use crate::{RenderContext, Scene};
 pub struct Terminal;
 
 impl Terminal {
-    /// Emit terminal-related render commands.
-    /// Currently handles background color cells only.
-    /// Text, cursor, and selection rendering remain on the old path.
+    /// Emit terminal-related render commands (background only).
+    /// Text is rendered by painter.rs using font shaping.
     pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         background::render_backgrounds(ctx, scene);
     }

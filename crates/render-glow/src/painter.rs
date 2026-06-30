@@ -40,6 +40,24 @@ fn with_backdrop_alpha(mut color: [f32; 4], opacity: f32) -> [f32; 4] {
     color
 }
 
+/// Convert TextStyle struct to style bits.
+fn style_to_bits(style: &render_model::TextStyle) -> u8 {
+    let mut bits = 0u8;
+    if style.bold {
+        bits |= STYLE_BOLD;
+    }
+    if style.italic {
+        bits |= STYLE_ITALIC;
+    }
+    if style.dim {
+        bits |= STYLE_DIM;
+    }
+    if style.strike {
+        bits |= STYLE_STRIKE;
+    }
+    bits
+}
+
 // ── GlPainter struct ──────────────────────────────────────────────────────────
 
 pub(crate) struct GlPainter {
@@ -456,14 +474,10 @@ impl GlPainter {
         render_model::overlay::render_scroll_indicator(&ctx, &mut scene);
         render_model::components::render_toasts(&ctx, &mut scene);
 
-        // === NEW PATH: Accumulate text and overlays in Scene ===
-        // Backgrounds
-        self.add_terminal_text_to_scene(&mut scene, snapshot, &layout, metrics);
-        self.add_editor_text_to_scene(&mut scene, snapshot, &layout, metrics);
-
-        // Terminal/editor text via Scene
-        self.emit_terminal_text_to_scene(&mut scene, snapshot, &layout, metrics);
-        self.emit_editor_text_to_scene(&mut scene, snapshot, &layout, metrics);
+        // === NEW PATH: Components emit scene commands ===
+        // Terminal and editor components (background only for terminal; bg + text for editor)
+        render_model::components::Terminal::render(&ctx, &mut scene);
+        render_model::components::Editor::render(&ctx, &mut scene);
 
         // Phase 1: Core components to Scene
         render_model::components::render_highlights(&ctx, &mut scene);
@@ -481,6 +495,9 @@ impl GlPainter {
 
         // Render scene geometry (backgrounds, rectangles, text)
         self.render_scene(gl, &scene, metrics, layout.width, layout.height);
+
+        // Render terminal text via shaped path (rustybuzz) for proper ligatures
+        self.draw_terminal_text(snapshot, &layout);
 
         // Flush main-content passes before drawing overlays so that overlay
         // backgrounds (drawn without blending) completely cover terminal text.
@@ -630,20 +647,21 @@ impl GlPainter {
         }
     }
 
-    /// Emit terminal text to scene as TextCommand.
-    /// Emits one TextCommand per line for now (simplified rendering).
-    /// TODO: Emit per-character with color/style information for full fidelity.
-    fn emit_terminal_text_to_scene(
-        &mut self,
-        scene: &mut Scene,
-        snapshot: &RenderSnapshot,
-        layout: &FrameLayout,
-        _metrics: CellMetrics,
-    ) {
+    /// Render terminal text with font shaping (ligatures, complex scripts).
+    /// Uses rustybuzz shaping for correct rendering of complex text.
+    fn draw_terminal_text(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
         let terminal_text = snapshot.terminal_text_from_rows();
+        let fallback_fg = [
+            snapshot.theme.text[0],
+            snapshot.theme.text[1],
+            snapshot.theme.text[2],
+            1.0,
+        ];
+        let max_x = layout.width - layout.padding_h;
         let max_y = layout.terminal_text_bottom;
         let lines: Vec<&str> = terminal_text.lines().collect();
-        let mut char_offset = 0usize;
+        let shaped_lines = self.shape_terminal_lines_cached(snapshot, &terminal_text);
+        let mut line_char_start = 0usize;
 
         for (row, line) in lines.iter().copied().enumerate() {
             let y = layout.terminal_text_top + row as f32 * layout.cell_h_px;
@@ -651,86 +669,125 @@ impl GlPainter {
                 break;
             }
 
-            let x = layout.padding_h;
-            let text = line.to_string();
-            let char_count = text.chars().count();
+            if let Some(shaped) = shaped_lines.as_ref().and_then(|all| all.get(row)) {
+                for sg in shaped {
+                    let x = layout.padding_h + sg.col as f32 * layout.cell_w_px;
+                    let w = layout.cell_w_px * sg.span_cols as f32;
+                    if x + w > max_x {
+                        continue;
+                    }
 
-            // Collect per-character colors from snapshot
-            let colors: Vec<[f32; 4]> = (0..char_count)
-                .map(|i| {
-                    let idx = char_offset + i;
-                    snapshot
+                    let style = snapshot
+                        .terminal_styles
+                        .get(sg.full_char_idx)
+                        .copied()
+                        .unwrap_or(0);
+                    let fg = snapshot
+                        .terminal_fg_colors
+                        .get(sg.full_char_idx)
+                        .and_then(|c| *c)
+                        .map(|c| [c[0], c[1], c[2], 1.0])
+                        .unwrap_or_else(|| {
+                            if style & STYLE_DIM != 0 {
+                                [
+                                    fallback_fg[0] * 0.55,
+                                    fallback_fg[1] * 0.55,
+                                    fallback_fg[2] * 0.55,
+                                    1.0,
+                                ]
+                            } else {
+                                fallback_fg
+                            }
+                        });
+
+                    if sg.glyph_id == 0 {
+                        if !self.push_color_emoji(sg.source_char, x, y, w, layout.cell_h_px) {
+                            self.push_glyph_styled(
+                                sg.source_char,
+                                &GlyphCell {
+                                    x,
+                                    y,
+                                    w,
+                                    h: layout.cell_h_px,
+                                    color: fg,
+                                    style,
+                                },
+                            );
+                        }
+                    } else if !self.push_shaped_glyph(
+                        sg.source_char,
+                        sg.glyph_id,
+                        &GlyphCell {
+                            x,
+                            y,
+                            w,
+                            h: layout.cell_h_px,
+                            color: fg,
+                            style,
+                        },
+                        sg.x_offset_px,
+                        sg.y_offset_px,
+                    ) {
+                        self.push_glyph_styled(
+                            sg.source_char,
+                            &GlyphCell {
+                                x,
+                                y,
+                                w,
+                                h: layout.cell_h_px,
+                                color: fg,
+                                style,
+                            },
+                        );
+                    }
+                }
+            } else {
+                for (col, ch) in line.chars().enumerate() {
+                    let x = layout.padding_h + col as f32 * layout.cell_w_px;
+                    if x + layout.cell_w_px > max_x {
+                        break;
+                    }
+
+                    let idx = line_char_start + col;
+                    let style = snapshot.terminal_styles.get(idx).copied().unwrap_or(0);
+                    let fg = snapshot
                         .terminal_fg_colors
                         .get(idx)
                         .and_then(|c| *c)
                         .map(|c| [c[0], c[1], c[2], 1.0])
-                        .unwrap_or(snapshot.theme.text)
-                })
-                .collect();
+                        .unwrap_or_else(|| {
+                            if style & STYLE_DIM != 0 {
+                                [
+                                    fallback_fg[0] * 0.55,
+                                    fallback_fg[1] * 0.55,
+                                    fallback_fg[2] * 0.55,
+                                    1.0,
+                                ]
+                            } else {
+                                fallback_fg
+                            }
+                        });
 
-            // Emit TextCommand with per-character colors
-            if !colors.is_empty() && colors.len() == char_count {
-                scene.text_with_colors_to_layer(
-                    render_model::SceneLayer::Main,
-                    x,
-                    y,
-                    text,
-                    colors,
-                    snapshot.theme.text,
-                );
-            } else {
-                scene.text_to_layer(
-                    render_model::SceneLayer::Main,
-                    x,
-                    y,
-                    text,
-                    snapshot.theme.text,
-                );
+                    self.push_glyph_styled(
+                        ch,
+                        &GlyphCell {
+                            x,
+                            y,
+                            w: layout.cell_w_px,
+                            h: layout.cell_h_px,
+                            color: fg,
+                            style,
+                        },
+                    );
+                }
             }
 
-            char_offset += char_count + 1;
-        }
-    }
-
-    /// Emit editor text to scene as TextCommand.
-    /// Similar to terminal but for the editor pane.
-    fn emit_editor_text_to_scene(
-        &mut self,
-        scene: &mut Scene,
-        snapshot: &RenderSnapshot,
-        layout: &FrameLayout,
-        metrics: CellMetrics,
-    ) {
-        if snapshot.editor_text.is_empty() {
-            return;
-        }
-
-        let lines: Vec<&str> = snapshot.editor_text.lines().collect();
-        let max_x = layout.width - layout.padding_h;
-        let max_y = layout.height - layout.padding_v;
-
-        for (row, line) in lines.iter().copied().enumerate() {
-            let y = layout.editor_top + row as f32 * layout.cell_h_px;
-            if y >= max_y {
-                break;
-            }
-
-            let x = layout.padding_h;
-            let text = line.to_string();
-
-            // Emit as TextCommand - will be rendered with editor text color
-            scene.text_to_layer(
-                render_model::SceneLayer::Main,
-                x,
-                y,
-                text,
-                snapshot.theme.text,
-            );
+            line_char_start = line_char_start.saturating_add(line.chars().count() + 1);
         }
     }
 
     /// Render a text command with color and style information.
-    /// Supports both global and per-character colors.
+    /// Supports both global and per-character colors and styles.
     fn render_text_simple(
         &mut self,
         gl: &glow::Context,
@@ -740,39 +797,93 @@ impl GlPainter {
         let mut x = cmd.x;
         let y = cmd.y;
 
-        // Use per-character colors if provided, otherwise use global color
-        if let Some(char_colors) = &cmd.char_colors {
+        // Ensure all chars are loaded in atlas with their correct per-char style
+        // (or global style if no per-char styles provided)
+        for (i, ch) in cmd.text.chars().enumerate() {
+            if ch == ' ' || ch == '\0' {
+                continue;
+            }
+            let style_bits = if let Some(styles) = &cmd.char_styles {
+                let s = styles.get(i).copied().unwrap_or(cmd.style);
+                style_to_bits(&s)
+            } else {
+                style_to_bits(&cmd.style)
+            };
+            self.ensure_char_in_atlas(gl, ch, style_bits);
+        }
+
+        // Render with per-char styles if provided
+        if let Some(char_styles) = &cmd.char_styles {
+            let colors = cmd.char_colors.as_ref();
+            for (i, ch) in cmd.text.chars().enumerate() {
+                let style = char_styles.get(i).copied().unwrap_or(cmd.style);
+                let mut color = colors
+                    .and_then(|cs| cs.get(i).copied())
+                    .unwrap_or(cmd.color);
+
+                if style.dim {
+                    color[3] *= 0.55;
+                }
+
+                self.push_glyph_styled(
+                    ch,
+                    &GlyphCell {
+                        x,
+                        y,
+                        w: metrics.width,
+                        h: metrics.height,
+                        color,
+                        style: style_to_bits(&style),
+                    },
+                );
+                x += metrics.width;
+            }
+        } else if let Some(char_colors) = &cmd.char_colors {
+            // Per-char colors but global style
+            let style_bits = style_to_bits(&cmd.style);
             for (i, ch) in cmd.text.chars().enumerate() {
                 let mut color = char_colors.get(i).copied().unwrap_or(cmd.color);
 
-                // Apply dim style
                 if cmd.style.dim {
                     color[3] *= 0.55;
                 }
 
-                self.push_glyph(ch, x, y, metrics.width, metrics.height, color);
+                self.push_glyph_styled(
+                    ch,
+                    &GlyphCell {
+                        x,
+                        y,
+                        w: metrics.width,
+                        h: metrics.height,
+                        color,
+                        style: style_bits,
+                    },
+                );
                 x += metrics.width;
             }
         } else {
-            // Fallback to global color
+            // Global color and style
             let mut color = cmd.color;
+            let style_bits = style_to_bits(&cmd.style);
 
-            // Apply dim style by reducing alpha
             if cmd.style.dim {
                 color[3] *= 0.55;
             }
 
-            // Render each character monospace
             for ch in cmd.text.chars() {
-                self.push_glyph(ch, x, y, metrics.width, metrics.height, color);
+                self.push_glyph_styled(
+                    ch,
+                    &GlyphCell {
+                        x,
+                        y,
+                        w: metrics.width,
+                        h: metrics.height,
+                        color,
+                        style: style_bits,
+                    },
+                );
                 x += metrics.width;
             }
-        }
-
-        // Ensure glyphs are in atlas after pushing
-        for ch in cmd.text.chars() {
-            let style = if cmd.style.bold { STYLE_BOLD } else { 0 };
-            self.ensure_char_in_atlas(gl, ch, style);
         }
     }
 

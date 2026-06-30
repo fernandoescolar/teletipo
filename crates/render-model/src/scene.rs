@@ -220,6 +220,31 @@ impl Scene {
         );
     }
 
+    /// Emit a text command with per-character colors and styles to a specific layer.
+    pub fn text_with_colors_and_styles_to_layer(
+        &mut self,
+        layer: SceneLayer,
+        x: f32,
+        y: f32,
+        text: impl Into<String>,
+        char_colors: Vec<Color>,
+        char_styles: Vec<TextStyle>,
+        color: Color,
+    ) {
+        self.push_to_layer(
+            layer,
+            RenderCommand::Text(TextCommand {
+                x,
+                y,
+                text: text.into(),
+                color,
+                style: TextStyle::default(),
+                char_colors: Some(char_colors),
+                char_styles: Some(char_styles),
+            }),
+        );
+    }
+
     /// Emit a text command with explicit style to the main layer.
     pub fn text_styled(
         &mut self,

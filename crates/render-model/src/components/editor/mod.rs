@@ -1,12 +1,12 @@
 /// Editor component: renders editor pane content.
 ///
-/// Staged implementation:
-/// - Step 8a: Background and disabled state (moved to Scene)
-/// - Step 8b: Text rendering (deferred - requires glyph atlas/shaping)
-/// - Step 8c: Selection highlighting (deferred - complex geometry)
-/// - Step 8d: Cursor (deferred - animation/style state)
-/// - Step 8e: Suggestion dropdown (deferred - complex positioning)
+/// Renders:
+/// - Background and disabled state
+/// - Editor text
+/// - Selection/highlights (via separate component)
+/// - Cursor (via separate component)
 pub mod background;
+pub mod text;
 
 use crate::{RenderContext, Scene};
 
@@ -14,10 +14,9 @@ use crate::{RenderContext, Scene};
 pub struct Editor;
 
 impl Editor {
-    /// Emit editor-related render commands.
-    /// Currently handles background and disabled dimming only.
-    /// Text, cursor, selection, and suggestions remain on the old path.
+    /// Emit editor-related render commands (background and text).
     pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         background::render_background(ctx, scene);
+        text::render_text(ctx, scene);
     }
 }

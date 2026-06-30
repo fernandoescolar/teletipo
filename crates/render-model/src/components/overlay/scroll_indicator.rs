@@ -1,7 +1,6 @@
 /// Scroll indicator: visual indicator showing scroll position.
 ///
 /// Rendered in the Overlay layer to show user they can scroll.
-/// Emits geometry only; text rendering is deferred to the old painter path.
 use crate::{Color, RenderContext, Scene, SceneLayer};
 
 /// Render scroll indicator based on snapshot state.
@@ -12,6 +11,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     }
 
     let layout = ctx.layout;
+    let snapshot = ctx.snapshot;
     let h = layout.cell_h_px * 1.4;
     let w = layout.cell_w_px * 14.0;
     let margin = layout.cell_h_px * 0.5;
@@ -36,5 +36,10 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let bg_color: Color = [0.08, 0.10, 0.18, 0.88];
     scene.rect_to_layer(SceneLayer::Overlay, left, top, w, h, bg_color);
 
-    // TODO: Text rendering ("↑ N lines")
+    // Text: "^ N lines"
+    let label = format!("^ {} lines", snapshot.scroll_offset);
+    let text_color: Color = [0.95, 0.95, 1.00, 1.00];
+    let text_y = top + (h - layout.cell_h_px) * 0.5;
+    let text_x = left + (w - label.chars().count() as f32 * layout.cell_w_px) * 0.5;
+    scene.text_to_layer(SceneLayer::Overlay, text_x, text_y, label, text_color);
 }
