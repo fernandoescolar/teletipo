@@ -8,7 +8,6 @@ pub mod dropdown;
 pub mod editor;
 pub mod highlights;
 pub mod overlay;
-pub mod panel;
 pub mod scrollbar;
 pub mod search_panel;
 pub mod selection;

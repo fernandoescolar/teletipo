@@ -75,6 +75,11 @@ pub(crate) struct GlPainter {
 
     // ── Clipping state ─────────────────────────────────────────────────────
     clip_stack: Vec<(i32, i32, i32, i32)>, // (x, y, w, h) in GL coordinates
+
+    // ── GPU context recovery ───────────────────────────────────────────────
+    /// Last frame render time. Used to detect long idle periods where macOS
+    /// may have evicted the glyph atlas texture from GPU memory.
+    last_render_at: Option<std::time::Instant>,
 }
 
 struct GlyphCell {
@@ -350,6 +355,7 @@ impl GlPainter {
             rasterizer: CpuFontRasterizer::new(font_family, font_size_px),
             shaped_terminal_cache: None,
             clip_stack: Vec::new(),
+            last_render_at: None,
         })
     }
 
@@ -457,6 +463,17 @@ impl GlPainter {
         let metrics = CellMetrics::new(cell_w_px, cell_h_px);
         let layout = compute_frame_layout(snapshot, target, metrics);
 
+        // Detect long idle periods (macOS may evict GPU textures during idle).
+        // If more than 2 seconds since last render, invalidate atlas to force
+        // full re-upload of glyph bitmaps to GPU.
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last_render_at {
+            if now.duration_since(last) > std::time::Duration::from_secs(2) {
+                self.invalidate_text_atlases(gl);
+            }
+        }
+        self.last_render_at = Some(now);
+
         // Clear batch structures
         self.batches.flat.clear();
         self.batches.glyph.clear();
@@ -495,9 +512,6 @@ impl GlPainter {
 
         // Render scene geometry (backgrounds, rectangles, text)
         self.render_scene(gl, &scene, metrics, layout.width, layout.height);
-
-        // Render terminal text via shaped path (rustybuzz) for proper ligatures
-        self.draw_terminal_text(snapshot, &layout);
 
         // Flush main-content passes before drawing overlays so that overlay
         // backgrounds (drawn without blending) completely cover terminal text.
@@ -786,68 +800,25 @@ impl GlPainter {
         }
     }
 
-    /// Render a text command with color and style information.
-    /// Supports both global and per-character colors and styles.
+    /// Render a text command with color information.
+    /// Uses per-char colors if provided; ignores per-char styles (uses global style).
+    /// Glyphs must be preloaded in atlas via warm_atlas.
     fn render_text_simple(
         &mut self,
-        gl: &glow::Context,
+        _gl: &glow::Context,
         cmd: &render_model::TextCommand,
         metrics: CellMetrics,
     ) {
         let mut x = cmd.x;
         let y = cmd.y;
+        let style_bits = style_to_bits(&cmd.style);
 
-        // Ensure all chars are loaded in atlas with their correct per-char style
-        // (or global style if no per-char styles provided)
-        for (i, ch) in cmd.text.chars().enumerate() {
-            if ch == ' ' || ch == '\0' {
-                continue;
-            }
-            let style_bits = if let Some(styles) = &cmd.char_styles {
-                let s = styles.get(i).copied().unwrap_or(cmd.style);
-                style_to_bits(&s)
-            } else {
-                style_to_bits(&cmd.style)
-            };
-            self.ensure_char_in_atlas(gl, ch, style_bits);
-        }
-
-        // Render with per-char styles if provided
-        if let Some(char_styles) = &cmd.char_styles {
-            let colors = cmd.char_colors.as_ref();
-            for (i, ch) in cmd.text.chars().enumerate() {
-                let style = char_styles.get(i).copied().unwrap_or(cmd.style);
-                let mut color = colors
-                    .and_then(|cs| cs.get(i).copied())
-                    .unwrap_or(cmd.color);
-
-                if style.dim {
-                    color[3] *= 0.55;
-                }
-
-                self.push_glyph_styled(
-                    ch,
-                    &GlyphCell {
-                        x,
-                        y,
-                        w: metrics.width,
-                        h: metrics.height,
-                        color,
-                        style: style_to_bits(&style),
-                    },
-                );
-                x += metrics.width;
-            }
-        } else if let Some(char_colors) = &cmd.char_colors {
-            // Per-char colors but global style
-            let style_bits = style_to_bits(&cmd.style);
+        if let Some(char_colors) = &cmd.char_colors {
             for (i, ch) in cmd.text.chars().enumerate() {
                 let mut color = char_colors.get(i).copied().unwrap_or(cmd.color);
-
                 if cmd.style.dim {
                     color[3] *= 0.55;
                 }
-
                 self.push_glyph_styled(
                     ch,
                     &GlyphCell {
@@ -862,14 +833,10 @@ impl GlPainter {
                 x += metrics.width;
             }
         } else {
-            // Global color and style
             let mut color = cmd.color;
-            let style_bits = style_to_bits(&cmd.style);
-
             if cmd.style.dim {
                 color[3] *= 0.55;
             }
-
             for ch in cmd.text.chars() {
                 self.push_glyph_styled(
                     ch,
@@ -2777,18 +2744,16 @@ impl GlPainter {
             }
         }
 
-        // Terminal raw chars (unshaped fallback path)
+        // Terminal raw chars (used by the Scene-based text rendering path)
+        // Always load with style 0 since render_text_simple uses global style.
         {
-            let mut idx = 0usize;
             for line in terminal_text.lines() {
                 for ch in line.chars() {
                     if ch != ' ' && ch != '\0' {
-                        let style = snapshot.terminal_styles.get(idx).copied().unwrap_or(0);
-                        self.ensure_char_in_atlas(gl, ch, style);
+                        // Load with style 0 (default) - matches what render_text_simple uses
+                        self.ensure_char_in_atlas(gl, ch, 0);
                     }
-                    idx += 1;
                 }
-                idx += 1; // newline
             }
         }
 

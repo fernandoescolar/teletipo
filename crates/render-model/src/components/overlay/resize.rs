@@ -39,52 +39,6 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     );
 }
 
-/// Render horizontal split resize indicator.
-pub fn render_horizontal_split_resize(
-    _ctx: &RenderContext,
-    scene: &mut Scene,
-    x: f32,
-    y: f32,
-    width: f32,
-) {
-    let height = 4.0;
-    let color: Color = [0.6, 0.7, 0.9, 0.8];
-
-    scene.rect_to_layer(
-        SceneLayer::Overlay,
-        x,
-        y - height / 2.0,
-        width,
-        height,
-        color,
-    );
-
-    // TODO: Cursor indication (e.g., resize cursor icon)
-}
-
-/// Render vertical split resize indicator.
-pub fn render_vertical_split_resize(
-    _ctx: &RenderContext,
-    scene: &mut Scene,
-    x: f32,
-    y: f32,
-    height: f32,
-) {
-    let width = 4.0;
-    let color: Color = [0.6, 0.7, 0.9, 0.8];
-
-    scene.rect_to_layer(
-        SceneLayer::Overlay,
-        x - width / 2.0,
-        y,
-        width,
-        height,
-        color,
-    );
-
-    // TODO: Cursor indication (e.g., resize cursor icon)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,52 +142,6 @@ mod tests {
                 RenderCommand::Rect(_) => {}
                 _ => panic!("Expected Rect command"),
             }
-        }
-    }
-
-    #[test]
-    fn test_render_horizontal_split_resize() {
-        let snapshot = make_test_snapshot();
-        let layout = make_test_layout();
-        let target = RenderTarget::new(800.0, 600.0);
-        let metrics = CellMetrics::new(10.0, 20.0);
-        let ctx = RenderContext::new(&snapshot, &layout, target, metrics);
-
-        let mut scene = Scene::new();
-        render_horizontal_split_resize(&ctx, &mut scene, 0.0, 300.0, 800.0);
-
-        // Should have 1 rect
-        assert_eq!(scene.overlay.len(), 1);
-
-        match &scene.overlay[0] {
-            RenderCommand::Rect(cmd) => {
-                assert_eq!(cmd.rect.y, 300.0 - 2.0); // Centered at y=300
-                assert_eq!(cmd.rect.h, 4.0);
-            }
-            _ => panic!("Expected Rect command"),
-        }
-    }
-
-    #[test]
-    fn test_render_vertical_split_resize() {
-        let snapshot = make_test_snapshot();
-        let layout = make_test_layout();
-        let target = RenderTarget::new(800.0, 600.0);
-        let metrics = CellMetrics::new(10.0, 20.0);
-        let ctx = RenderContext::new(&snapshot, &layout, target, metrics);
-
-        let mut scene = Scene::new();
-        render_vertical_split_resize(&ctx, &mut scene, 400.0, 0.0, 600.0);
-
-        // Should have 1 rect
-        assert_eq!(scene.overlay.len(), 1);
-
-        match &scene.overlay[0] {
-            RenderCommand::Rect(cmd) => {
-                assert_eq!(cmd.rect.x, 400.0 - 2.0); // Centered at x=400
-                assert_eq!(cmd.rect.w, 4.0);
-            }
-            _ => panic!("Expected Rect command"),
         }
     }
 }

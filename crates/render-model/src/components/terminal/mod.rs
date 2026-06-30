@@ -2,12 +2,11 @@
 ///
 /// Renders:
 /// - Background colors per cell
+/// - Terminal text (line by line, with per-character colors)
 /// - Selection/highlights (via separate components)
 /// - Cursor (via separate component)
-///
-/// Note: Terminal text rendering uses font shaping (rustybuzz) and is handled
-/// directly in painter.rs for proper ligature and complex script support.
 pub mod background;
+pub mod text;
 
 use crate::{RenderContext, Scene};
 
@@ -15,9 +14,9 @@ use crate::{RenderContext, Scene};
 pub struct Terminal;
 
 impl Terminal {
-    /// Emit terminal-related render commands (background only).
-    /// Text is rendered by painter.rs using font shaping.
+    /// Emit terminal-related render commands (background and text).
     pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         background::render_backgrounds(ctx, scene);
+        text::render_text(ctx, scene);
     }
 }
