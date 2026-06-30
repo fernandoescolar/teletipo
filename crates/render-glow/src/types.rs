@@ -9,9 +9,6 @@ pub(crate) const STYLE_DIM: u8 = 0b1000;
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
-pub(crate) const SEPARATOR_PX: f32 = 2.0;
-pub(crate) const TAB_H_MULT: f32 = 1.0;
-pub(crate) const PALETTE_MAX_VISIBLE: usize = 10;
 pub(crate) const SETTINGS_MAX_VISIBLE_SEARCH: usize = 8;
 
 // ── Atlas constant ────────────────────────────────────────────────────────────
@@ -23,58 +20,41 @@ pub(crate) const ATLAS_TEX_SIZE: u32 = 1024;
 /// Larger than the grayscale atlas since emoji bitmaps are 20–160 px each.
 pub(crate) const COLOR_ATLAS_TEX_SIZE: u32 = 2048;
 
-// ── Per-frame layout geometry ─────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct FrameLayout {
-    pub(crate) width: f32,
-    pub(crate) height: f32,
-    pub(crate) tab_bar_h: f32,
-    pub(crate) terminal_h: f32,
-    pub(crate) editor_top: f32,
-    pub(crate) terminal_text_top: f32,
-    pub(crate) terminal_text_bottom: f32,
-    pub(crate) padding_h: f32,
-    pub(crate) padding_v: f32,
-    pub(crate) cell_w_px: f32,
-    pub(crate) cell_h_px: f32,
-}
-
 // ── Atlas glyph descriptor ────────────────────────────────────────────────────
 
 /// A glyph that has been packed into the GPU atlas texture.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct AtlasGlyph {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AtlasGlyph {
     /// Normalised UV coordinates inside the atlas.
-    pub(crate) u0: f32,
-    pub(crate) v0: f32,
-    pub(crate) u1: f32,
-    pub(crate) v1: f32,
+    pub u0: f32,
+    pub v0: f32,
+    pub u1: f32,
+    pub v1: f32,
     /// Fontdue left bearing.
-    pub(crate) xmin: f32,
+    pub xmin: f32,
     /// Fontdue bottom bearing (positive = above baseline).
-    pub(crate) ymin: f32,
+    pub ymin: f32,
     /// Rasterised glyph width in pixels.
-    pub(crate) source_gw: f32,
+    pub source_gw: f32,
     /// Rasterised glyph height in pixels.
-    pub(crate) source_gh: f32,
+    pub source_gh: f32,
     /// Horizontal advance width reported by fontdue.
-    pub(crate) advance_width: f32,
+    pub advance_width: f32,
 }
 
 // ── Font / shaping types ──────────────────────────────────────────────────────
 
 /// A color emoji glyph packed into the RGBA color atlas texture.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ColorAtlasEntry {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColorAtlasEntry {
     /// Normalised UV coordinates inside the color atlas.
-    pub(crate) u0: f32,
-    pub(crate) v0: f32,
-    pub(crate) u1: f32,
-    pub(crate) v1: f32,
+    pub u0: f32,
+    pub v0: f32,
+    pub u1: f32,
+    pub v1: f32,
     /// Original image dimensions (pixels) at the cached ppem.
-    pub(crate) w_px: u32,
-    pub(crate) h_px: u32,
+    pub w_px: u32,
+    pub h_px: u32,
 }
 
 #[derive(Debug, Clone)]

@@ -2,9 +2,14 @@
 #![warn(missing_docs)]
 #![allow(missing_docs)]
 
+mod backend;
+mod batch;
 mod emoji;
+mod emoji_atlas;
 mod font;
+mod glyph_atlas;
 mod painter;
+mod pipelines;
 mod shaders;
 mod types;
 mod util;

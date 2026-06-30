@@ -5,7 +5,6 @@ use fontdb::{Family, Query, Weight};
 
 use crate::emoji::ColorEmojiRasterizer;
 use crate::types::{FontSource, GlyphBitmap, STYLE_BOLD, STYLE_ITALIC, ShapedGlyph};
-use crate::util::char_col_width;
 
 // ── CPU font rasterizer ───────────────────────────────────────────────────────
 
@@ -221,7 +220,7 @@ pub(crate) fn shape_line(
         // The terminal grid stores a '\0' placeholder after wide chars; that
         // placeholder makes the cluster-distance calculation return 1 instead
         // of 2, giving a 1-column slot that causes left-overflow in rendering.
-        let span_cols = span_cols_from_clusters.max(char_col_width(source_char));
+        let span_cols = span_cols_from_clusters.max(crate::util::char_col_width(source_char));
 
         result.push(ShapedGlyph {
             glyph_id: info.glyph_id.min(u16::MAX as u32) as u16,

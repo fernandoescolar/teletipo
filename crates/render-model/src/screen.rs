@@ -17,7 +17,7 @@ impl Default for RenderCell {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct RenderRow {
     pub cells: Vec<RenderCell>,
     /// True when the row was touched in the source damage model for this frame.
