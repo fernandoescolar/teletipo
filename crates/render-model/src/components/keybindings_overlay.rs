@@ -16,6 +16,7 @@ fn mix_color(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_rows(
     scene: &mut Scene,
     overlay: &KeybindingsOverlay,
@@ -97,6 +98,7 @@ fn render_rows(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let Some(overlay) = &ctx.snapshot.keybindings_overlay else {
         return;

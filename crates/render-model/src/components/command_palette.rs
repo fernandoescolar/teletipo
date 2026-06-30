@@ -7,6 +7,7 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let Some(cp) = &ctx.snapshot.command_palette else {
         return;

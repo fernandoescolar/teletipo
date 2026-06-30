@@ -221,6 +221,7 @@ impl Scene {
     }
 
     /// Emit a text command with per-character colors and styles to a specific layer.
+    #[allow(clippy::too_many_arguments)]
     pub fn text_with_colors_and_styles_to_layer(
         &mut self,
         layer: SceneLayer,

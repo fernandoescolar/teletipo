@@ -467,10 +467,10 @@ impl GlPainter {
         // If more than 2 seconds since last render, invalidate atlas to force
         // full re-upload of glyph bitmaps to GPU.
         let now = std::time::Instant::now();
-        if let Some(last) = self.last_render_at {
-            if now.duration_since(last) > std::time::Duration::from_secs(2) {
-                self.invalidate_text_atlases(gl);
-            }
+        if let Some(last) = self.last_render_at
+            && now.duration_since(last) > std::time::Duration::from_secs(2)
+        {
+            self.invalidate_text_atlases(gl);
         }
         self.last_render_at = Some(now);
 

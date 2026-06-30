@@ -36,14 +36,13 @@ fn settings_item_display_val<'a>(
     if !item.is_selectable && is_focused && overlay.editing.is_none() {
         return format!("{}\u{258e}", item.value).into();
     }
-    if is_focused {
-        if let Some(ref buf) = overlay.editing {
-            return buf.as_str().into();
-        }
+    if is_focused && let Some(ref buf) = overlay.editing {
+        return buf.as_str().into();
     }
     item.value.as_str().into()
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let Some(overlay) = &ctx.snapshot.settings_overlay else {
         return;
