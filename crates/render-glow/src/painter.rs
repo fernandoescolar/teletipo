@@ -27,6 +27,10 @@ use crate::util::{
 
 type Result<T> = anyhow::Result<T>;
 
+fn display_col_width(ch: char) -> usize {
+    if ch == '\0' { 0 } else { char_col_width(ch) }
+}
+
 fn frosted_backdrop_alpha(opacity: f32) -> f32 {
     // Keep backgrounds translucent but not crystal-clear when opacity is low.
     // This approximates a blur/frosted effect on compositors without real blur.
@@ -809,18 +813,19 @@ impl GlPainter {
                 if cmd.style.dim {
                     color[3] *= 0.55;
                 }
+                let char_w = metrics.width * display_col_width(ch) as f32;
                 self.push_glyph_styled(
                     ch,
                     &GlyphCell {
                         x,
                         y,
-                        w: metrics.width,
+                        w: char_w,
                         h: metrics.height,
                         color,
                         style: style_bits,
                     },
                 );
-                x += metrics.width;
+                x += char_w;
             }
         } else {
             let mut color = cmd.color;
@@ -828,18 +833,19 @@ impl GlPainter {
                 color[3] *= 0.55;
             }
             for ch in cmd.text.chars() {
+                let char_w = metrics.width * display_col_width(ch) as f32;
                 self.push_glyph_styled(
                     ch,
                     &GlyphCell {
                         x,
                         y,
-                        w: metrics.width,
+                        w: char_w,
                         h: metrics.height,
                         color,
                         style: style_bits,
                     },
                 );
-                x += metrics.width;
+                x += char_w;
             }
         }
     }
@@ -875,10 +881,11 @@ impl GlPainter {
                 color[3] *= 0.55;
             }
 
-            self.push_glyph(ch, current_x, y, metrics.width, metrics.height, color);
+            let char_w = metrics.width * display_col_width(ch) as f32;
+            self.push_glyph(ch, current_x, y, char_w, metrics.height, color);
             self.ensure_char_in_atlas(gl, ch, style & (STYLE_BOLD | STYLE_ITALIC));
 
-            current_x += metrics.width;
+            current_x += char_w;
         }
     }
 
@@ -2481,8 +2488,24 @@ impl GlPainter {
             let scale_w = w / img_w;
             (w, img_h * scale_w)
         };
-        let ox = x + (w - draw_w) * 0.5;
-        let oy = y + (h - draw_h) * 0.5;
+
+        #[cfg(target_os = "macos")]
+        let emoji_visual_boost = 1.16_f32;
+        #[cfg(not(target_os = "macos"))]
+        let emoji_visual_boost = 1.0_f32;
+
+        let mut boosted_w = draw_w * emoji_visual_boost;
+        let mut boosted_h = draw_h * emoji_visual_boost;
+        let max_w = w * 1.10;
+        let max_h = h * 1.10;
+        if boosted_w > max_w || boosted_h > max_h {
+            let fit = (max_w / boosted_w).min(max_h / boosted_h);
+            boosted_w *= fit;
+            boosted_h *= fit;
+        }
+
+        let ox = x + (w - boosted_w) * 0.5;
+        let oy = y + (h - boosted_h) * 0.5;
 
         let (u0, v0, u1, v1) = (entry.u0, entry.v0, entry.u1, entry.v1);
         let a = 1.0_f32;
@@ -2490,8 +2513,8 @@ impl GlPainter {
         self.batches.emoji.push_quad(
             ox,
             oy,
-            ox + draw_w,
-            oy + draw_h,
+            ox + boosted_w,
+            oy + boosted_h,
             u0,
             v0,
             u1,
@@ -2628,7 +2651,9 @@ impl GlPainter {
             for line in terminal_text.lines() {
                 for ch in line.chars() {
                     if ch != ' ' && ch != '\0' {
-                        // Load with style 0 (default) - matches what render_text_simple uses
+                        self.ensure_color_emoji_in_atlas(gl, ch);
+                        // Load with style 0 (default) - matches what render_text_simple uses.
+                        // Keep monochrome fallback available when a color strike is missing.
                         self.ensure_char_in_atlas(gl, ch, 0);
                     }
                 }
@@ -2638,6 +2663,7 @@ impl GlPainter {
         // Editor text
         for ch in snapshot.editor_text.chars() {
             if ch != '\n' && ch != ' ' && ch != '\0' {
+                self.ensure_color_emoji_in_atlas(gl, ch);
                 self.ensure_char_in_atlas(gl, ch, 0);
             }
         }
@@ -2741,6 +2767,21 @@ impl GlPainter {
 
     fn push_glyph_styled(&mut self, ch: char, cell: &GlyphCell) {
         if ch == ' ' || ch == '\0' {
+            return;
+        }
+
+        if self.push_color_emoji(ch, cell.x, cell.y, cell.w, cell.h) {
+            if cell.style & STYLE_STRIKE != 0 {
+                let strike_h = (cell.h * 0.08).max(1.0);
+                let strike_y = cell.y + cell.h * 0.55;
+                self.push_rect(
+                    cell.x,
+                    strike_y,
+                    cell.x + cell.w,
+                    strike_y + strike_h,
+                    cell.color,
+                );
+            }
             return;
         }
 

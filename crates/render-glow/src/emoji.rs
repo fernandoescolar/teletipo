@@ -101,8 +101,47 @@ fn decode(data: &[u8], face_index: u32, ch: char, ppem: u16) -> Option<RgbaImage
         BitmapData::Mask(_) => return None,
     };
 
+    // Apple Color Emoji SBIX strikes often contain generous transparent
+    // margins. Trim empty edges so the visible emoji fills the terminal cell
+    // similarly to monochrome glyphs.
+    let img = trim_transparent_edges(&img);
+
     if img.width() == 0 || img.height() == 0 {
         return None;
     }
     Some(img)
+}
+
+fn trim_transparent_edges(img: &RgbaImage) -> RgbaImage {
+    let w = img.width();
+    let h = img.height();
+    if w == 0 || h == 0 {
+        return img.clone();
+    }
+
+    let mut min_x = w;
+    let mut min_y = h;
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    let mut found = false;
+
+    for y in 0..h {
+        for x in 0..w {
+            if img.get_pixel(x, y)[3] != 0 {
+                found = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    if !found {
+        return img.clone();
+    }
+
+    let crop_w = max_x - min_x + 1;
+    let crop_h = max_y - min_y + 1;
+    image::imageops::crop_imm(img, min_x, min_y, crop_w, crop_h).to_image()
 }
