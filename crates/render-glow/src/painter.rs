@@ -448,12 +448,12 @@ impl GlPainter {
         self.emit_terminal_text_to_scene(&mut scene, snapshot, &layout, metrics);
         self.emit_editor_text_to_scene(&mut scene, snapshot, &layout, metrics);
 
-        // Other overlays and content
-        self.draw_terminal_highlights(snapshot, &layout);
-        self.draw_editor_selection(snapshot, &layout);
-        self.draw_editor_suggestion(snapshot, &layout);
-        self.draw_cursor(snapshot, &layout);
-        self.draw_scrollbar(snapshot, &layout);
+        // Phase 1: Core components to Scene
+        render_model::components::render_highlights(&ctx, &mut scene);
+        render_model::components::render_selection(&ctx, &mut scene);
+        render_model::components::render_cursor(&ctx, &mut scene);
+        render_model::components::render_scrollbar(&ctx, &mut scene);
+        render_model::components::render_suggestion(&ctx, &mut scene);
 
         // Render scene geometry (backgrounds, rectangles, text)
         self.render_scene(gl, &scene, metrics, layout.width, layout.height);
