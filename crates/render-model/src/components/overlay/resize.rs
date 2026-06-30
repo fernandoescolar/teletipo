@@ -1,42 +1,43 @@
 /// Resize overlay: visual indicator when user is resizing panes.
 ///
-/// Rendered in the Overlay layer to show the active resize boundary when dragging to resize.
-/// Emits geometry only; text rendering is deferred to the old painter path.
+/// Rendered in the Overlay layer as a centered panel with the new terminal size.
 use crate::{Color, RenderContext, Scene, SceneLayer};
 
 /// Render resize overlay based on snapshot state.
 /// Called from GlPainter to emit overlay geometry into the Scene.
 pub fn render(ctx: &RenderContext, scene: &mut Scene) {
-    // Only render if there's an active resize
-    if ctx.snapshot.resize_overlay.is_none() {
+    let Some(text) = &ctx.snapshot.resize_overlay else {
         return;
-    }
+    };
+    if text.is_empty() {
+        return;
+    };
 
     let layout = ctx.layout;
-    let w = 8.0; // Simple indicator width
-    let h = layout.height - layout.tab_bar_h - layout.cell_h_px;
-    let x = layout.width * 0.5 - w * 0.5;
-    let y = layout.tab_bar_h;
+    let border_w = 1.0;
+    let panel_w = (text.chars().count() as f32 * layout.cell_w_px + layout.cell_w_px * 2.0)
+        .min(layout.width * 0.8);
+    let panel_h = layout.cell_h_px * 1.4;
+    let x = (layout.width - panel_w) * 0.5;
+    let y = (layout.height - panel_h) * 0.5;
 
-    // Main overlay area (semi-transparent blue)
-    let overlay_color: Color = [0.3, 0.5, 0.8, 0.15];
-    scene.rect_to_layer(SceneLayer::Overlay, x, y, w, h, overlay_color);
-
-    // Border
-    let border_color: Color = [0.6, 0.7, 0.9, 0.6];
-    let border_width = 1.0;
-
-    // Left border
-    scene.rect_to_layer(SceneLayer::Overlay, x, y, border_width, h, border_color);
-    // Right border
+    let border_color: Color = [0.35, 0.55, 0.90, 0.95];
     scene.rect_to_layer(
         SceneLayer::Overlay,
-        x + w - border_width,
-        y,
-        border_width,
-        h,
+        x - border_w,
+        y - border_w,
+        panel_w + border_w * 2.0,
+        panel_h + border_w * 2.0,
         border_color,
     );
+
+    let bg_color: Color = [0.08, 0.10, 0.16, 0.92];
+    scene.rect_to_layer(SceneLayer::Overlay, x, y, panel_w, panel_h, bg_color);
+
+    let text_color: Color = [0.92, 0.94, 0.98, 1.0];
+    let text_x = x + (panel_w - text.chars().count() as f32 * layout.cell_w_px) * 0.5;
+    let text_y = y + (panel_h - layout.cell_h_px) * 0.5;
+    scene.text_to_layer(SceneLayer::Overlay, text_x, text_y, text, text_color);
 }
 
 #[cfg(test)]
@@ -133,15 +134,11 @@ mod tests {
         let mut scene = Scene::new();
         render(&ctx, &mut scene);
 
-        // Should have 1 background + 2 borders (left + right) = 3 rects
+        // Should have border + panel + text = 3 commands
         assert_eq!(scene.overlay.len(), 3);
 
-        // Verify all are Rect commands
-        for command in &scene.overlay {
-            match command {
-                RenderCommand::Rect(_) => {}
-                _ => panic!("Expected Rect command"),
-            }
-        }
+        assert!(matches!(scene.overlay[0], RenderCommand::Rect(_)));
+        assert!(matches!(scene.overlay[1], RenderCommand::Rect(_)));
+        assert!(matches!(scene.overlay[2], RenderCommand::Text(_)));
     }
 }
