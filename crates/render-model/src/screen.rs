@@ -24,6 +24,15 @@ pub struct RenderRow {
     pub dirty: bool,
 }
 
+impl Default for RenderRow {
+    fn default() -> Self {
+        Self {
+            cells: Vec::new(),
+            dirty: false,
+        }
+    }
+}
+
 impl RenderRow {
     pub fn text(&self) -> String {
         self.cells.iter().map(|c| c.ch).collect()

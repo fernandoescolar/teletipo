@@ -1,18 +1,21 @@
-use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
 
 use crate::{ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay};
+use render_model::{CellMetrics, FrameLayout, RenderCommand, RenderTarget, Scene, compute_frame_layout};
 use font8x8::UnicodeFonts;
 use glow::HasContext;
 use winit::dpi::PhysicalSize;
 
+use crate::backend::{GpuState, BatchContainer};
+use crate::emoji_atlas::ColorAtlas;
 use crate::font::CpuFontRasterizer;
+use crate::glyph_atlas::{GlyphAtlas, AtlasGlyph};
 use crate::shaders::{compile_atlas_program, compile_color_atlas_program, compile_program};
 use crate::types::{
-    ATLAS_TEX_SIZE, AtlasGlyph, COLOR_ATLAS_TEX_SIZE, ColorAtlasEntry, FrameLayout, GlyphBitmap,
-    PALETTE_MAX_VISIBLE, SEPARATOR_PX, SETTINGS_MAX_VISIBLE_SEARCH, STYLE_BOLD, STYLE_DIM,
-    STYLE_ITALIC, STYLE_STRIKE, ShapedLines, ShapedTerminalCache, TAB_H_MULT, clamp_color,
+    ATLAS_TEX_SIZE, COLOR_ATLAS_TEX_SIZE, ColorAtlasEntry, GlyphBitmap,
+    PALETTE_MAX_VISIBLE, SETTINGS_MAX_VISIBLE_SEARCH, STYLE_BOLD, STYLE_DIM,
+    STYLE_ITALIC, STYLE_STRIKE, ShapedLines, ShapedTerminalCache, clamp_color,
     mix_color,
 };
 use crate::util::{
@@ -36,42 +39,15 @@ fn with_backdrop_alpha(mut color: [f32; 4], opacity: f32) -> [f32; 4] {
 // ── GlPainter struct ──────────────────────────────────────────────────────────
 
 pub(crate) struct GlPainter {
-    // Flat-colour pipeline (backgrounds, borders, cursor, overlays)
-    program: glow::Program,
-    vbo: glow::Buffer,
-    vao: glow::VertexArray,
-    u_screen: Option<glow::UniformLocation>,
-    vertices: Vec<f32>,
-    // Textured glyph-atlas pipeline
-    atlas_texture: glow::Texture,
-    atlas_program: glow::Program,
-    atlas_vbo: glow::Buffer,
-    atlas_vao: glow::VertexArray,
-    atlas_u_screen: Option<glow::UniformLocation>,
-    atlas_u_sampler: Option<glow::UniformLocation>,
-    /// Vertex data for textured glyph quads: [x, y, u, v, r, g, b, a] × 6 per glyph.
-    atlas_vertices: Vec<f32>,
-    atlas_alloc_x: u32,
-    atlas_alloc_y: u32,
-    atlas_row_h: u32,
-    /// Cached atlas entries keyed by (char, style_mask).
-    char_atlas: HashMap<(char, u8), AtlasGlyph>,
-    /// Cached atlas entries keyed by (rustybuzz glyph_id, style_mask).
-    glyph_id_atlas: HashMap<(u16, u8), AtlasGlyph>,
-    // ── Color-emoji RGBA atlas pipeline ──────────────────────────────────
-    /// GL_RGBA texture atlas for color emoji bitmaps (SBIX / CBDT strikes).
-    color_atlas_texture: glow::Texture,
-    color_atlas_program: glow::Program,
-    color_atlas_vbo: glow::Buffer,
-    color_atlas_vao: glow::VertexArray,
-    color_atlas_u_screen: Option<glow::UniformLocation>,
-    color_atlas_u_sampler: Option<glow::UniformLocation>,
-    color_atlas_vertices: Vec<f32>,
-    color_atlas_alloc_x: u32,
-    color_atlas_alloc_y: u32,
-    color_atlas_row_h: u32,
-    /// Cached color atlas entries keyed by char.
-    color_char_atlas: HashMap<char, ColorAtlasEntry>,
+    // ── Backend GPU infrastructure ─────────────────────────────────────────
+    gpu_state: GpuState,
+    batches: BatchContainer,
+
+    // ── Atlas allocators and caches ────────────────────────────────────────
+    glyph_atlas: GlyphAtlas,
+    emoji_atlas: ColorAtlas,
+
+    // ── Font rendering state ───────────────────────────────────────────────
     rasterizer: CpuFontRasterizer,
     shaped_terminal_cache: Option<ShapedTerminalCache>,
 }
@@ -316,35 +292,23 @@ impl GlPainter {
             gl.bind_texture(glow::TEXTURE_2D, None);
         }
 
+        // Create GPU state
+        let gpu_state = GpuState::new(
+            program, vbo, vao, u_screen,
+            atlas_texture, atlas_program, atlas_vbo, atlas_vao, atlas_u_screen, atlas_u_sampler,
+            color_atlas_texture, color_atlas_program, color_atlas_vbo, color_atlas_vao, color_atlas_u_screen, color_atlas_u_sampler,
+        );
+
+        // Create batches and atlases
+        let batches = BatchContainer::new();
+        let glyph_atlas = GlyphAtlas::new(ATLAS_TEX_SIZE);
+        let emoji_atlas = ColorAtlas::new(COLOR_ATLAS_TEX_SIZE);
+
         Ok(Self {
-            program,
-            vbo,
-            vao,
-            u_screen,
-            vertices: Vec::with_capacity(64 * 1024),
-            atlas_texture,
-            atlas_program,
-            atlas_vbo,
-            atlas_vao,
-            atlas_u_screen,
-            atlas_u_sampler,
-            atlas_vertices: Vec::with_capacity(64 * 1024),
-            atlas_alloc_x: 0,
-            atlas_alloc_y: 0,
-            atlas_row_h: 0,
-            char_atlas: HashMap::new(),
-            glyph_id_atlas: HashMap::new(),
-            color_atlas_texture,
-            color_atlas_program,
-            color_atlas_vbo,
-            color_atlas_vao,
-            color_atlas_u_screen,
-            color_atlas_u_sampler,
-            color_atlas_vertices: Vec::with_capacity(32 * 1024),
-            color_atlas_alloc_x: 0,
-            color_atlas_alloc_y: 0,
-            color_atlas_row_h: 0,
-            color_char_atlas: HashMap::new(),
+            gpu_state,
+            batches,
+            glyph_atlas,
+            emoji_atlas,
             rasterizer: CpuFontRasterizer::new(font_family, font_size_px),
             shaped_terminal_cache: None,
         })
@@ -361,16 +325,8 @@ impl GlPainter {
     }
 
     fn reset_text_atlas_state(&mut self) {
-        self.char_atlas.clear();
-        self.glyph_id_atlas.clear();
-        self.atlas_alloc_x = 0;
-        self.atlas_alloc_y = 0;
-        self.atlas_row_h = 0;
-
-        self.color_char_atlas.clear();
-        self.color_atlas_alloc_x = 0;
-        self.color_atlas_alloc_y = 0;
-        self.color_atlas_row_h = 0;
+        self.glyph_atlas.clear();
+        self.emoji_atlas.clear();
     }
 
     /// Force atlas repack/reupload on next frame.
@@ -390,7 +346,7 @@ impl GlPainter {
         let color_clear = vec![0_u8; (COLOR_ATLAS_TEX_SIZE * COLOR_ATLAS_TEX_SIZE * 4) as usize];
 
         unsafe {
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.atlas_texture));
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.glyph.texture));
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
             gl.tex_sub_image_2d(
                 glow::TEXTURE_2D,
@@ -404,7 +360,7 @@ impl GlPainter {
                 glow::PixelUnpackData::Slice(&mono_clear),
             );
 
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.color_atlas_texture));
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.emoji.texture));
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
             gl.tex_sub_image_2d(
                 glow::TEXTURE_2D,
@@ -458,14 +414,27 @@ impl GlPainter {
         cell_w_px: f32,
         cell_h_px: f32,
     ) {
-        let layout = Self::compute_frame_layout(snapshot, size, cell_w_px, cell_h_px);
+        let target = RenderTarget::new(size.width as f32, size.height as f32);
+        let metrics = CellMetrics::new(cell_w_px, cell_h_px);
+        let layout = compute_frame_layout(snapshot, target, metrics);
 
-        self.vertices.clear();
-        self.atlas_vertices.clear();
+        // Clear batch structures
+        self.batches.flat.clear();
+        self.batches.glyph.clear();
+        self.batches.emoji.clear();
+
         self.warm_atlas(gl, snapshot);
 
-        self.render_pane_backgrounds(snapshot, &layout);
-        self.draw_tab_bar(snapshot, &layout);
+        // === NEW PATH: Scene-based geometry rendering ===
+        // Build scene with background, tab bar, terminal background, and editor background
+        let scene = render_model::build_scene(snapshot, &layout, target, metrics);
+
+        // Render scene geometry (backgrounds, borders, rectangles)
+        self.render_scene(gl, &scene, layout.width, layout.height);
+
+        // === OLD PATH: Text and complex overlays (still needed temporarily) ===
+        // These will be gradually migrated to components in subsequent phases
+
         self.draw_terminal_highlights(snapshot, &layout);
         self.draw_editor_selection(snapshot, &layout);
         self.draw_terminal_text(snapshot, &layout);
@@ -491,47 +460,42 @@ impl GlPainter {
         self.flush_passes(gl, layout.width, layout.height);
     }
 
-    fn compute_frame_layout(
-        snapshot: &RenderSnapshot,
-        size: PhysicalSize<u32>,
-        cell_w_px: f32,
-        cell_h_px: f32,
-    ) -> FrameLayout {
-        let width = size.width.max(1) as f32;
-        let height = size.height.max(1) as f32;
-        let tab_bar_h = if snapshot.tab_labels.is_empty() {
-            0.0
-        } else {
-            (cell_h_px * TAB_H_MULT).max(1.0)
-        };
-        let available_h = (height - tab_bar_h).max(1.0);
-        let split_ratio = if snapshot.terminal_fullscreen {
-            1.0_f32
-        } else {
-            snapshot.split_ratio.clamp(0.05, 0.95)
-        };
-        let terminal_h = (tab_bar_h + available_h * split_ratio).floor();
-        let editor_top = (terminal_h + SEPARATOR_PX).min(height);
-        let terminal_rows = snapshot.terminal_rows_len() as f32;
-        let effective_term_h =
-            (available_h * split_ratio - 2.0 * snapshot.padding_v as f32).max(0.0);
-        let content_h_px = (terminal_rows * cell_h_px).min(effective_term_h);
-        let terminal_text_top =
-            tab_bar_h + snapshot.padding_v as f32 + (effective_term_h - content_h_px).max(0.0);
-        let terminal_text_bottom = terminal_h - snapshot.padding_v as f32;
-        FrameLayout {
-            width,
-            height,
-            tab_bar_h,
-            terminal_h,
-            editor_top,
-            terminal_text_top,
-            terminal_text_bottom,
-            padding_h: snapshot.padding_h as f32,
-            padding_v: snapshot.padding_v as f32,
-            cell_w_px,
-            cell_h_px,
+    /// Render a Scene of backend-independent commands.
+    /// This is a compatibility bridge for components to emit Scene commands instead of
+    /// calling OpenGL directly. Processes layers in defined order: Background, Main, Floating, Overlay, Toast, Debug.
+    pub(crate) fn render_scene(&mut self, gl: &glow::Context, scene: &Scene, width: f32, height: f32) {
+        // Clear batch structures
+        self.batches.flat.clear();
+        self.batches.glyph.clear();
+        self.batches.emoji.clear();
+
+        // Process layers in defined order
+        for (_layer, commands) in scene.iter_layers() {
+            for command in commands {
+                match command {
+                    RenderCommand::Rect(cmd) => {
+                        let rect = &cmd.rect;
+                        self.push_rect(rect.x, rect.y, rect.x + rect.w, rect.y + rect.h, cmd.color);
+                    }
+                    RenderCommand::Text(_cmd) => {
+                        // TODO: Text rendering through Scene is deferred. For now, components
+                        // should continue using the existing text rendering paths. This will be
+                        // implemented once text components are extracted and can emit TextCommand
+                        // with proper glyph shaping and atlas management.
+                    }
+                    RenderCommand::ClipPush(_rect) => {
+                        // TODO: Implement clipping stack. Will require tracking scissor rectangles
+                        // and managing the OpenGL scissor test state. Deferred to later steps once
+                        // components have clear clipping requirements.
+                    }
+                    RenderCommand::ClipPop => {
+                        // TODO: Pop clipping rectangle from stack (see ClipPush TODO).
+                    }
+                }
+            }
         }
+
+        self.flush_passes(gl, width, height);
     }
 
     fn render_pane_backgrounds(&mut self, snapshot: &RenderSnapshot, layout: &FrameLayout) {
@@ -578,15 +542,15 @@ impl GlPainter {
         }
     }
 
-    /// Flush accumulated flat-colour vertices then atlas-textured glyph quads
-    /// to the GPU, then clear both buffers ready for the next accumulation phase.
+    /// Flush accumulated vertices from batches to the GPU,
+    /// then clear batches ready for the next accumulation phase.
     fn flush_passes(&mut self, gl: &glow::Context, width: f32, height: f32) {
         // ── Flush flat-colour geometry (backgrounds, borders, cursor…) ────
-        if !self.vertices.is_empty() {
+        if !self.batches.flat.is_empty() {
             let bytes = unsafe {
                 std::slice::from_raw_parts(
-                    self.vertices.as_ptr() as *const u8,
-                    self.vertices.len() * size_of::<f32>(),
+                    self.batches.flat.vertices.as_ptr() as *const u8,
+                    self.batches.flat.vertices.len() * size_of::<f32>(),
                 )
             };
 
@@ -594,31 +558,31 @@ impl GlPainter {
                 gl.enable(glow::BLEND);
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
 
-                gl.use_program(Some(self.program));
-                gl.bind_vertex_array(Some(self.vao));
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+                gl.use_program(Some(self.gpu_state.flat.program));
+                gl.bind_vertex_array(Some(self.gpu_state.flat.vao));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.gpu_state.flat.vbo));
                 gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
 
-                if let Some(loc) = self.u_screen.as_ref() {
+                if let Some(loc) = self.gpu_state.flat.u_screen.as_ref() {
                     gl.uniform_2_f32(Some(loc), width, height);
                 }
 
-                gl.draw_arrays(glow::TRIANGLES, 0, (self.vertices.len() / 6) as i32);
+                gl.draw_arrays(glow::TRIANGLES, 0, (self.batches.flat.vertices.len() / 6) as i32);
 
                 gl.bind_buffer(glow::ARRAY_BUFFER, None);
                 gl.bind_vertex_array(None);
                 gl.use_program(None);
                 gl.disable(glow::BLEND);
             }
-            self.vertices.clear();
+            self.batches.flat.clear();
         }
 
         // ── Flush atlas-textured glyph quads (text) ──────────────────────
-        if !self.atlas_vertices.is_empty() {
+        if !self.batches.glyph.is_empty() {
             let bytes = unsafe {
                 std::slice::from_raw_parts(
-                    self.atlas_vertices.as_ptr() as *const u8,
-                    self.atlas_vertices.len() * size_of::<f32>(),
+                    self.batches.glyph.vertices.as_ptr() as *const u8,
+                    self.batches.glyph.vertices.len() * size_of::<f32>(),
                 )
             };
 
@@ -626,22 +590,22 @@ impl GlPainter {
                 gl.enable(glow::BLEND);
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
 
-                gl.use_program(Some(self.atlas_program));
-                gl.bind_vertex_array(Some(self.atlas_vao));
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.atlas_vbo));
+                gl.use_program(Some(self.gpu_state.glyph.program));
+                gl.bind_vertex_array(Some(self.gpu_state.glyph.vao));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.gpu_state.glyph.vbo));
                 gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
 
-                if let Some(loc) = &self.atlas_u_screen {
+                if let Some(loc) = &self.gpu_state.glyph.u_screen {
                     gl.uniform_2_f32(Some(loc), width, height);
                 }
 
                 gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.atlas_texture));
-                if let Some(loc) = &self.atlas_u_sampler {
+                gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.glyph.texture));
+                if let Some(loc) = &self.gpu_state.glyph.u_sampler {
                     gl.uniform_1_i32(Some(loc), 0);
                 }
 
-                gl.draw_arrays(glow::TRIANGLES, 0, (self.atlas_vertices.len() / 8) as i32);
+                gl.draw_arrays(glow::TRIANGLES, 0, (self.batches.glyph.vertices.len() / 8) as i32);
 
                 gl.bind_texture(glow::TEXTURE_2D, None);
                 gl.bind_buffer(glow::ARRAY_BUFFER, None);
@@ -649,15 +613,15 @@ impl GlPainter {
                 gl.use_program(None);
                 gl.disable(glow::BLEND);
             }
-            self.atlas_vertices.clear();
+            self.batches.glyph.clear();
         }
 
         // ── Flush color-emoji RGBA atlas quads ───────────────────────────────
-        if !self.color_atlas_vertices.is_empty() {
+        if !self.batches.emoji.is_empty() {
             let bytes = unsafe {
                 std::slice::from_raw_parts(
-                    self.color_atlas_vertices.as_ptr() as *const u8,
-                    self.color_atlas_vertices.len() * size_of::<f32>(),
+                    self.batches.emoji.vertices.as_ptr() as *const u8,
+                    self.batches.emoji.vertices.len() * size_of::<f32>(),
                 )
             };
 
@@ -665,25 +629,25 @@ impl GlPainter {
                 gl.enable(glow::BLEND);
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
 
-                gl.use_program(Some(self.color_atlas_program));
-                gl.bind_vertex_array(Some(self.color_atlas_vao));
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.color_atlas_vbo));
+                gl.use_program(Some(self.gpu_state.emoji.program));
+                gl.bind_vertex_array(Some(self.gpu_state.emoji.vao));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.gpu_state.emoji.vbo));
                 gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
 
-                if let Some(loc) = &self.color_atlas_u_screen {
+                if let Some(loc) = &self.gpu_state.emoji.u_screen {
                     gl.uniform_2_f32(Some(loc), width, height);
                 }
 
                 gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.color_atlas_texture));
-                if let Some(loc) = &self.color_atlas_u_sampler {
+                gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.emoji.texture));
+                if let Some(loc) = &self.gpu_state.emoji.u_sampler {
                     gl.uniform_1_i32(Some(loc), 0);
                 }
 
                 gl.draw_arrays(
                     glow::TRIANGLES,
                     0,
-                    (self.color_atlas_vertices.len() / 8) as i32,
+                    (self.batches.emoji.vertices.len() / 8) as i32,
                 );
 
                 gl.bind_texture(glow::TEXTURE_2D, None);
@@ -692,7 +656,7 @@ impl GlPainter {
                 gl.use_program(None);
                 gl.disable(glow::BLEND);
             }
-            self.color_atlas_vertices.clear();
+            self.batches.emoji.clear();
         }
     }
 
@@ -2294,20 +2258,11 @@ impl GlPainter {
             return None;
         }
 
-        if self.color_atlas_alloc_x + w + 1 > COLOR_ATLAS_TEX_SIZE {
-            self.color_atlas_alloc_y += self.color_atlas_row_h + 1;
-            self.color_atlas_alloc_x = 0;
-            self.color_atlas_row_h = 0;
-        }
-        if self.color_atlas_alloc_y + h > COLOR_ATLAS_TEX_SIZE {
-            return None; // Atlas full
-        }
-
-        let dest_x = self.color_atlas_alloc_x;
-        let dest_y = self.color_atlas_alloc_y;
+        // Use ColorAtlas for allocation
+        let (dest_x, dest_y) = self.emoji_atlas.allocate(w, h)?;
 
         unsafe {
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.color_atlas_texture));
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.emoji.texture));
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
             gl.tex_sub_image_2d(
                 glow::TEXTURE_2D,
@@ -2323,11 +2278,6 @@ impl GlPainter {
             gl.bind_texture(glow::TEXTURE_2D, None);
         }
 
-        self.color_atlas_alloc_x += w + 1;
-        if h > self.color_atlas_row_h {
-            self.color_atlas_row_h = h;
-        }
-
         let atf = COLOR_ATLAS_TEX_SIZE as f32;
         Some(ColorAtlasEntry {
             u0: dest_x as f32 / atf,
@@ -2341,20 +2291,21 @@ impl GlPainter {
 
     /// Ensure `ch` has a color-emoji entry in the RGBA atlas.
     fn ensure_color_emoji_in_atlas(&mut self, gl: &glow::Context, ch: char) {
-        if self.color_char_atlas.contains_key(&ch) {
+        // Check atlas
+        if self.emoji_atlas.lookup(ch).is_some() {
             return;
         }
         if let Some(img) = self.rasterizer.color_rasterize(ch)
             && let Some(entry) = self.pack_rgba_to_color_atlas(gl, &img)
         {
-            self.color_char_atlas.insert(ch, entry);
+            self.emoji_atlas.insert(ch, entry);
         }
     }
 
     /// Push a color-emoji quad for `ch` into the color atlas vertex buffer.
     /// Returns `true` if a color atlas entry exists and was queued for drawing.
     fn push_color_emoji(&mut self, ch: char, x: f32, y: f32, w: f32, h: f32) -> bool {
-        let Some(entry) = self.color_char_atlas.get(&ch).copied() else {
+        let Some(entry) = self.emoji_atlas.lookup(ch) else {
             return false;
         };
 
@@ -2377,16 +2328,8 @@ impl GlPainter {
         let (u0, v0, u1, v1) = (entry.u0, entry.v0, entry.u1, entry.v1);
         let a = 1.0_f32;
 
-        // 6 vertices; dummy rgb (0,0,0) — fragment shader uses texture color.
-        #[rustfmt::skip]
-        self.color_atlas_vertices.extend_from_slice(&[
-            ox,          oy,          u0, v0, 0.0, 0.0, 0.0, a,
-            ox + draw_w, oy,          u1, v0, 0.0, 0.0, 0.0, a,
-            ox + draw_w, oy + draw_h, u1, v1, 0.0, 0.0, 0.0, a,
-            ox,          oy,          u0, v0, 0.0, 0.0, 0.0, a,
-            ox + draw_w, oy + draw_h, u1, v1, 0.0, 0.0, 0.0, a,
-            ox,          oy + draw_h, u0, v1, 0.0, 0.0, 0.0, a,
-        ]);
+        self.batches.emoji.push_quad(ox, oy, ox + draw_w, oy + draw_h, u0, v0, u1, v1, 0.0, 0.0, 0.0, a);
+
         true
     }
 
@@ -2404,21 +2347,11 @@ impl GlPainter {
             return None;
         }
 
-        // Shelf-packing allocator
-        if self.atlas_alloc_x + gw + 1 > ATLAS_TEX_SIZE {
-            self.atlas_alloc_y += self.atlas_row_h + 1;
-            self.atlas_alloc_x = 0;
-            self.atlas_row_h = 0;
-        }
-        if self.atlas_alloc_y + gh > ATLAS_TEX_SIZE {
-            return None; // Atlas full
-        }
-
-        let dest_x = self.atlas_alloc_x;
-        let dest_y = self.atlas_alloc_y;
+        // Use GlyphAtlas for allocation
+        let (dest_x, dest_y) = self.glyph_atlas.allocate(gw, gh)?;
 
         unsafe {
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.atlas_texture));
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.glyph.texture));
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
             gl.tex_sub_image_2d(
                 glow::TEXTURE_2D,
@@ -2433,11 +2366,6 @@ impl GlPainter {
             );
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4); // restore default
             gl.bind_texture(glow::TEXTURE_2D, None);
-        }
-
-        self.atlas_alloc_x += gw + 1;
-        if gh > self.atlas_row_h {
-            self.atlas_row_h = gh;
         }
 
         let atf = ATLAS_TEX_SIZE as f32;
@@ -2456,14 +2384,15 @@ impl GlPainter {
 
     fn ensure_char_in_atlas(&mut self, gl: &glow::Context, ch: char, style: u8) {
         let style_key = style & (STYLE_BOLD | STYLE_ITALIC);
-        if self.char_atlas.contains_key(&(ch, style_key)) {
+        // Check atlas
+        if self.glyph_atlas.lookup_char(ch, style_key).is_some() {
             return;
         }
         let Some(glyph) = self.rasterizer.glyph(ch, style_key) else {
             return;
         };
         if let Some(ag) = self.pack_bitmap_to_atlas(gl, &glyph) {
-            self.char_atlas.insert((ch, style_key), ag);
+            self.glyph_atlas.insert_char(ch, style_key, ag);
         }
     }
 
@@ -2474,14 +2403,15 @@ impl GlPainter {
             return;
         }
         let style_key = style & STYLE_BOLD;
-        if self.glyph_id_atlas.contains_key(&(glyph_id, style_key)) {
+        // Check atlas
+        if self.glyph_atlas.lookup_glyph_id(glyph_id, style_key).is_some() {
             return;
         }
         let Some(glyph) = self.rasterizer.glyph_indexed(glyph_id, style_key) else {
             return;
         };
         if let Some(ag) = self.pack_bitmap_to_atlas(gl, &glyph) {
-            self.glyph_id_atlas.insert((glyph_id, style_key), ag);
+            self.glyph_atlas.insert_glyph_id(glyph_id, style_key, ag);
         }
     }
 
@@ -2503,7 +2433,7 @@ impl GlPainter {
                         // Primary font has no glyph — try color emoji first,
                         // then fall back to the outline/char-based atlas.
                         self.ensure_color_emoji_in_atlas(gl, sg.source_char);
-                        if !self.color_char_atlas.contains_key(&sg.source_char) {
+                        if self.emoji_atlas.lookup(sg.source_char).is_none() {
                             self.ensure_char_in_atlas(gl, sg.source_char, style);
                         }
                     } else {
@@ -2597,66 +2527,12 @@ impl GlPainter {
         let bot_y = origin_y + draw_h;
         let (u0, v0, u1, v1) = (ag.u0, ag.v0, ag.u1, ag.v1);
 
-        // 6 vertices (two CCW triangles); 8 floats each: x, y, u, v, r, g, b, a
-        self.atlas_vertices.extend_from_slice(&[
-            tl_x, top_y, u0, v0, r, g, b, a, tr_x, top_y, u1, v0, r, g, b, a, br_x, bot_y, u1, v1,
-            r, g, b, a, tl_x, top_y, u0, v0, r, g, b, a, br_x, bot_y, u1, v1, r, g, b, a, bl_x,
-            bot_y, u0, v1, r, g, b, a,
-        ]);
+        self.batches.glyph.push_quad(tl_x, top_y, br_x, bot_y, u0, v0, u1, v1, r, g, b, a);
 
         // Synthetic bold: second pass shifted right
         if style & STYLE_BOLD != 0 {
             let shift = (draw_w * 0.08).max(0.5);
-            self.atlas_vertices.extend_from_slice(&[
-                tl_x + shift,
-                top_y,
-                u0,
-                v0,
-                r,
-                g,
-                b,
-                a,
-                tr_x + shift,
-                top_y,
-                u1,
-                v0,
-                r,
-                g,
-                b,
-                a,
-                br_x + shift,
-                bot_y,
-                u1,
-                v1,
-                r,
-                g,
-                b,
-                a,
-                tl_x + shift,
-                top_y,
-                u0,
-                v0,
-                r,
-                g,
-                b,
-                a,
-                br_x + shift,
-                bot_y,
-                u1,
-                v1,
-                r,
-                g,
-                b,
-                a,
-                bl_x + shift,
-                bot_y,
-                u0,
-                v1,
-                r,
-                g,
-                b,
-                a,
-            ]);
+            self.batches.glyph.push_quad(tl_x + shift, top_y, br_x + shift, bot_y, u0, v0, u1, v1, r, g, b, a);
         }
     }
 
@@ -2714,7 +2590,7 @@ impl GlPainter {
 
     fn push_raster_glyph(&mut self, ch: char, cell: &GlyphCell) -> bool {
         let style_key = cell.style & (STYLE_BOLD | STYLE_ITALIC);
-        if let Some(ag) = self.char_atlas.get(&(ch, style_key)).copied() {
+        if let Some(ag) = self.glyph_atlas.lookup_char(ch, style_key) {
             self.push_atlas_quad(ch, ag, cell, 0.0, 0.0);
             return true;
         }
@@ -2739,7 +2615,7 @@ impl GlPainter {
             return false;
         }
         let style_key = cell.style & STYLE_BOLD;
-        if let Some(ag) = self.glyph_id_atlas.get(&(glyph_id, style_key)).copied() {
+        if let Some(ag) = self.glyph_atlas.lookup_glyph_id(glyph_id, style_key) {
             self.push_atlas_quad(source_char, ag, cell, x_offset_px, y_offset_px);
             return true;
         }
@@ -2835,12 +2711,69 @@ impl GlPainter {
             return;
         }
 
-        // two triangles, CCW winding
-        self.vertices.extend_from_slice(&[
-            x0, y0, color[0], color[1], color[2], color[3], x1, y0, color[0], color[1], color[2],
-            color[3], x1, y1, color[0], color[1], color[2], color[3], x0, y0, color[0], color[1],
-            color[2], color[3], x1, y1, color[0], color[1], color[2], color[3], x0, y1, color[0],
-            color[1], color[2], color[3],
-        ]);
+        self.batches.flat.push_quad(x0, y0, x1, y1, color[0], color[1], color[2], color[3]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_scene_commands_are_matched() {
+        let mut scene = Scene::new();
+
+        // Create various scene commands
+        scene.rect(10.0, 20.0, 100.0, 50.0, [1.0, 0.0, 0.0, 1.0]);
+        scene.text(5.0, 15.0, "Test", [0.0, 1.0, 0.0, 1.0]);
+
+        let rect = render_model::Rect::new(0.0, 0.0, 100.0, 100.0);
+        scene.clip_push(rect);
+        scene.clip_pop();
+
+        assert_eq!(scene.len(), 4);
+
+        // Verify all command types can be matched without panic
+        let mut rect_count = 0;
+        let mut text_count = 0;
+        let mut clip_push_count = 0;
+        let mut clip_pop_count = 0;
+
+        for (_, commands) in scene.iter_layers() {
+            for command in commands {
+                match command {
+                    RenderCommand::Rect(_) => rect_count += 1,
+                    RenderCommand::Text(_) => text_count += 1,
+                    RenderCommand::ClipPush(_) => clip_push_count += 1,
+                    RenderCommand::ClipPop => clip_pop_count += 1,
+                }
+            }
+        }
+
+        assert_eq!(rect_count, 1);
+        assert_eq!(text_count, 1);
+        assert_eq!(clip_push_count, 1);
+        assert_eq!(clip_pop_count, 1);
+    }
+
+    #[test]
+    fn test_render_scene_rect_command_structure() {
+        let mut scene = Scene::new();
+        let color = [1.0, 0.0, 0.0, 1.0];
+
+        scene.rect(10.0, 20.0, 100.0, 50.0, color);
+
+        assert_eq!(scene.len(), 1);
+
+        match &scene.main[0] {
+            RenderCommand::Rect(cmd) => {
+                assert_eq!(cmd.rect.x, 10.0);
+                assert_eq!(cmd.rect.y, 20.0);
+                assert_eq!(cmd.rect.w, 100.0);
+                assert_eq!(cmd.rect.h, 50.0);
+                assert_eq!(cmd.color, color);
+            }
+            _ => panic!("Expected Rect command"),
+        }
     }
 }

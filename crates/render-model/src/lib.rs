@@ -1,15 +1,26 @@
+mod builder;
+mod components;
 mod event;
+mod layout;
 mod overlays;
+mod scene;
 mod screen;
 mod snapshot;
 mod stats;
 mod theme;
 
+pub use builder::{RenderContext, build_scene};
+pub use components::{Background, Editor, TabBar, Terminal};
 pub use event::AppWindowEvent;
+pub use layout::{
+    CellMetrics, FrameLayout, RenderTarget, compute_frame_layout, SEPARATOR_WIDTH_PX,
+    TAB_HEIGHT_MULTIPLIER,
+};
 pub use overlays::{
     CommandPalette, ContextMenu, KeybindingRow, KeybindingsOverlay, SettingsItem, SettingsOverlay,
     SuggestionDropdown, Toast, ToastKind,
 };
+pub use scene::{Color, Rect, RectCommand, RenderCommand, Scene, SceneLayer, TextCommand, TextStyle};
 pub use screen::{DamageRegion, RenderCell, RenderRow};
 pub use snapshot::{RenderSnapshot, SearchPanel, SnapshotImage, TerminalLink};
 pub use stats::RenderStats;
