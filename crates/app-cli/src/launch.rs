@@ -446,9 +446,19 @@ fn build_single_tab(
     } else if !saved.cwd.is_empty() {
         saved.cwd.clone()
     } else {
-        std::env::current_dir()
+        let cwd = std::env::current_dir()
             .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default()
+            .unwrap_or_default();
+
+        // If cwd is root "/" (common when launched from Finder/App Bundle on macOS),
+        // fall back to home directory instead
+        if cwd == "/" {
+            dirs::home_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        } else {
+            cwd
+        }
     };
 
     let restore_cwd = if initial_cwd.is_empty() {
