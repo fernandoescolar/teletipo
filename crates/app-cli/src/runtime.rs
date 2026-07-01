@@ -469,6 +469,13 @@ impl GpuRuntimeState {
         if !text.is_empty() {
             self.record_history_command(text);
         }
+
+        // Close the current command block if one exists, moving it to completed blocks.
+        if let Some(mut block) = self.tabs[tab_idx].current_block.take() {
+            block.close(exit_code);
+            self.tabs[tab_idx].command_blocks.push(block);
+        }
+
         // Show execution duration overlay for commands that took ≥ 1 second.
         if let Some(start) = self.tabs[tab_idx].command_start_time.take() {
             let ms = start.elapsed().as_millis() as u64;
@@ -499,9 +506,9 @@ impl GpuRuntimeState {
         let text = self.tabs[active].app.editor_snapshot().trim().to_string();
         if !text.is_empty() {
             if self.tabs[active].shell_integration {
-                self.tabs[active].pending_cmd = Some(text);
+                self.tabs[active].pending_cmd = Some(text.clone());
             } else {
-                self.record_history_command(text);
+                self.record_history_command(text.clone());
             }
         }
         let tab = &mut self.tabs[active];
@@ -511,6 +518,19 @@ impl GpuRuntimeState {
         tab.suggestion_prefix = None;
         tab.suggestion_index = None;
         tab.command_start_time = Some(Instant::now());
+
+        // Open a new command block at the moment the command is executed.
+        // The block will be closed by finalize_pending_cmd when the shell reports exit code.
+        if let Some(block) = app_orchestrator::CommandBlock::open(
+            tab.next_block_id,
+            text,
+            tab.app.terminal.osc7_cwd().map(|p| p.to_owned()),
+            tab.app.terminal.prompt_marks().last().copied().unwrap_or(0),
+        ) {
+            tab.current_block = Some(block);
+            tab.next_block_id = tab.next_block_id.checked_add(1).unwrap_or(u64::MAX);
+        }
+
         let Some(mut pty) = tab.pty.take() else {
             return;
         };
@@ -773,6 +793,9 @@ impl GpuRuntimeState {
             suggestion_index: None,
             history_entries,
             pending_cmd: None,
+            command_blocks: Vec::new(),
+            current_block: None,
+            next_block_id: 1,
             shell_integration: integration,
             search: crate::search::SearchState::default(),
             copy_mode: crate::tab::CopyModeState::default(),
@@ -846,6 +869,9 @@ impl GpuRuntimeState {
             suggestion_index: None,
             history_entries: self.tab().history_entries.clone(),
             pending_cmd: None,
+            command_blocks: Vec::new(),
+            current_block: None,
+            next_block_id: 1,
             shell_integration: integration,
             search: crate::search::SearchState::default(),
             copy_mode: crate::tab::CopyModeState::default(),
@@ -981,20 +1007,15 @@ fn build_accessibility_tree(tabs: &[TabState], active_tab: usize) -> Accessibili
 
     // ── Completed command zones ───────────────────────────────────────────────
     //
-    // Zones and history grow together: zone[i] was triggered by history[i].
-    // We zip them so each node carries the correct command text.  Zones whose
-    // history entry is missing (should not happen in practice) are skipped.
+    // Build accessibility nodes from completed command blocks.
+    // This replaces the old zone-history zip that could desync when empty-Enter
+    // created zones without history entries.
     {
-        let zones = tab.app.terminal.command_zones();
-        for (i, zone) in zones.iter().enumerate() {
-            let command_text = match tab.history.get(i) {
-                Some(cmd) if !cmd.is_empty() => cmd.clone(),
-                _ => continue, // skip prompt-only zones with no command
-            };
+        for block in &tab.command_blocks {
             nodes.push(AccessNode::CommandZone {
-                prompt_row: zone.prompt_start_row,
-                command_text,
-                exit_code: zone.exit_code,
+                prompt_row: block.prompt_row,
+                command_text: block.command.clone(),
+                exit_code: block.exit_code,
                 // Full output extraction would require walking the scrollback;
                 // leave empty for now — the AT can navigate to the prompt row
                 // itself for the full text.

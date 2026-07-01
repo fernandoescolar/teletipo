@@ -527,6 +527,9 @@ fn build_single_tab(
             params.shared_entries.to_vec()
         },
         pending_cmd: None,
+        command_blocks: Vec::new(),
+        current_block: None,
+        next_block_id: 1,
         shell_integration: integration,
         search: crate::search::SearchState::default(),
         copy_mode: crate::tab::CopyModeState::default(),

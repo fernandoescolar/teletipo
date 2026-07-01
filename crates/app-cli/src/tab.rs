@@ -1,4 +1,4 @@
-use app_orchestrator::App;
+use app_orchestrator::{App, CommandBlock};
 use terminal_pty::PortablePtySession;
 
 use crate::search::SearchState;
@@ -77,6 +77,16 @@ pub(crate) struct TabState {
     /// been received.  `None` when no command is in-flight or when shell
     /// integration is inactive.
     pub(crate) pending_cmd: Option<String>,
+    /// Unified command blocks, populated in parallel with `pending_cmd`.
+    /// Represents all completed command execution blocks for this tab.
+    pub(crate) command_blocks: Vec<CommandBlock>,
+    /// The in-progress command block opened by `run_editor_command` and closed
+    /// by `finalize_pending_cmd`. `None` when no command is in-flight or when
+    /// shell integration is inactive.
+    pub(crate) current_block: Option<CommandBlock>,
+    /// Monotonic counter for generating unique `CommandBlock` IDs. Starts at 1
+    /// (never 0) and never wraps.
+    pub(crate) next_block_id: u64,
     /// `true` when the shell was spawned with OSC 133 exit-code integration.
     /// When `false`, commands are saved to history immediately on Enter.
     pub(crate) shell_integration: bool,

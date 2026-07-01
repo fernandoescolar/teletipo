@@ -157,7 +157,13 @@ fn execute_dev_command(state: &mut GpuRuntimeState, cmd: CommandId) {
             }
         }
         CommandId::RepeatLastCommand => {
-            let last = state.tab().history.last().cloned();
+            // Try to get the last command from completed blocks, fall back to history.
+            let last = state
+                .tab()
+                .command_blocks
+                .last()
+                .map(|b| b.command.clone())
+                .or_else(|| state.tab().history.last().cloned());
             if let Some(cmd) = last {
                 let tab = state.tab_mut();
                 tab.app.editor_clear();
@@ -186,14 +192,26 @@ fn execute_dev_command(state: &mut GpuRuntimeState, cmd: CommandId) {
 
 fn extract_last_output(state: &GpuRuntimeState) -> String {
     let tab = &state.tabs[state.active_tab];
-    let zones = tab.app.terminal.command_zones();
-    let Some(output_start) = zones.last().and_then(|z| z.output_start_row) else {
+
+    // Try to get output from the most recently completed command block.
+    let output_start = if let Some(block) = tab.command_blocks.last() {
+        block.output_start_row
+    } else if let Some(block) = &tab.current_block {
+        block.output_start_row
+    } else {
+        None
+    };
+
+    let Some(output_start) = output_start else {
         return String::new();
     };
+
+    // Output ends at the current prompt (or end of text if no next prompt yet).
     let current_prompt = tab.app.terminal.current_zone_prompt_row();
     let full_text = tab.app.terminal.snapshot_text_with_scrollback();
     let total_lines = full_text.lines().count();
     let output_end = current_prompt.unwrap_or(total_lines);
+
     full_text
         .lines()
         .skip(output_start)

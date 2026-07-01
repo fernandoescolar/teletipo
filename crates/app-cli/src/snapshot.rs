@@ -344,16 +344,15 @@ fn build_sticky_command_overlay(
         .into_iter()
         .max_by_key(|(_, prompt_row, _)| *prompt_row)?;
 
-    let zones_len = tab.app.terminal.command_zones().len();
-    let is_current_block = block_idx >= zones_len;
-    let raw_command = if is_current_block {
-        tab.pending_cmd.clone().unwrap_or_default()
+    // Find the command text from completed or current blocks by prompt row.
+    // This replaces the old index-based logic that could desync with history.
+    let raw_command = if let Some(block) = tab.command_blocks.get(block_idx) {
+        block.command.clone()
+    } else if block_idx == tab.command_blocks.len() {
+        tab.current_block.as_ref().map(|b| b.command.clone()).unwrap_or_default()
     } else {
-        let history_offset = tab.history.len().saturating_sub(zones_len);
-        tab.history
-            .get(history_offset.saturating_add(block_idx))
-            .cloned()
-            .unwrap_or_default()
+        // Fallback: shouldn't happen, but use empty string if index is out of range.
+        String::new()
     };
 
     let max_chars = if state.layout.cell_w > 0.0 {
