@@ -51,6 +51,7 @@ pub(crate) struct CommandDef {
     pub label: &'static str,
     #[allow(dead_code)] // not consumed yet; reserved for future doc/menu grouping
     pub category: CommandCategory,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // only read by macOS builds
     pub default_binding_mac: Option<&'static str>,
     #[cfg_attr(target_os = "macos", allow(dead_code))] // only read by non-macOS builds
     pub default_binding_other: Option<&'static str>,
