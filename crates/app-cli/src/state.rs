@@ -178,112 +178,12 @@ pub(crate) enum UpdateBanner {
 }
 
 // ── Command palette ───────────────────────────────────────────────────────────
+// Palette types are now defined in the `palette` module; re-export here for
+// compatibility with existing code.
 
-/// An action that can be invoked from the command palette.
-#[derive(Clone, Debug)]
-pub(crate) enum PaletteAction {
-    Command(crate::commands::CommandId),
-    SetTheme(usize),
-    SetFont(usize),
-    NewTabWithShell(String),
-    /// Open a new tab running the given SSH command (e.g. `ssh user@host`).
-    NewSshTab(String),
-    /// Switch the palette to SSH sub-prompt mode so the user can type a destination.
-    OpenSshPrompt,
-    /// Switch to a different open tab by index.
-    SwitchToTab(usize),
-    /// Insert a command from history into the editor.
-    InsertHistoryCommand(String),
-    /// Fill the query with a prefix and refilter without closing the palette.
-    FilterByPrefix(String),
-}
+pub(crate) use crate::palette::{CommandPaletteState, PaletteAction, PaletteItem, SubPrompt};
 
-/// A single item in the command palette list.
-#[derive(Clone, Debug)]
-pub(crate) struct PaletteItem {
-    pub(crate) label: String,
-    pub(crate) action: PaletteAction,
-}
-
-/// Runtime state for the command palette overlay (Cmd+Shift+P).
-pub(crate) struct CommandPaletteState {
-    /// Current filter query entered by the user.
-    pub(crate) query: String,
-    /// Byte offset of the text cursor within `query`.
-    pub(crate) cursor_byte: usize,
-    /// All available items (built when the palette opens and kept stable).
-    pub(crate) all_items: Vec<PaletteItem>,
-    /// Indices into `all_items` shown when the query is empty (primary actions +
-    /// category headers). When the query is non-empty, all items are searched instead.
-    pub(crate) default_filtered: Vec<usize>,
-    /// Indices into `all_items` that match `query` (all items when query is empty).
-    pub(crate) filtered: Vec<usize>,
-    /// Index into `filtered` of the currently selected item.
-    pub(crate) selected: usize,
-    /// Index of the first visible item in the scroll window.
-    pub(crate) scroll_offset: usize,
-    /// When `Some`, the palette is in sub-prompt mode: the items list is hidden
-    /// and this string is used as a label above the text input. Enter executes
-    /// the action associated with the prompt (e.g. opening an SSH connection).
-    pub(crate) sub_prompt: Option<SubPrompt>,
-}
-
-/// Which action to run when the user confirms a sub-prompt.
-#[derive(Clone, Debug)]
-pub(crate) enum SubPrompt {
-    Ssh,
-}
-
-const PALETTE_MAX_VISIBLE: usize = 10;
-
-/// Public constant so other modules can share the same scroll-window size.
-pub(crate) const PALETTE_MAX_VISIBLE_PUB: usize = PALETTE_MAX_VISIBLE;
-
-impl CommandPaletteState {
-    /// Re-build `filtered` from `all_items` and the current `query`.
-    /// When the query is empty, shows only `default_filtered` (primary actions +
-    /// category headers). When non-empty, searches across all items.
-    pub(crate) fn refilter(&mut self) {
-        let q = self.query.to_lowercase();
-        if q.is_empty() {
-            self.filtered = self.default_filtered.clone();
-        } else {
-            self.filtered = (0..self.all_items.len())
-                .filter(|&i| self.all_items[i].label.to_lowercase().contains(&q))
-                .collect();
-        }
-        self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
-        self.recompute_scroll();
-    }
-
-    fn recompute_scroll(&mut self) {
-        if self.selected < self.scroll_offset {
-            self.scroll_offset = self.selected;
-        } else if self.selected >= self.scroll_offset + PALETTE_MAX_VISIBLE {
-            self.scroll_offset = self.selected + 1 - PALETTE_MAX_VISIBLE;
-        }
-    }
-
-    pub(crate) fn move_up(&mut self) {
-        if self.filtered.is_empty() {
-            return;
-        }
-        if self.selected == 0 {
-            self.selected = self.filtered.len() - 1;
-        } else {
-            self.selected -= 1;
-        }
-        self.recompute_scroll();
-    }
-
-    pub(crate) fn move_down(&mut self) {
-        if self.filtered.is_empty() {
-            return;
-        }
-        self.selected = (self.selected + 1) % self.filtered.len();
-        self.recompute_scroll();
-    }
-}
+pub(crate) const PALETTE_MAX_VISIBLE_PUB: usize = crate::palette::PALETTE_MAX_VISIBLE;
 
 impl Default for OverlayState {
     fn default() -> Self {

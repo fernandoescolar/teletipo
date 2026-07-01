@@ -92,7 +92,7 @@ pub(crate) fn execute_ui_command(state: &mut GpuRuntimeState, cmd: CommandId, ct
         CommandId::Clear => state.send_terminal_input(b"\x0c"),
         CommandId::ZoomIn => crate::input::keyboard::execute_zoom(state, 1.0),
         CommandId::ZoomOut => crate::input::keyboard::execute_zoom(state, -1.0),
-        CommandId::OpenCommandPalette => crate::input::keyboard::open_command_palette(state),
+        CommandId::OpenCommandPalette => crate::palette::open(state),
         CommandId::CopyCwd
         | CommandId::OpenCwdInFinder
         | CommandId::RepeatLastCommand
