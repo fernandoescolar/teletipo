@@ -6,6 +6,10 @@ A terminal emulator written in Rust — GPU-accelerated, multi-tab, with a code-
 
 https://github.com/user-attachments/assets/fb1303c9-5e50-4b6c-960e-951305da9ffc
 
+https://github.com/user-attachments/assets/e710d273-0627-47b5-8af4-75d28c859fce
+
+https://github.com/user-attachments/assets/139cb72a-db4c-4148-a355-fa02d3e0ccea
+
 ## Install
 
 ### Quick install (recommended)
