@@ -60,12 +60,7 @@ impl CommandBlock {
     ///
     /// Called from `run_editor_command` at the moment Enter is pressed.
     /// Returns `None` if the command text is empty.
-    pub fn open(
-        id: u64,
-        command: String,
-        cwd: Option<PathBuf>,
-        prompt_row: usize,
-    ) -> Option<Self> {
+    pub fn open(id: u64, command: String, cwd: Option<PathBuf>, prompt_row: usize) -> Option<Self> {
         if command.trim().is_empty() {
             return None;
         }

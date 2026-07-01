@@ -411,10 +411,7 @@ mod tests {
             assert!(!def.label.is_empty(), "{:?} has an empty label", def.id);
             assert!(
                 !def.name.is_empty()
-                    && def
-                        .name
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase() || c == '_'),
+                    && def.name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
                 "{:?} name {:?} is not snake_case",
                 def.id,
                 def.name

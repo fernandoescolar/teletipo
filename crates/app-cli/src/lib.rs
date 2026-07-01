@@ -23,10 +23,11 @@ mod shell;
 mod snapshot;
 mod ssh;
 mod state;
-mod tick;
 mod tab;
 mod theme;
+mod tick;
 pub mod updater;
+mod view_model;
 
 #[cfg(test)]
 mod input_smoke_tests;

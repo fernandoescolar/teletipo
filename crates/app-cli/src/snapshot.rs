@@ -43,7 +43,7 @@ fn tab_button_label(index: usize, title: Option<&str>, cwd: &str, max_chars: usi
     format!("Cmd+{}  {}", index + 1, label_text)
 }
 
-fn tab_button_label_for_tab(
+pub(crate) fn tab_button_label_for_tab(
     index: usize,
     _title: Option<&str>,
     cwd: &str,
@@ -69,7 +69,7 @@ fn tab_button_label_for_tab(
     tab_button_label(index, Some(&fallback), cwd, max_chars)
 }
 
-fn tab_button_max_chars(tab_width_px: f32, cell_w_px: f32) -> usize {
+pub(crate) fn tab_button_max_chars(tab_width_px: f32, cell_w_px: f32) -> usize {
     let shortcut_width_chars = 4.0;
     let close_button_width_chars = 2.0;
     let padding_chars = 2.0;
@@ -349,7 +349,10 @@ fn build_sticky_command_overlay(
     let raw_command = if let Some(block) = tab.command_blocks.get(block_idx) {
         block.command.clone()
     } else if block_idx == tab.command_blocks.len() {
-        tab.current_block.as_ref().map(|b| b.command.clone()).unwrap_or_default()
+        tab.current_block
+            .as_ref()
+            .map(|b| b.command.clone())
+            .unwrap_or_default()
     } else {
         // Fallback: shouldn't happen, but use empty string if index is out of range.
         String::new()
@@ -850,6 +853,7 @@ fn build_editor_suggestion(
 }
 
 /// Build the transient overlay label shown in the top-right corner (resize, PTY status, etc.).
+#[allow(dead_code)]
 fn build_resize_overlay(state: &mut GpuRuntimeState) -> Option<String> {
     if let Some(ref banner) = state.overlays.pending_update {
         return Some(match banner {
@@ -902,6 +906,7 @@ fn adjust_selection_for_scroll(
 }
 
 /// Refresh CWD labels, compute tab button labels, and compute drag insert position.
+#[allow(dead_code)]
 fn build_tab_bar(state: &mut GpuRuntimeState) -> (Vec<String>, Option<usize>) {
     // Refresh cwd labels from child process (best-effort; silent on failure).
     let n_tabs = state.tabs.len();
@@ -970,6 +975,7 @@ fn build_tab_bar(state: &mut GpuRuntimeState) -> (Vec<String>, Option<usize>) {
 }
 
 /// GC expired toasts and convert them to the renderer's `Toast` type.
+#[allow(dead_code)]
 fn collect_toasts(state: &mut GpuRuntimeState) -> Vec<Toast> {
     let now = std::time::Instant::now();
     state.overlays.toasts.retain(|t| t.expires_at > now);
@@ -1059,6 +1065,43 @@ fn build_command_palette_snapshot(state: &GpuRuntimeState) -> Option<CommandPale
     state.command_palette.as_ref().map(|cp| {
         let sub_prompt_label = cp.sub_prompt.as_ref().map(|sp| match sp {
             crate::state::SubPrompt::Ssh => "SSH → New connection (user@host):".to_owned(),
+            crate::state::SubPrompt::SnippetPlaceholders {
+                placeholders,
+                current_placeholder_idx,
+                options,
+                current_option_idx,
+                ..
+            } => {
+                if *current_placeholder_idx < placeholders.len() {
+                    let placeholder_name = &placeholders[*current_placeholder_idx];
+                    let available_options = options.get(*current_placeholder_idx);
+                    if let Some(opts) = available_options {
+                        if opts.is_empty() {
+                            // No options available: accept free-form input
+                            format!(
+                                "Enter {} (type value or press Enter to skip):",
+                                placeholder_name
+                            )
+                        } else {
+                            // Show dropdown options
+                            let mut label =
+                                format!("Select {} (↑/↓ to navigate):\n", placeholder_name);
+                            for (idx, opt) in opts.iter().enumerate() {
+                                if idx == *current_option_idx {
+                                    label.push_str(&format!("  > {}\n", opt));
+                                } else {
+                                    label.push_str(&format!("    {}\n", opt));
+                                }
+                            }
+                            label
+                        }
+                    } else {
+                        format!("Select {} (loading options...):", placeholder_name)
+                    }
+                } else {
+                    "Executing snippet...".to_owned()
+                }
+            }
         });
         let items: Vec<String> = if sub_prompt_label.is_some() {
             vec![]

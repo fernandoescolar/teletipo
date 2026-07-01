@@ -5,6 +5,8 @@
 //! of palette items, so adding new item sources doesn't require editing the main
 //! palette dispatcher.
 
+#![allow(dead_code)] // Provider structs are stubs for future implementation
+
 use crate::commands::CommandId;
 
 /// An action that can be invoked from the command palette.
@@ -24,6 +26,9 @@ pub(crate) enum PaletteAction {
     InsertHistoryCommand(String),
     /// Fill the query with a prefix and refilter without closing the palette.
     FilterByPrefix(String),
+    /// Execute a command snippet (with optional {{placeholders}}).
+    /// Tuple: (snippet_index, command_template, working_dir)
+    ExecuteSnippet(usize, String, Option<String>),
 }
 
 /// A single item in the command palette list.
@@ -34,6 +39,7 @@ pub(crate) struct PaletteItem {
 }
 
 /// Runtime state for the command palette overlay (Cmd+Shift+P).
+#[derive(Clone, Debug)]
 pub(crate) struct CommandPaletteState {
     /// Current filter query entered by the user.
     pub(crate) query: String,
@@ -60,6 +66,19 @@ pub(crate) struct CommandPaletteState {
 #[derive(Clone, Debug)]
 pub(crate) enum SubPrompt {
     Ssh,
+    SnippetPlaceholders {
+        template: String,
+        cwd: Option<String>,
+        placeholders: Vec<String>,
+        /// For each placeholder, either the selected value or None if not yet filled.
+        values: Vec<Option<String>>,
+        /// For each placeholder, the list of available options (from placeholder_sources).
+        options: Vec<Vec<String>>,
+        /// Index of the current placeholder being filled.
+        current_placeholder_idx: usize,
+        /// Index of the selected option within options[current_placeholder_idx].
+        current_option_idx: usize,
+    },
 }
 
 pub(crate) const PALETTE_MAX_VISIBLE: usize = 10;
@@ -135,7 +154,7 @@ pub(crate) struct PaletteContext<'a> {
 pub(crate) struct CoreCommandsProvider;
 
 impl PaletteProvider for CoreCommandsProvider {
-    fn items(&self, ctx: &PaletteContext) -> Vec<PaletteItem> {
+    fn items(&self, _ctx: &PaletteContext) -> Vec<PaletteItem> {
         // TODO: read from command_registry::COMMAND_REGISTRY, filter by palette visibility
         Vec::new()
     }
@@ -224,6 +243,154 @@ pub(crate) fn build_all_items(ctx: &PaletteContext) -> Vec<PaletteItem> {
         .collect()
 }
 
+// ── Snippet placeholder handling ──────────────────────────────────────────
+
+/// Extract all `{{placeholder}}` names from a command template (preserving order, no duplicates).
+fn extract_placeholders(template: &str) -> Vec<String> {
+    let mut placeholders = Vec::new();
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' && chars.peek() == Some(&'{') {
+            chars.next(); // consume second '{'
+            let mut name = String::new();
+            while let Some(c) = chars.next() {
+                if c == '}' && chars.peek() == Some(&'}') {
+                    chars.next(); // consume second '}'
+                    if !placeholders.contains(&name) {
+                        placeholders.push(name);
+                    }
+                    break;
+                }
+                name.push(c);
+            }
+        }
+    }
+    placeholders
+}
+
+/// Get options for a placeholder by executing its source command.
+fn get_placeholder_options(state: &crate::GpuRuntimeState, placeholder_name: &str) -> Vec<String> {
+    for source in &state.user_config.placeholder_sources {
+        if source.name == placeholder_name {
+            tracing::info!(
+                placeholder = %placeholder_name,
+                command = %source.command,
+                "executing placeholder source command"
+            );
+
+            // Try to execute the command and capture output
+            let mut cmd = std::process::Command::new("sh");
+            cmd.arg("-c").arg(&source.command);
+
+            // Execute in the active tab's working directory if available
+            if let Ok(cwd) = std::env::current_dir() {
+                cmd.current_dir(&cwd);
+            }
+
+            match cmd.output() {
+                Ok(output) => {
+                    let stdout_text = String::from_utf8_lossy(&output.stdout);
+                    let stderr_text = String::from_utf8_lossy(&output.stderr);
+
+                    tracing::info!(
+                        placeholder = %placeholder_name,
+                        exit_code = output.status.code(),
+                        stdout = %stdout_text,
+                        stderr = %stderr_text,
+                        "placeholder source command output"
+                    );
+
+                    if output.status.success() {
+                        let options: Vec<String> = stdout_text
+                            .lines()
+                            .map(|l| l.trim().to_owned())
+                            .filter(|l| !l.is_empty())
+                            .collect();
+
+                        tracing::info!(
+                            placeholder = %placeholder_name,
+                            count = options.len(),
+                            "placeholder options parsed"
+                        );
+
+                        return options;
+                    } else {
+                        tracing::warn!(
+                            placeholder = %placeholder_name,
+                            command = %source.command,
+                            exit_code = output.status.code(),
+                            stderr = %stderr_text,
+                            "placeholder source command failed"
+                        );
+                    }
+                }
+                Err(err) => {
+                    tracing::error!(
+                        placeholder = %placeholder_name,
+                        command = %source.command,
+                        error = %err,
+                        "failed to execute placeholder source command"
+                    );
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Get all options for all placeholders at once.
+fn get_all_placeholder_options(
+    state: &crate::GpuRuntimeState,
+    placeholders: &[String],
+) -> Vec<Vec<String>> {
+    placeholders
+        .iter()
+        .map(|name| get_placeholder_options(state, name))
+        .collect()
+}
+
+/// Replace all `{{placeholder}}` occurrences in a template with corresponding values.
+fn substitute_placeholders(template: &str, placeholders: &[String], values: &[String]) -> String {
+    let mut result = template.to_owned();
+    for (placeholder, value) in placeholders.iter().zip(values.iter()) {
+        let pattern = format!("{{{{{}}}}}", placeholder);
+        result = result.replace(&pattern, value);
+    }
+    result
+}
+
+/// Execute a snippet command (after placeholder substitution).
+fn execute_snippet(state: &mut crate::GpuRuntimeState, command: &str, _cwd: Option<&str>) {
+    let tab = &mut state.tabs[state.active_tab];
+    tab.app.editor_clear();
+    tab.app.insert_editor_input(command);
+    tab.history_index = None;
+    tab.editor_scroll_offset = 0;
+    tab.editor_horizontal_scroll_offset = 0;
+    // TODO: if cwd is Some, change to that directory before executing
+}
+
+/// Build palette items from saved command snippets.
+pub(crate) fn build_snippets_items(state: &crate::GpuRuntimeState) -> Vec<PaletteItem> {
+    state
+        .user_config
+        .commands
+        .iter()
+        .enumerate()
+        .map(|(idx, snippet)| {
+            let category = snippet.category.as_deref().unwrap_or("custom");
+            PaletteItem {
+                label: format!("{}: {}", category, snippet.label),
+                action: PaletteAction::ExecuteSnippet(
+                    idx,
+                    snippet.command.clone(),
+                    snippet.cwd.clone(),
+                ),
+            }
+        })
+        .collect()
+}
+
 // ── Palette UI lifecycle ──────────────────────────────────────────────────
 
 /// Open the command palette, populating it with all available items.
@@ -232,6 +399,11 @@ pub(crate) fn open(state: &mut crate::GpuRuntimeState) {
     primary.sort_by_key(|item| item.label.to_lowercase());
 
     let mut secondary = build_palette_secondary(state);
+
+    // Add command snippets to the secondary items
+    let snippets = build_snippets_items(state);
+    secondary.extend(snippets);
+
     secondary.sort_by_key(|item| item.label.to_lowercase());
 
     let primary_len = primary.len();
@@ -269,6 +441,11 @@ fn build_palette_primary(state: &crate::GpuRuntimeState) -> Vec<PaletteItem> {
 
     let active = state.active_tab;
     let headers: &[(&str, &str, bool)] = &[
+        (
+            "Snippets…",
+            "Snippet: ",
+            !state.user_config.commands.is_empty(),
+        ),
         (
             "Set Theme…",
             "Set Theme: ",
@@ -381,15 +558,72 @@ fn build_palette_secondary(state: &crate::GpuRuntimeState) -> Vec<PaletteItem> {
 }
 
 /// Handle keyboard input while the command palette is open.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::event::KeyEvent) {
     use winit::keyboard::{Key, NamedKey};
 
-    // Sub-prompt mode: all navigation is disabled; only text input, Enter, and Escape work.
+    // Sub-prompt mode handling for SSH and snippet placeholders
     if state
         .command_palette
         .as_ref()
         .is_some_and(|cp| cp.sub_prompt.is_some())
     {
+        // For snippet placeholders, Arrow Up/Down navigate options
+        if let Some(ref sub_prompt) = state
+            .command_palette
+            .as_ref()
+            .and_then(|cp| cp.sub_prompt.as_ref())
+        {
+            #[allow(clippy::collapsible_match)]
+            if let SubPrompt::SnippetPlaceholders { .. } = sub_prompt {
+                match &key_event.logical_key {
+                    Key::Named(NamedKey::ArrowUp) => {
+                        if let Some(cp) = state.command_palette.as_mut()
+                            && let Some(SubPrompt::SnippetPlaceholders {
+                                current_option_idx,
+                                options,
+                                current_placeholder_idx,
+                                ..
+                            }) = &mut cp.sub_prompt
+                        {
+                            let n_options = options
+                                .get(*current_placeholder_idx)
+                                .map(|o| o.len())
+                                .unwrap_or(0);
+                            if n_options > 0 {
+                                *current_option_idx = if *current_option_idx == 0 {
+                                    n_options - 1
+                                } else {
+                                    *current_option_idx - 1
+                                };
+                            }
+                        }
+                        return;
+                    }
+                    Key::Named(NamedKey::ArrowDown) => {
+                        if let Some(cp) = state.command_palette.as_mut()
+                            && let Some(SubPrompt::SnippetPlaceholders {
+                                current_option_idx,
+                                options,
+                                current_placeholder_idx,
+                                ..
+                            }) = &mut cp.sub_prompt
+                        {
+                            let n_options = options
+                                .get(*current_placeholder_idx)
+                                .map(|o| o.len())
+                                .unwrap_or(0);
+                            if n_options > 0 {
+                                *current_option_idx = (*current_option_idx + 1) % n_options;
+                            }
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         match &key_event.logical_key {
             Key::Named(NamedKey::Escape) => {
                 // Go back to the normal palette instead of closing entirely.
@@ -472,12 +706,14 @@ pub(crate) fn execute_from_pointer(state: &mut crate::GpuRuntimeState) {
 }
 
 /// Execute the currently selected palette action, then close the palette.
+#[allow(clippy::too_many_lines)]
 fn execute_action(state: &mut crate::GpuRuntimeState) {
     let Some(cp) = state.command_palette.take() else {
         return;
     };
 
-    // Sub-prompt mode: Enter confirms the typed destination and opens a new SSH tab.
+    // Sub-prompt mode: Enter confirms the typed destination and opens a new SSH tab,
+    // or selects an option from placeholder dropdowns.
     if let Some(ref kind) = cp.sub_prompt {
         match kind {
             SubPrompt::Ssh => {
@@ -487,9 +723,69 @@ fn execute_action(state: &mut crate::GpuRuntimeState) {
                     state.add_new_tab_with_exec(&cmd);
                 }
             }
+            SubPrompt::SnippetPlaceholders {
+                template,
+                cwd,
+                placeholders,
+                values,
+                options,
+                current_placeholder_idx,
+                current_option_idx,
+            } => {
+                let mut new_values = values.clone();
+                let has_options = !options[*current_placeholder_idx].is_empty();
+
+                if has_options {
+                    // User selected from dropdown
+                    if *current_option_idx < options[*current_placeholder_idx].len() {
+                        new_values[*current_placeholder_idx] =
+                            Some(options[*current_placeholder_idx][*current_option_idx].clone());
+                    }
+                } else {
+                    // No options available: use the query text as free-form input
+                    if !cp.query.is_empty() {
+                        new_values[*current_placeholder_idx] = Some(cp.query.clone());
+                    }
+                }
+
+                // Check if current placeholder is now filled
+                if new_values[*current_placeholder_idx].is_some() {
+                    // Check if all placeholders are filled
+                    if new_values.iter().all(|v| v.is_some()) {
+                        // All filled: substitute and execute
+                        let unwrapped_values: Vec<String> =
+                            new_values.into_iter().flatten().collect();
+                        let final_command =
+                            substitute_placeholders(template, placeholders, &unwrapped_values);
+                        execute_snippet(state, &final_command, cwd.as_deref());
+                    } else {
+                        // Move to next placeholder: re-open palette with updated state
+                        let next_idx = new_values.iter().position(|v| v.is_none()).unwrap_or(0);
+                        state.open_command_palette_modal(CommandPaletteState {
+                            query: String::new(),
+                            cursor_byte: 0,
+                            default_filtered: cp.default_filtered,
+                            all_items: cp.all_items,
+                            filtered: cp.filtered,
+                            selected: cp.selected,
+                            scroll_offset: cp.scroll_offset,
+                            sub_prompt: Some(SubPrompt::SnippetPlaceholders {
+                                template: template.clone(),
+                                cwd: cwd.clone(),
+                                placeholders: placeholders.clone(),
+                                values: new_values,
+                                options: options.clone(),
+                                current_placeholder_idx: next_idx,
+                                current_option_idx: 0,
+                            }),
+                        });
+                        return; // Don't close the palette, keep it open for next placeholder
+                    }
+                }
+            }
         }
         // Always close the palette after confirming (modal was already taken).
-        if state.overlays.active_modal == Some(crate::state::ModalOverlay::CommandPalette) {
+        if state.overlays.active_modal == Some(crate::state::ModalMarker::CommandPalette) {
             state.overlays.active_modal = None;
         }
         return;
@@ -576,6 +872,35 @@ fn execute_action(state: &mut crate::GpuRuntimeState) {
             };
             new_cp.refilter();
             state.open_command_palette_modal(new_cp);
+        }
+        PaletteAction::ExecuteSnippet(_idx, cmd_template, cwd) => {
+            let placeholders = extract_placeholders(&cmd_template);
+            if placeholders.is_empty() {
+                // No placeholders: execute immediately
+                execute_snippet(state, &cmd_template, cwd.as_deref());
+            } else {
+                // Has placeholders: enter sub-prompt mode with dropdown options
+                let options = get_all_placeholder_options(state, &placeholders);
+                let values = vec![None; placeholders.len()];
+                state.open_command_palette_modal(CommandPaletteState {
+                    query: String::new(),
+                    cursor_byte: 0,
+                    default_filtered: cp.default_filtered,
+                    all_items: cp.all_items,
+                    filtered: cp.filtered,
+                    selected: cp.selected,
+                    scroll_offset: cp.scroll_offset,
+                    sub_prompt: Some(SubPrompt::SnippetPlaceholders {
+                        template: cmd_template.clone(),
+                        cwd: cwd.clone(),
+                        placeholders,
+                        values,
+                        options,
+                        current_placeholder_idx: 0,
+                        current_option_idx: 0,
+                    }),
+                });
+            }
         }
     }
 }

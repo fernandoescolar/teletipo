@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SettingsUiState {
     pub(crate) open: bool,
     pub(crate) cursor: usize,

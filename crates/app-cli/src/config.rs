@@ -96,6 +96,68 @@ pub struct KeyBinding {
     pub action: String,
 }
 
+/// A placeholder data source: executes a command to generate a list of values.
+/// Stored under `[[placeholder_sources]]` in `config.toml`.
+///
+/// When a snippet contains a placeholder like `{{docker_service}}`, Teletipo
+/// looks up the matching `PlaceholderSource` by name, executes its command,
+/// and shows the output lines as a dropdown for the user to select from.
+///
+/// Example:
+/// ```toml
+/// [[placeholder_sources]]
+/// name = "docker_service"
+/// command = "docker ps --format '{{.Names}}'"
+///
+/// [[placeholder_sources]]
+/// name = "git_branch"
+/// command = "git branch --format='%(refname:short)'"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaceholderSource {
+    /// Name referenced in placeholders (e.g., `{{docker_service}}`).
+    pub name: String,
+    /// Shell command that generates the list of values (one per line).
+    pub command: String,
+}
+
+/// A command snippet: a saved favorite command with optional placeholders.
+/// Stored under `[[commands]]` in `config.toml`.
+///
+/// Placeholders use `{{name}}` syntax and reference `PlaceholderSource` entries.
+/// When executed, Teletipo runs the placeholder's command and shows a dropdown.
+///
+/// Example:
+/// ```toml
+/// [[commands]]
+/// label = "Run tests"
+/// command = "cargo test --workspace"
+/// cwd = "."
+/// category = "cargo"
+///
+/// [[commands]]
+/// label = "Docker logs"
+/// command = "docker compose logs -f {{docker_service}}"
+/// hint = "Service name from running containers"
+/// category = "docker"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandSnippet {
+    /// Display label shown in the palette.
+    pub label: String,
+    /// Command template (may contain `{{placeholder}}` syntax).
+    pub command: String,
+    /// Optional working directory. `None` uses the current tab's cwd.
+    pub cwd: Option<String>,
+    /// Optional hint shown in palette when executing this snippet.
+    #[serde(default)]
+    pub hint: Option<String>,
+    /// Category for organizing commands in the palette.
+    /// Defaults to "custom" if not specified.
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UserConfig {
@@ -106,6 +168,10 @@ pub struct UserConfig {
     pub active_theme: Option<String>,
     /// User-defined keybindings, each mapping a key combo to an action.
     pub keybindings: Vec<KeyBinding>,
+    /// Placeholder data sources that generate dynamic lists for snippet values.
+    pub placeholder_sources: Vec<PlaceholderSource>,
+    /// Saved command snippets with optional placeholders.
+    pub commands: Vec<CommandSnippet>,
 }
 
 // ── Settings field descriptors (drives the in-app settings overlay) ─────────
@@ -665,5 +731,95 @@ mod tests {
         assert!(!cfg.set_field("padding", "horizontal", "201"));
         assert!(!cfg.set_field("padding", "vertical", "201"));
         assert!(!cfg.set_field("terminal", "scrollback_lines", "1000001"));
+    }
+
+    #[test]
+    fn parse_commands_and_placeholder_sources_from_toml() {
+        let toml_str = r#"
+active_theme = "Catppuccin Mocha"
+
+[font]
+size = 14.0
+family = "Hack Nerd Font"
+
+[padding]
+horizontal = 16
+vertical = 16
+
+[terminal]
+shell = "/bin/zsh"
+scrollback_lines = 0
+bell = true
+restore_session = false
+notify_on_command_secs = 0
+opacity = 1.0
+
+[[keybindings]]
+key = "S"
+modifiers = ["Cmd"]
+action = "open_config_in_editor"
+
+[[commands]]
+label = "Run tests"
+command = "cargo test --workspace"
+cwd = "."
+category = "cargo"
+
+[[commands]]
+label = "Docker logs"
+command = "docker compose logs -f {{service}}"
+hint = "Follow logs for a service"
+category = "docker"
+
+[[placeholder_sources]]
+name = "branch"
+command = "git branch --format='%(refname:short)'"
+
+[[commands]]
+label = "Checkout branch"
+command = "git checkout {{branch}}"
+hint = "Checkout a branch"
+category = "git"
+"#;
+
+        let cfg: UserConfig = toml::from_str(toml_str).expect("failed to parse TOML");
+
+        // Verify placeholder_sources
+        assert_eq!(cfg.placeholder_sources.len(), 1);
+        assert_eq!(cfg.placeholder_sources[0].name, "branch");
+        assert_eq!(
+            cfg.placeholder_sources[0].command,
+            "git branch --format='%(refname:short)'"
+        );
+
+        // Verify commands
+        assert_eq!(cfg.commands.len(), 3);
+
+        // First command: simple, no placeholders
+        assert_eq!(cfg.commands[0].label, "Run tests");
+        assert_eq!(cfg.commands[0].command, "cargo test --workspace");
+        assert_eq!(cfg.commands[0].cwd, Some(".".to_string()));
+        assert_eq!(cfg.commands[0].hint, None);
+        assert_eq!(cfg.commands[0].category, Some("cargo".to_string()));
+
+        // Second command: with placeholder and category
+        assert_eq!(cfg.commands[1].label, "Docker logs");
+        assert_eq!(
+            cfg.commands[1].command,
+            "docker compose logs -f {{service}}"
+        );
+        assert_eq!(cfg.commands[1].cwd, None);
+        assert_eq!(
+            cfg.commands[1].hint,
+            Some("Follow logs for a service".to_string())
+        );
+        assert_eq!(cfg.commands[1].category, Some("docker".to_string()));
+
+        // Third command: with placeholder and category
+        assert_eq!(cfg.commands[2].label, "Checkout branch");
+        assert_eq!(cfg.commands[2].command, "git checkout {{branch}}");
+        assert_eq!(cfg.commands[2].cwd, None);
+        assert_eq!(cfg.commands[2].hint, Some("Checkout a branch".to_string()));
+        assert_eq!(cfg.commands[2].category, Some("git".to_string()));
     }
 }

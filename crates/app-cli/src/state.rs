@@ -101,20 +101,22 @@ pub(crate) struct OverlayState {
     pub(crate) last_search_query: Option<String>,
     /// Absolute prompt row target when sticky command overlay is visible.
     pub(crate) sticky_command_prompt_row: Option<usize>,
-    /// Currently active modal overlay, if any.
-    pub(crate) active_modal: Option<ModalOverlay>,
+    /// Which modal is currently active, if any.
+    pub(crate) active_modal: Option<ModalMarker>,
 }
 
-/// Mutually-exclusive modal overlays.
+/// Enum marker for which modal is currently active (used for routing input).
+/// This complements the old `Option<ModalOverlay>` pattern during transition to
+/// state-payload unions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ModalOverlay {
+pub(crate) enum ModalMarker {
     Settings,
     CommandPalette,
     Keybindings,
 }
 
 /// State for the interactive keybindings editor panel.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct KeybindingsUiState {
     /// Whether the panel is open.
     pub(crate) open: bool,
@@ -181,7 +183,7 @@ pub(crate) enum UpdateBanner {
 // Palette types are now defined in the `palette` module; re-export here for
 // compatibility with existing code.
 
-pub(crate) use crate::palette::{CommandPaletteState, PaletteAction, PaletteItem, SubPrompt};
+pub(crate) use crate::palette::{CommandPaletteState, SubPrompt};
 
 pub(crate) const PALETTE_MAX_VISIBLE_PUB: usize = crate::palette::PALETTE_MAX_VISIBLE;
 

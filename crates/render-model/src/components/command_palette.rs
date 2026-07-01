@@ -48,10 +48,14 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let y0 = layout.tab_bar_h + layout.height * 0.08;
 
     if let Some(label) = &cp.sub_prompt_label {
-        let label_h = layout.cell_h_px * 1.4;
+        // Split label into lines and calculate dynamic height
+        let label_lines: Vec<&str> = label.lines().collect();
+        let line_h = layout.cell_h_px * 1.4;
+        let label_h = line_h * (label_lines.len() as f32).max(1.0);
         let input_h = layout.cell_h_px * 1.8;
         let total_h = label_h + input_h;
         let y1 = (y0 + total_h).min(layout.height);
+
         scene.rect_to_layer(
             SceneLayer::Overlay,
             x0 - 2.0,
@@ -69,18 +73,25 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             1.0,
             divider,
         );
-        scene.text_to_layer(
-            SceneLayer::Overlay,
-            x0 + layout.cell_w_px * 0.8,
-            y0 + (label_h - layout.cell_h_px) * 0.5,
-            truncate_chars(label, PALETTE_MAX_CHARS),
-            label_color,
-        );
+
+        // Render each line of the label
+        let mut y_offset = y0;
+        for line in label_lines {
+            scene.text_to_layer(
+                SceneLayer::Overlay,
+                x0 + layout.cell_w_px * 0.8,
+                y_offset + (line_h - layout.cell_h_px) * 0.5,
+                line.to_string(),
+                label_color,
+            );
+            y_offset += line_h;
+        }
+
         scene.text_to_layer(
             SceneLayer::Overlay,
             x0 + layout.cell_w_px * 0.8,
             y0 + label_h + (input_h - layout.cell_h_px) * 0.5,
-            truncate_chars(&format!("> {}", cp.query), PALETTE_MAX_CHARS),
+            format!("> {}", cp.query),
             text,
         );
         return;

@@ -145,7 +145,7 @@ use crate::settings::SettingsUiState;
 use crate::shell;
 use crate::snapshot;
 use crate::state::{
-    CursorState, DragState, LayoutState, ModalOverlay, ModifierState, OverlayState, ThemeFontState,
+    CursorState, DragState, LayoutState, ModalMarker, ModifierState, OverlayState, ThemeFontState,
 };
 use crate::tab::{HistoryEntry, TabState};
 use platform_abstraction::{AccessNode, AccessibilityTree, WindowControl};
@@ -248,7 +248,7 @@ impl GpuRuntimeState {
         self.settings.open = true;
         self.settings.cursor = 0;
         self.settings.edit_buf = None;
-        self.overlays.active_modal = Some(ModalOverlay::Settings);
+        self.overlays.active_modal = Some(ModalMarker::Settings);
     }
 
     /// Open the command palette modal and close any other active modal.
@@ -257,13 +257,13 @@ impl GpuRuntimeState {
         self.settings.search_buf = None;
         self.settings.edit_buf = None;
         self.command_palette = Some(cp);
-        self.overlays.active_modal = Some(ModalOverlay::CommandPalette);
+        self.overlays.active_modal = Some(ModalMarker::CommandPalette);
     }
 
     /// Close the settings modal if open.
     pub(crate) fn close_settings_modal(&mut self) {
         self.settings.open = false;
-        if self.overlays.active_modal == Some(ModalOverlay::Settings) {
+        if self.overlays.active_modal == Some(ModalMarker::Settings) {
             self.overlays.active_modal = None;
         }
     }
@@ -271,7 +271,7 @@ impl GpuRuntimeState {
     /// Close the command palette modal if open.
     pub(crate) fn close_command_palette_modal(&mut self) {
         self.command_palette = None;
-        if self.overlays.active_modal == Some(ModalOverlay::CommandPalette) {
+        if self.overlays.active_modal == Some(ModalMarker::CommandPalette) {
             self.overlays.active_modal = None;
         }
     }
@@ -279,9 +279,9 @@ impl GpuRuntimeState {
     /// Close whichever modal is currently active.
     pub(crate) fn close_active_modal(&mut self) {
         match self.overlays.active_modal {
-            Some(ModalOverlay::Settings) => self.close_settings_modal(),
-            Some(ModalOverlay::CommandPalette) => self.close_command_palette_modal(),
-            Some(ModalOverlay::Keybindings) => {
+            Some(ModalMarker::Settings) => self.close_settings_modal(),
+            Some(ModalMarker::CommandPalette) => self.close_command_palette_modal(),
+            Some(ModalMarker::Keybindings) => {
                 crate::keybindings_ui::close_keybindings_panel(self);
             }
             None => {}
@@ -528,7 +528,7 @@ impl GpuRuntimeState {
             tab.app.terminal.prompt_marks().last().copied().unwrap_or(0),
         ) {
             tab.current_block = Some(block);
-            tab.next_block_id = tab.next_block_id.checked_add(1).unwrap_or(u64::MAX);
+            tab.next_block_id = tab.next_block_id.saturating_add(1);
         }
 
         let Some(mut pty) = tab.pty.take() else {

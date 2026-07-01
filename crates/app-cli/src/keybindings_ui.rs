@@ -89,7 +89,7 @@ pub(crate) fn open_keybindings_panel(state: &mut GpuRuntimeState) {
     state.keybindings_panel.open = true;
     state.keybindings_panel.recording = false;
     state.keybindings_panel.just_saved = false;
-    state.overlays.active_modal = Some(crate::state::ModalOverlay::Keybindings);
+    state.overlays.active_modal = Some(crate::state::ModalMarker::Keybindings);
 }
 
 /// Close the keybindings panel.
