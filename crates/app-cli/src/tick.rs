@@ -47,6 +47,31 @@ pub(crate) fn housekeeping(state: &mut GpuRuntimeState) {
         }
     }
 
+    // Poll the config reload file watcher (non-blocking, try to reload config).
+    if let Some(ref rx) = state.config_reload_rx {
+        match rx.try_recv() {
+            Ok(_) => {
+                // Config file changed; attempt to reload
+                match crate::config::reload_config_safe(&state.user_config) {
+                    Ok(new_config) => {
+                        state.user_config = new_config;
+                        state.push_toast(
+                            "Config reloaded".to_string(),
+                            crate::state::ToastKind::Success,
+                        );
+                    }
+                    Err(err) => {
+                        state.push_toast(err, crate::state::ToastKind::Error);
+                    }
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                state.config_reload_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
     // Autosave session every 5 minutes when session restore is enabled.
     const AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
     if state.user_config.terminal.restore_session

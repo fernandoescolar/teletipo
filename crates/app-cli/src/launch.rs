@@ -325,6 +325,7 @@ pub(crate) fn build_initial_state(
         },
         update_rx: Some(update_rx),
         update_last_checked: std::time::Instant::now(),
+        config_reload_rx: None,
         settings: crate::SettingsUiState::default(),
         keybindings_panel: crate::state::KeybindingsUiState::default(),
         command_palette: None,
@@ -424,6 +425,7 @@ fn process_shared_tab_data(saved_tabs: &[TabSession]) -> (Vec<String>, Vec<Histo
 }
 
 /// Build a single tab with its associated PTY and application state
+#[allow(clippy::too_many_lines)]
 fn build_single_tab(
     index: usize,
     saved: &TabSession,

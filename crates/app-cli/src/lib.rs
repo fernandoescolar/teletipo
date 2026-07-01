@@ -6,6 +6,7 @@ mod command_registry;
 mod commands;
 mod completion;
 mod config;
+mod config_watcher;
 mod consts;
 mod coords;
 mod entry;

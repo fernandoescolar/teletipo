@@ -92,6 +92,22 @@ pub fn run(
             return std::process::ExitCode::FAILURE;
         }
     };
+
+    // Initialize config file watcher
+    if let Some(config_dir) = dirs::config_dir() {
+        match crate::config_watcher::ConfigWatcher::start(config_dir) {
+            Ok(mut watcher) => {
+                state.borrow_mut().config_reload_rx = watcher.rx.take();
+                // Watcher is stored in a box that lives for the duration of the app
+                // (SAFETY: This is intentional - the watcher must remain alive for file monitoring)
+                let _ = Box::leak(Box::new(watcher));
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to initialize config file watcher");
+            }
+        }
+    }
+
     let (initial_font_family, initial_font_size, initial_opacity) = {
         let s = state.borrow();
         (

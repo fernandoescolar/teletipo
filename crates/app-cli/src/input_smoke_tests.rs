@@ -85,6 +85,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         themes_fonts: ThemeFontState::default(),
         update_rx: None,
         update_last_checked: std::time::Instant::now(),
+        config_reload_rx: None,
         settings: SettingsUiState::default(),
         keybindings_panel: crate::state::KeybindingsUiState::default(),
         command_palette: None,

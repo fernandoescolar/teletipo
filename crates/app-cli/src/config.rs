@@ -516,6 +516,13 @@ pub fn load_config_result() -> Result<UserConfig, ConfigError> {
     Ok(cfg)
 }
 
+/// Safely reload config from disk. Returns the new config if successful,
+/// or an error description if loading/parsing failed. Does not modify
+/// the passed-in config on failure (safe to use during live updates).
+pub fn reload_config_safe(_current: &UserConfig) -> Result<UserConfig, String> {
+    load_config_result().map_err(|e| format!("Config reload failed: {e}"))
+}
+
 #[tracing::instrument(skip(cfg))]
 pub fn save_config(cfg: &UserConfig) {
     if let Some(path) = config_path()

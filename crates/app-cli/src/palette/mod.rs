@@ -87,13 +87,22 @@ impl CommandPaletteState {
     /// Re-build `filtered` from `all_items` and the current `query`.
     /// When the query is empty, shows only `default_filtered` (primary actions +
     /// category headers). When non-empty, searches across all items.
+    ///
+    /// Query format: space-separated terms. Each term must be found within
+    /// the label (case-insensitive substring search). For example, "git ch"
+    /// matches "git checkout" and "agita la cacha" but not "git asd".
     pub(crate) fn refilter(&mut self) {
         let q = self.query.to_lowercase();
         if q.is_empty() {
             self.filtered = self.default_filtered.clone();
         } else {
+            let terms: Vec<&str> = q.split_whitespace().collect();
             self.filtered = (0..self.all_items.len())
-                .filter(|&i| self.all_items[i].label.to_lowercase().contains(&q))
+                .filter(|&i| {
+                    let label = self.all_items[i].label.to_lowercase();
+                    // All terms must be found within the label
+                    terms.iter().all(|term| label.contains(term))
+                })
                 .collect();
         }
         self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
@@ -641,6 +650,12 @@ pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::
                     cp.cursor_byte = byte_start;
                 }
             }
+            Key::Named(NamedKey::Space) => {
+                if let Some(cp) = state.command_palette.as_mut() {
+                    cp.query.insert(cp.cursor_byte, ' ');
+                    cp.cursor_byte += 1;
+                }
+            }
             Key::Character(ch) if !state.modifiers.super_down && !state.modifiers.ctrl_down => {
                 let text = ch.as_str();
                 if !text.is_empty()
@@ -680,6 +695,13 @@ pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::
             {
                 cp.query.remove(byte_start);
                 cp.cursor_byte = byte_start;
+                cp.refilter();
+            }
+        }
+        Key::Named(NamedKey::Space) => {
+            if let Some(cp) = state.command_palette.as_mut() {
+                cp.query.insert(cp.cursor_byte, ' ');
+                cp.cursor_byte += 1;
                 cp.refilter();
             }
         }

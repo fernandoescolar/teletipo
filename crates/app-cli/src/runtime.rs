@@ -207,6 +207,9 @@ pub(crate) struct GpuRuntimeState {
     /// Receiver for the background update-check result (consumed once after the
     /// check completes; set to `None` afterwards).
     pub(crate) update_rx: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
+    /// Receiver for config reload events from the file watcher.
+    pub(crate) config_reload_rx:
+        Option<std::sync::mpsc::Receiver<crate::config_watcher::ConfigReloadEvent>>,
     /// When the most recent update check was spawned (for daily re-scheduling).
     pub(crate) update_last_checked: Instant,
     /// Settings overlay interaction state.
