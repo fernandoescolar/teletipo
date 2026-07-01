@@ -7,6 +7,8 @@
 
 #![allow(dead_code)] // Provider structs are stubs for future implementation
 
+mod path_completion;
+
 use crate::commands::CommandId;
 
 /// An action that can be invoked from the command palette.
@@ -292,8 +294,9 @@ fn get_placeholder_options(state: &crate::GpuRuntimeState, placeholder_name: &st
             cmd.arg("-c").arg(&source.command);
 
             // Execute in the active tab's working directory if available
-            if let Ok(cwd) = std::env::current_dir() {
-                cmd.current_dir(&cwd);
+            let tab_cwd = &state.tabs[state.active_tab].cwd;
+            if !tab_cwd.is_empty() {
+                cmd.current_dir(tab_cwd);
             }
 
             match cmd.output() {

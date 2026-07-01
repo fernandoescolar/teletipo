@@ -4,7 +4,14 @@ const PALETTE_MAX_VISIBLE: usize = 10;
 const PALETTE_MAX_CHARS: usize = 48;
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
-    text.chars().take(max_chars).collect()
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        text.to_string()
+    } else {
+        let mut result: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+        result.push('…');
+        result
+    }
 }
 
 fn with_alpha(mut c: [f32; 4], alpha: f32) -> [f32; 4] {
@@ -81,7 +88,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
                 SceneLayer::Overlay,
                 x0 + layout.cell_w_px * 0.8,
                 y_offset + (line_h - layout.cell_h_px) * 0.5,
-                line.to_string(),
+                truncate_chars(line, PALETTE_MAX_CHARS),
                 label_color,
             );
             y_offset += line_h;
