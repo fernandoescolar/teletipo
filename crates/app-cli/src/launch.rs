@@ -595,20 +595,15 @@ pub(crate) fn build_app(rows: usize, cols: usize) -> anyhow::Result<App> {
 // ── Context menu ──────────────────────────────────────────────────────────────
 
 /// Execute the selected item from the tab context menu.
-/// `tab_idx` is the tab the menu was opened for; `item` is 0-3.
+/// `tab_idx` is the tab the menu was opened for; `item` is the index into
+/// [`crate::command_registry::tab_context_menu_commands`] (same order the
+/// menu was built with).
 pub(crate) fn execute_context_menu_item(state: &mut GpuRuntimeState, tab_idx: usize, item: usize) {
-    use crate::commands::{CommandContext, CommandId, execute_ui_command};
-    let cmd = match item {
-        0 => Some(CommandId::NewTab),
-        1 => Some(CommandId::CloseTab),
-        2 => Some(CommandId::MoveTabLeft),
-        3 => Some(CommandId::MoveTabRight),
-        _ => None,
-    };
-    if let Some(cmd) = cmd {
+    use crate::commands::{CommandContext, execute_ui_command};
+    if let Some(def) = crate::command_registry::tab_context_menu_commands().get(item) {
         execute_ui_command(
             state,
-            cmd,
+            def.id,
             CommandContext {
                 tab_idx: Some(tab_idx),
             },

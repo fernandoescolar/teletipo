@@ -1,58 +1,9 @@
+use crate::command_registry::{bindable_actions, default_binding};
 use crate::config::{KeyBinding, save_config};
 use crate::runtime::GpuRuntimeState;
 use render_glow::{KeybindingRow, KeybindingsOverlay};
 use winit::event::ElementState;
 use winit::keyboard::{Key, NamedKey};
-
-/// Built-in default key combos shown when no user binding exists for an action.
-/// These reflect the hardcoded shortcuts in `input/keyboard.rs`.
-/// macOS uses Cmd; Windows/Linux use Ctrl.
-#[cfg(target_os = "macos")]
-pub(crate) const DEFAULT_BINDINGS: &[(&str, &str)] = &[
-    ("new_tab", "Cmd+T"),
-    ("close_tab", "Cmd+W"),
-    ("move_tab_left", "Cmd+["),
-    ("move_tab_right", "Cmd+]"),
-    ("copy", "Cmd+C"),
-    ("paste", "Cmd+V"),
-    ("zoom_in", "Cmd++"),
-    ("zoom_out", "Cmd+-"),
-    ("open_settings", "Cmd+,"),
-    ("open_command_palette", "Cmd+Shift+P"),
-];
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) const DEFAULT_BINDINGS: &[(&str, &str)] = &[
-    ("new_tab", "Ctrl+T"),
-    ("close_tab", "Ctrl+W"),
-    ("move_tab_left", "Ctrl+["),
-    ("move_tab_right", "Ctrl+]"),
-    ("copy", "Ctrl+C"),
-    ("paste", "Ctrl+V"),
-    ("zoom_in", "Ctrl++"),
-    ("zoom_out", "Ctrl+-"),
-    ("open_settings", "Ctrl+,"),
-    ("open_command_palette", "Ctrl+Shift+P"),
-];
-
-/// All actions that can be assigned a custom keybinding.
-/// Order determines display order in the panel.
-pub(crate) const BINDABLE_ACTIONS: &[(&str, &str)] = &[
-    ("new_tab", "New Tab"),
-    ("close_tab", "Close Tab"),
-    ("move_tab_left", "Move Tab Left"),
-    ("move_tab_right", "Move Tab Right"),
-    ("jump_to_prev_prompt", "Jump to Prev Prompt"),
-    ("jump_to_next_prompt", "Jump to Next Prompt"),
-    ("copy", "Copy"),
-    ("paste", "Paste"),
-    ("clear", "Clear Screen"),
-    ("zoom_in", "Zoom In"),
-    ("zoom_out", "Zoom Out"),
-    ("open_settings", "Open Settings"),
-    ("open_command_palette", "Open Command Palette"),
-    ("open_config_in_editor", "Open Config in Editor"),
-];
 
 /// Format a `KeyBinding` as a human-readable combo string (e.g. `"Cmd+Shift+T"`).
 fn format_combo(binding: &KeyBinding) -> String {
@@ -99,10 +50,8 @@ fn find_binding(state: &GpuRuntimeState, action_id: &str) -> Option<(String, boo
         return Some((format_combo(b), false)); // false = not a default
     }
     // Fall back to built-in default
-    DEFAULT_BINDINGS
-        .iter()
-        .find(|(id, _)| id.eq_ignore_ascii_case(action_id))
-        .map(|(_, combo)| (combo.to_string(), true)) // true = is a default
+    let def = crate::command_registry::find_by_name(action_id)?;
+    default_binding(def).map(|combo| (combo.to_string(), true)) // true = is a default
 }
 
 /// Build a `KeybindingsOverlay` from current runtime state. Returns `None` when the
@@ -111,15 +60,15 @@ pub(crate) fn build_keybindings_overlay(state: &GpuRuntimeState) -> Option<Keybi
     if !state.keybindings_panel.open {
         return None;
     }
-    let rows = BINDABLE_ACTIONS
-        .iter()
-        .map(|(id, label)| {
-            let (binding, is_default) = find_binding(state, id)
+    let rows = bindable_actions()
+        .into_iter()
+        .map(|def| {
+            let (binding, is_default) = find_binding(state, def.name)
                 .map(|(b, d)| (Some(b), d))
                 .unwrap_or((None, false));
             KeybindingRow {
-                action_id: id.to_string(),
-                label: label.to_string(),
+                action_id: def.name.to_string(),
+                label: def.label.to_string(),
                 binding,
                 is_default,
             }
@@ -154,7 +103,7 @@ pub(crate) fn close_keybindings_panel(state: &mut GpuRuntimeState) {
 pub(crate) const VISIBLE_ROWS: usize = 12;
 
 fn clamp_scroll(state: &mut GpuRuntimeState) {
-    let n = BINDABLE_ACTIONS.len();
+    let n = bindable_actions().len();
     let cursor = state.keybindings_panel.cursor;
     let offset = &mut state.keybindings_panel.scroll_offset;
     if cursor < *offset {
@@ -235,7 +184,8 @@ pub(crate) fn handle_keybindings_key(
             _ => {
                 if let Some(mut binding) = binding_from_key_event(state, key_event) {
                     let action_idx = state.keybindings_panel.cursor;
-                    if let Some((action_id, _)) = BINDABLE_ACTIONS.get(action_idx) {
+                    if let Some(def) = bindable_actions().get(action_idx) {
+                        let action_id = def.name;
                         binding.action = action_id.to_string();
                         // Remove any existing binding for this action.
                         state
@@ -255,7 +205,7 @@ pub(crate) fn handle_keybindings_key(
     }
 
     // ── Normal navigation mode ────────────────────────────────────────────────
-    let n = BINDABLE_ACTIONS.len();
+    let n = bindable_actions().len();
     match &key_event.logical_key {
         Key::Named(NamedKey::Escape) => {
             close_keybindings_panel(state);
@@ -282,7 +232,8 @@ pub(crate) fn handle_keybindings_key(
         Key::Named(NamedKey::Backspace) | Key::Named(NamedKey::Delete) => {
             // Remove the binding for the highlighted action.
             let action_idx = state.keybindings_panel.cursor;
-            if let Some((action_id, _)) = BINDABLE_ACTIONS.get(action_idx) {
+            if let Some(def) = bindable_actions().get(action_idx) {
+                let action_id = def.name;
                 let before = state.user_config.keybindings.len();
                 state
                     .user_config

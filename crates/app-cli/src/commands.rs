@@ -51,33 +51,11 @@ pub(crate) enum CommandId {
 
 impl CommandId {
     /// Map a config action-name string (snake_case) to a `CommandId`.
+    ///
+    /// Delegates to [`crate::command_registry`], the single source of truth
+    /// for command names.
     pub(crate) fn from_name(s: &str) -> Option<Self> {
-        match s.trim().to_lowercase().as_str() {
-            "new_tab" => Some(Self::NewTab),
-            "close_tab" => Some(Self::CloseTab),
-            "move_tab_left" => Some(Self::MoveTabLeft),
-            "move_tab_right" => Some(Self::MoveTabRight),
-            "jump_to_prev_prompt" => Some(Self::JumpToPrevPrompt),
-            "jump_to_next_prompt" => Some(Self::JumpToNextPrompt),
-            "open_settings" => Some(Self::OpenSettings),
-            "open_config_in_editor" => Some(Self::OpenConfigInEditor),
-            "reveal_config_in_finder" => Some(Self::RevealConfigInFinder),
-            "restart_now" => Some(Self::RestartNow),
-            "copy" => Some(Self::Copy),
-            "paste" => Some(Self::Paste),
-            "clear" => Some(Self::Clear),
-            "zoom_in" => Some(Self::ZoomIn),
-            "zoom_out" => Some(Self::ZoomOut),
-            "open_command_palette" => Some(Self::OpenCommandPalette),
-            "copy_cwd" => Some(Self::CopyCwd),
-            "open_cwd_in_finder" => Some(Self::OpenCwdInFinder),
-            "repeat_last_command" => Some(Self::RepeatLastCommand),
-            "clear_scrollback" => Some(Self::ClearScrollback),
-            "copy_last_output" => Some(Self::CopyLastOutput),
-            "copy_mode_enter" => Some(Self::CopyModeEnter),
-            "copy_mode_exit" => Some(Self::CopyModeExit),
-            _ => None,
-        }
+        crate::command_registry::find_by_name(s).map(|def| def.id)
     }
 }
 
@@ -226,55 +204,23 @@ fn extract_last_output(state: &GpuRuntimeState) -> String {
         .to_owned()
 }
 
-/// Build the stable, shared command palette entries sourced from `CommandId`.
+/// Build the stable, shared command palette entries sourced from
+/// [`crate::command_registry::COMMAND_REGISTRY`].
 pub(crate) fn palette_commands(state: &GpuRuntimeState) -> Vec<(String, CommandId)> {
-    let mut out = vec![
-        ("New Tab".to_owned(), CommandId::NewTab),
-        ("Close Tab".to_owned(), CommandId::CloseTab),
-        (
-            "Jump to Previous Prompt".to_owned(),
-            CommandId::JumpToPrevPrompt,
-        ),
-        (
-            "Jump to Next Prompt".to_owned(),
-            CommandId::JumpToNextPrompt,
-        ),
-        ("Open Settings".to_owned(), CommandId::OpenSettings),
-        ("Open Keybindings".to_owned(), CommandId::OpenKeybindings),
-        (
-            "Open Config in Editor".to_owned(),
-            CommandId::OpenConfigInEditor,
-        ),
-        (
-            "Reveal Config in Finder".to_owned(),
-            CommandId::RevealConfigInFinder,
-        ),
-    ];
-    out.extend([
-        ("Copy Working Directory".to_owned(), CommandId::CopyCwd),
-        (
-            "Reveal Working Directory in Finder".to_owned(),
-            CommandId::OpenCwdInFinder,
-        ),
-        (
-            "Repeat Last Command".to_owned(),
-            CommandId::RepeatLastCommand,
-        ),
-        ("Clear Scrollback".to_owned(), CommandId::ClearScrollback),
-        ("Copy Last Output".to_owned(), CommandId::CopyLastOutput),
-    ]);
+    use crate::command_registry::{COMMAND_REGISTRY, PaletteVisibility, find};
+
+    let mut out: Vec<(String, CommandId)> = COMMAND_REGISTRY
+        .iter()
+        .filter(|def| def.palette == PaletteVisibility::Always)
+        .map(|def| (def.label.to_owned(), def.id))
+        .collect();
 
     if matches!(
         state.overlays.pending_update,
         Some(UpdateBanner::Available(_))
     ) {
-        out.insert(
-            0,
-            (
-                "Restart Now (update ready)".to_owned(),
-                CommandId::RestartNow,
-            ),
-        );
+        let def = find(CommandId::RestartNow);
+        out.insert(0, (def.label.to_owned(), def.id));
     }
     out
 }

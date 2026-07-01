@@ -9,7 +9,6 @@ use render_glow::{AppWindowEvent, SCROLLBAR_W_PX};
 use std::time::Instant;
 use winit::event::{ElementState, MouseButton};
 
-const TAB_MENU_ITEMS: &[&str] = &["New Tab", "Close Tab", "Move Left", "Move Right"];
 const TERMINAL_MENU_ITEMS: &[&str] = &["Copy", "Paste", "Scroll to Bottom"];
 const EDITOR_MENU_ITEMS: &[&str] = &["Undo", "Redo", "Copy", "Cut", "Paste", "Select All"];
 const CONTEXT_MENU_ROW_HEIGHT_FACTOR: f64 = 1.4;
@@ -853,13 +852,17 @@ fn handle_right_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> 
             if n > 0 && state.cursor.cursor_x < state.layout.window_width as f64 - add_btn_w {
                 let tab_w = tab_area_w / n as f64;
                 let tab_idx = (state.cursor.cursor_x / tab_w).min(n as f64 - 1.0) as usize;
+                let tab_menu_commands = crate::command_registry::tab_context_menu_commands();
                 state.overlays.context_menu = Some(crate::state::ContextMenuState {
                     kind: crate::state::ContextMenuKind::Tab { tab_idx },
                     x_px: state.cursor.cursor_x,
                     y_px: tab_bar_h,
                     hovered_item: None,
-                    items: TAB_MENU_ITEMS.iter().map(|s| (*s).to_owned()).collect(),
-                    enabled_items: vec![true; TAB_MENU_ITEMS.len()],
+                    items: tab_menu_commands
+                        .iter()
+                        .map(|def| def.context_menu_label.unwrap_or(def.label).to_owned())
+                        .collect(),
+                    enabled_items: vec![true; tab_menu_commands.len()],
                 });
             }
         } else {

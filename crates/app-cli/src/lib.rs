@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 #![allow(missing_docs)]
 
+mod command_registry;
 mod commands;
 mod completion;
 mod config;

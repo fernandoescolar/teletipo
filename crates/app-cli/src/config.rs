@@ -83,9 +83,11 @@ impl Default for TerminalCfg {
 /// Key names (case-insensitive): single printable chars (`"t"`, `"w"`, …),
 /// `"Return"`, `"Escape"`, `"Tab"`, `"BackSpace"`, `"Space"`, `"F1"`–`"F12"`.
 /// Modifier names: `"Cmd"` (or `"Super"`), `"Ctrl"`, `"Shift"`, `"Alt"`.
-/// Action names: `"new_tab"`, `"close_tab"`, `"move_tab_left"`,
-/// `"move_tab_right"`, `"open_settings"`, `"open_command_palette"`, `"copy"`,
-/// `"paste"`, `"clear"`, `"zoom_in"`, `"zoom_out"`.
+/// Action names: see the `name` field of every entry in
+/// `crate::command_registry::COMMAND_REGISTRY` (the single source of truth —
+/// this list is intentionally not duplicated here since it would drift).
+/// Unrecognised action names are logged as a warning and ignored; see
+/// `UserConfig::validate`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyBinding {
     pub key: String,
@@ -281,6 +283,15 @@ impl UserConfig {
                 new = self.terminal.opacity,
                 "clamped out-of-range value"
             );
+        }
+        for binding in &self.keybindings {
+            if crate::command_registry::find_by_name(&binding.action).is_none() {
+                tracing::warn!(
+                    action = %binding.action,
+                    key = %binding.key,
+                    "keybinding action is not a recognised command; binding will be ignored"
+                );
+            }
         }
     }
 
