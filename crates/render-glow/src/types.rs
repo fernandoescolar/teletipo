@@ -74,6 +74,12 @@ pub(crate) struct FontSource {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct FontPathSource {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) face_index: u32,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ShapedGlyph {
     pub(crate) glyph_id: u16,
     pub(crate) source_char: char,

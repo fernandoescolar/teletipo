@@ -1,10 +1,11 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use fontdb::{Family, Query, Weight};
 
 use crate::emoji::ColorEmojiRasterizer;
-use crate::types::{FontSource, GlyphBitmap, STYLE_BOLD, STYLE_ITALIC, ShapedGlyph};
+use crate::types::{FontPathSource, FontSource, GlyphBitmap, STYLE_BOLD, STYLE_ITALIC, ShapedGlyph};
 
 // ── CPU font rasterizer ───────────────────────────────────────────────────────
 
@@ -12,15 +13,17 @@ pub(crate) struct CpuFontRasterizer {
     pub(crate) font_size_px: f32,
     pub(crate) primary_font: Option<fontdue::Font>,
     pub(crate) primary_font_source: Option<FontSource>,
-    /// Ordered list of Unicode symbol fallback fonts tried when a character
-    /// is absent from the primary font.  Uses specific fonts (Apple Symbols,
-    /// ZapfDingbats, Arial Unicode MS, …) rather than the generic SansSerif
-    /// family, which on macOS resolves to San Francisco and returns stub box
-    /// glyphs for many Unicode ranges fontdue cannot render.
-    unicode_fallback_fonts: Vec<fontdue::Font>,
-    /// Outline emoji font (monochrome, e.g. Noto Emoji) — used when no color
-    /// bitmap strike is available for a character.
-    emoji_font: Option<fontdue::Font>,
+    /// Ordered list of Unicode symbol fallback font paths (lazy-loaded).
+    /// Uses specific fonts (Apple Symbols, ZapfDingbats, Arial Unicode MS, …)
+    /// rather than the generic SansSerif family, which on macOS resolves to
+    /// San Francisco and returns stub box glyphs for many Unicode ranges.
+    unicode_fallback_paths: Vec<FontPathSource>,
+    /// Cached loaded fallback fonts (lazily populated from unicode_fallback_paths).
+    unicode_fallback_fonts_cache: RefCell<Vec<Option<fontdue::Font>>>,
+    /// Outline emoji font path (lazy-loaded, e.g. Noto Emoji).
+    emoji_font_path: Option<FontPathSource>,
+    /// Cached loaded emoji font (lazily populated from emoji_font_path).
+    emoji_font_cache: RefCell<Option<Option<fontdue::Font>>>,
     /// Color emoji rasterizer backed by SBIX/CBDT bitmap strikes.
     pub(crate) color_rasterizer: Option<ColorEmojiRasterizer>,
     glyph_cache: HashMap<(char, u8), GlyphBitmap>,
@@ -29,16 +32,19 @@ pub(crate) struct CpuFontRasterizer {
 
 impl CpuFontRasterizer {
     pub(crate) fn new(family: Option<String>, font_size_px: f32) -> Self {
-        let (primary_font, primary_font_source, unicode_fallback_fonts, emoji_font, emoji_source) =
+        let (primary_font, primary_font_source, unicode_fallback_paths, emoji_font_path, emoji_source) =
             load_fonts_for_family(family.as_deref());
         let color_rasterizer =
             emoji_source.and_then(|(path, fi)| ColorEmojiRasterizer::new(&path, fi));
+        let num_fallbacks = unicode_fallback_paths.len();
         Self {
             font_size_px,
             primary_font,
             primary_font_source,
-            unicode_fallback_fonts,
-            emoji_font,
+            unicode_fallback_paths,
+            unicode_fallback_fonts_cache: RefCell::new(vec![None; num_fallbacks]),
+            emoji_font_path,
+            emoji_font_cache: RefCell::new(None),
             color_rasterizer,
             glyph_cache: HashMap::new(),
             shaped_glyph_cache: HashMap::new(),
@@ -88,8 +94,8 @@ impl CpuFontRasterizer {
             return Some(g.clone());
         }
 
-        let font = self.pick_font_for_char(ch)?;
-        let (metrics, bitmap) = font.rasterize(ch, self.font_size_px.max(1.0));
+        let font_size = self.font_size_px.max(1.0);
+        let (metrics, bitmap) = self.rasterize_char(ch, font_size)?;
         if metrics.width == 0 || metrics.height == 0 {
             return None;
         }
@@ -106,25 +112,79 @@ impl CpuFontRasterizer {
         Some(glyph)
     }
 
-    fn pick_font_for_char(&self, ch: char) -> Option<&fontdue::Font> {
+    fn rasterize_char(&self, ch: char, font_size_px: f32) -> Option<(fontdue::Metrics, Vec<u8>)> {
         if let Some(font) = self.primary_font.as_ref()
             && font.lookup_glyph_index(ch) != 0
         {
-            return Some(font);
+            return Some(font.rasterize(ch, font_size_px));
         }
-        for font in &self.unicode_fallback_fonts {
-            if font.lookup_glyph_index(ch) != 0 {
-                return Some(font);
+
+        // Check fallback fonts
+        self.ensure_fallback_fonts_loaded();
+        let fallback_cache = self.unicode_fallback_fonts_cache.borrow();
+        for font_opt in fallback_cache.iter() {
+            if let Some(font) = font_opt && font.lookup_glyph_index(ch) != 0 {
+                return Some(font.rasterize(ch, font_size_px));
             }
         }
-        if let Some(font) = self.emoji_font.as_ref()
+        drop(fallback_cache);
+
+        // Check emoji font
+        self.ensure_emoji_font_loaded();
+        let emoji_cache = self.emoji_font_cache.borrow();
+        if let Some(Some(font)) = emoji_cache.as_ref()
             && font.lookup_glyph_index(ch) != 0
         {
-            return Some(font);
+            return Some(font.rasterize(ch, font_size_px));
         }
-        // No font covers this character — return None so the caller renders
-        // a blank cell rather than the primary font's .notdef box.
+
         None
+    }
+
+    fn ensure_fallback_fonts_loaded(&self) {
+        let mut cache = self.unicode_fallback_fonts_cache.borrow_mut();
+        for (i, font_opt) in cache.iter_mut().enumerate() {
+            if font_opt.is_none() {
+                if let Some(path_source) = self.unicode_fallback_paths.get(i) {
+                    if let Ok(data) = std::fs::read(&path_source.path) {
+                        if let Ok(font) = fontdue::Font::from_bytes(
+                            &data[..],
+                            fontdue::FontSettings {
+                                collection_index: path_source.face_index,
+                                ..fontdue::FontSettings::default()
+                            },
+                        ) {
+                            *font_opt = Some(font);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn ensure_emoji_font_loaded(&self) {
+        let mut cache = self.emoji_font_cache.borrow_mut();
+        if cache.is_none() {
+            if let Some(path_source) = &self.emoji_font_path {
+                if let Ok(data) = std::fs::read(&path_source.path) {
+                    if let Ok(font) = fontdue::Font::from_bytes(
+                        &data[..],
+                        fontdue::FontSettings {
+                            collection_index: path_source.face_index,
+                            ..fontdue::FontSettings::default()
+                        },
+                    ) {
+                        *cache = Some(Some(font));
+                    } else {
+                        *cache = Some(None);
+                    }
+                } else {
+                    *cache = Some(None);
+                }
+            } else {
+                *cache = Some(None);
+            }
+        }
     }
 
     pub(crate) fn glyph_indexed(&mut self, glyph_id: u16, style: u8) -> Option<GlyphBitmap> {
@@ -240,11 +300,11 @@ pub(crate) fn shape_line(
 
 /// Return type of [`load_fonts_for_family`].
 type LoadedFonts = (
-    Option<fontdue::Font>,  // primary
-    Option<FontSource>,     // primary source
-    Vec<fontdue::Font>,     // Unicode symbol fallbacks (ordered)
-    Option<fontdue::Font>,  // outline emoji (Noto Emoji, for fontdue)
-    Option<(PathBuf, u32)>, // color emoji: (file path, face index)
+    Option<fontdue::Font>,     // primary
+    Option<FontSource>,        // primary source
+    Vec<FontPathSource>,       // Unicode symbol fallback paths (ordered, lazy-loaded)
+    Option<FontPathSource>,    // outline emoji path (Noto Emoji, for fontdue, lazy-loaded)
+    Option<(PathBuf, u32)>,    // color emoji: (file path, face index)
 );
 
 pub(crate) fn load_fonts_for_family(family: Option<&str>) -> LoadedFonts {
@@ -314,31 +374,19 @@ pub(crate) fn load_fonts_for_family(family: Option<&str>) -> LoadedFonts {
 
     let fallback = load_unicode_fallback_fonts(&db);
 
-    // Load a monochrome outline emoji font for fontdue rasterization.
-    // Only load fonts whose glyph outlines fontdue can rasterize (glyf/CFF).
+    // Get path to monochrome outline emoji font for lazy loading.
+    // Only fonts whose glyph outlines fontdue can rasterize (glyf/CFF).
     // Apple Color Emoji uses SBIX bitmaps which fontdue cannot render, so it
     // is intentionally excluded — its glyf fallback entries are empty stubs
     // that produce misleading outlined-square bitmaps.
-    let emoji = load_font_source_from_named_families(
-        &db,
-        &[
-            "Noto Emoji",
-            "Noto Color Emoji",
-            "Segoe UI Emoji",
-            "Twitter Color Emoji",
-            "EmojiOne Mozilla",
-        ],
-    )
-    .and_then(|source| {
-        fontdue::Font::from_bytes(
-            source.bytes.as_ref(),
-            fontdue::FontSettings {
-                collection_index: source.face_index,
-                ..fontdue::FontSettings::default()
-            },
-        )
-        .ok()
-    });
+    let emoji_families = &[
+        "Noto Emoji",
+        "Noto Color Emoji",
+        "Segoe UI Emoji",
+        "Twitter Color Emoji",
+        "EmojiOne Mozilla",
+    ];
+    let emoji = find_emoji_font_path_for_families(&db, emoji_families);
 
     // Locate the color emoji font by file path only — the file will be
     // memory-mapped on demand so we never copy the full 100+ MB into the heap.
@@ -368,11 +416,11 @@ pub(crate) fn load_fonts_for_family(family: Option<&str>) -> LoadedFonts {
     (primary, primary_source, fallback, emoji, color_emoji_source)
 }
 
-/// Load an ordered list of Unicode symbol fallback fonts.
+/// Load an ordered list of Unicode symbol fallback font paths.
 /// Specific fonts with known good Unicode coverage are preferred over generic
 /// family queries (SansSerif on macOS resolves to San Francisco, which has stub
 /// glyph outlines for many Unicode ranges that fontdue cannot render).
-fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
+fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<FontPathSource> {
     const FAMILIES: &[&str] = &[
         "Apple Symbols",
         "Apple Braille",
@@ -386,10 +434,10 @@ fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
     ];
 
     let mut loaded_families = std::collections::HashSet::new();
-    let mut fonts: Vec<fontdue::Font> = FAMILIES
+    let mut fonts: Vec<FontPathSource> = FAMILIES
         .iter()
         .filter_map(|family| {
-            let source = load_font_source_from_query(
+            let path_source = find_font_path(
                 db,
                 Query {
                     families: &[Family::Name(family)],
@@ -397,33 +445,37 @@ fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
                     ..Query::default()
                 },
             )?;
-            let font =
-                fontdue::Font::from_bytes(source.bytes.as_ref(), fontdue::FontSettings::default())
-                    .ok()?;
             loaded_families.insert(*family);
-            Some(font)
+            Some(path_source)
         })
         .collect();
 
     // Direct-path fallbacks for fonts that fontdb might miss due to non-standard
     // scan paths or naming differences. Only loaded if fontdb didn't already find
     // the family by name.
-    fn load_from_path(path: &str) -> Option<fontdue::Font> {
-        let bytes = std::fs::read(path).ok()?;
-        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+    fn path_exists(path: &str) -> Option<FontPathSource> {
+        let pb = PathBuf::from(path);
+        if pb.is_file() {
+            Some(FontPathSource {
+                path: pb,
+                face_index: 0,
+            })
+        } else {
+            None
+        }
     }
 
     #[cfg(target_os = "macos")]
     {
         if !loaded_families.contains("Zapf Dingbats")
-            && let Some(font) = load_from_path("/System/Library/Fonts/ZapfDingbats.ttf")
+            && let Some(source) = path_exists("/System/Library/Fonts/ZapfDingbats.ttf")
         {
-            fonts.push(font);
+            fonts.push(source);
         }
         if !loaded_families.contains("Menlo")
-            && let Some(font) = load_from_path("/System/Library/Fonts/Menlo.ttc")
+            && let Some(source) = path_exists("/System/Library/Fonts/Menlo.ttc")
         {
-            fonts.push(font);
+            fonts.push(source);
         }
     }
 
@@ -436,9 +488,9 @@ fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
         ];
         for (family, path) in candidates.iter() {
             if !loaded_families.contains(family)
-                && let Some(font) = load_from_path(path)
+                && let Some(source) = path_exists(path)
             {
-                fonts.push(font);
+                fonts.push(source);
                 loaded_families.insert(family);
             }
         }
@@ -472,15 +524,30 @@ fn load_unicode_fallback_fonts(db: &fontdb::Database) -> Vec<fontdue::Font> {
         ];
         for (family, path) in candidates.iter() {
             if !loaded_families.contains(family)
-                && let Some(font) = load_from_path(path)
+                && let Some(source) = path_exists(path)
             {
-                fonts.push(font);
+                fonts.push(source);
                 loaded_families.insert(family);
             }
         }
     }
 
     fonts
+}
+
+/// Find the file path and face index for a font matching the given query.
+fn find_font_path(db: &fontdb::Database, query: Query<'_>) -> Option<FontPathSource> {
+    let id = db.query(&query)?;
+    let face_info = db.faces().find(|fi| fi.id == id)?;
+    let path = match &face_info.source {
+        fontdb::Source::File(p) => p.to_path_buf(),
+        fontdb::Source::SharedFile(p, _) => p.to_path_buf(),
+        fontdb::Source::Binary(_) => return None,
+    };
+    Some(FontPathSource {
+        path,
+        face_index: face_info.index,
+    })
 }
 
 fn resolve_family_name(db: &fontdb::Database, name: &str) -> Option<String> {
@@ -521,6 +588,26 @@ fn load_font_source_from_named_families(
         ) {
             return Some(source);
         }
+    }
+    None
+}
+
+/// Return the on-disk path and face index for the first matching emoji font.
+/// Returns `None` if the font is not found or is not file-backed.
+fn find_emoji_font_path_for_families(
+    db: &fontdb::Database,
+    families: &[&str],
+) -> Option<FontPathSource> {
+    for family in families {
+        let path_source = find_font_path(
+            db,
+            Query {
+                families: &[Family::Name(family)],
+                weight: Weight::NORMAL,
+                ..Query::default()
+            },
+        )?;
+        return Some(path_source);
     }
     None
 }
