@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use fontdb::{Family, Query, Weight};
 
 use crate::emoji::ColorEmojiRasterizer;
-use crate::types::{FontPathSource, FontSource, GlyphBitmap, STYLE_BOLD, STYLE_ITALIC, ShapedGlyph};
+use crate::types::{
+    FontPathSource, FontSource, GlyphBitmap, STYLE_BOLD, STYLE_ITALIC, ShapedGlyph,
+};
 
 // ── CPU font rasterizer ───────────────────────────────────────────────────────
 
@@ -32,8 +34,13 @@ pub(crate) struct CpuFontRasterizer {
 
 impl CpuFontRasterizer {
     pub(crate) fn new(family: Option<String>, font_size_px: f32) -> Self {
-        let (primary_font, primary_font_source, unicode_fallback_paths, emoji_font_path, emoji_source) =
-            load_fonts_for_family(family.as_deref());
+        let (
+            primary_font,
+            primary_font_source,
+            unicode_fallback_paths,
+            emoji_font_path,
+            emoji_source,
+        ) = load_fonts_for_family(family.as_deref());
         let color_rasterizer =
             emoji_source.and_then(|(path, fi)| ColorEmojiRasterizer::new(&path, fi));
         let num_fallbacks = unicode_fallback_paths.len();
@@ -123,7 +130,9 @@ impl CpuFontRasterizer {
         self.ensure_fallback_fonts_loaded();
         let fallback_cache = self.unicode_fallback_fonts_cache.borrow();
         for font_opt in fallback_cache.iter() {
-            if let Some(font) = font_opt && font.lookup_glyph_index(ch) != 0 {
+            if let Some(font) = font_opt
+                && font.lookup_glyph_index(ch) != 0
+            {
                 return Some(font.rasterize(ch, font_size_px));
             }
         }
@@ -144,20 +153,18 @@ impl CpuFontRasterizer {
     fn ensure_fallback_fonts_loaded(&self) {
         let mut cache = self.unicode_fallback_fonts_cache.borrow_mut();
         for (i, font_opt) in cache.iter_mut().enumerate() {
-            if font_opt.is_none() {
-                if let Some(path_source) = self.unicode_fallback_paths.get(i) {
-                    if let Ok(data) = std::fs::read(&path_source.path) {
-                        if let Ok(font) = fontdue::Font::from_bytes(
-                            &data[..],
-                            fontdue::FontSettings {
-                                collection_index: path_source.face_index,
-                                ..fontdue::FontSettings::default()
-                            },
-                        ) {
-                            *font_opt = Some(font);
-                        }
-                    }
-                }
+            if font_opt.is_none()
+                && let Some(path_source) = self.unicode_fallback_paths.get(i)
+                && let Ok(data) = std::fs::read(&path_source.path)
+                && let Ok(font) = fontdue::Font::from_bytes(
+                    &data[..],
+                    fontdue::FontSettings {
+                        collection_index: path_source.face_index,
+                        ..fontdue::FontSettings::default()
+                    },
+                )
+            {
+                *font_opt = Some(font);
             }
         }
     }
@@ -300,11 +307,11 @@ pub(crate) fn shape_line(
 
 /// Return type of [`load_fonts_for_family`].
 type LoadedFonts = (
-    Option<fontdue::Font>,     // primary
-    Option<FontSource>,        // primary source
-    Vec<FontPathSource>,       // Unicode symbol fallback paths (ordered, lazy-loaded)
-    Option<FontPathSource>,    // outline emoji path (Noto Emoji, for fontdue, lazy-loaded)
-    Option<(PathBuf, u32)>,    // color emoji: (file path, face index)
+    Option<fontdue::Font>,  // primary
+    Option<FontSource>,     // primary source
+    Vec<FontPathSource>,    // Unicode symbol fallback paths (ordered, lazy-loaded)
+    Option<FontPathSource>, // outline emoji path (Noto Emoji, for fontdue, lazy-loaded)
+    Option<(PathBuf, u32)>, // color emoji: (file path, face index)
 );
 
 pub(crate) fn load_fonts_for_family(family: Option<&str>) -> LoadedFonts {
@@ -598,18 +605,16 @@ fn find_emoji_font_path_for_families(
     db: &fontdb::Database,
     families: &[&str],
 ) -> Option<FontPathSource> {
-    for family in families {
-        let path_source = find_font_path(
+    families.iter().find_map(|family| {
+        find_font_path(
             db,
             Query {
                 families: &[Family::Name(family)],
                 weight: Weight::NORMAL,
                 ..Query::default()
             },
-        )?;
-        return Some(path_source);
-    }
-    None
+        )
+    })
 }
 
 /// Return the on-disk path and face index for the first matching color emoji

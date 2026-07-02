@@ -7,6 +7,7 @@ use fontdb::Database;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use terminal_pty::PortablePtySession;
 
 pub(crate) const TERMINAL_ROWS_MIN: usize = 1;
@@ -23,34 +24,43 @@ pub(crate) struct FontEntry {
     pub(crate) family: String,
 }
 
-/// Enumerate installed font family names. The first entry is always a
-/// synthetic "(default)" item so that index 0 means "no override".
-#[tracing::instrument]
+/// Enumerate installed font family names (lazy-loaded on first call).
+/// The first entry is always a synthetic "(default)" item so that index 0 means "no override".
+/// Scans the system font database only once, caching the result. This avoids an extra
+/// expensive `load_system_fonts()` call at startup.
 pub(crate) fn enumerate_font_families() -> Vec<FontEntry> {
-    let mut db = Database::new();
-    db.load_system_fonts();
+    static FONTS_CACHE: OnceLock<Vec<FontEntry>> = OnceLock::new();
 
-    let mut families: BTreeSet<String> = BTreeSet::new();
-    for face in db.faces() {
-        for (name, _) in &face.families {
-            let trimmed = name.trim();
-            if !trimmed.is_empty() {
-                families.insert(trimmed.to_owned());
+    FONTS_CACHE
+        .get_or_init(|| {
+            tracing::info!("enumerating system fonts (first call, lazy-loading)");
+            let mut db = Database::new();
+            db.load_system_fonts();
+
+            let mut families: BTreeSet<String> = BTreeSet::new();
+            for face in db.faces() {
+                for (name, _) in &face.families {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        families.insert(trimmed.to_owned());
+                    }
+                }
             }
-        }
-    }
 
-    let mut fonts: Vec<FontEntry> = families
-        .into_iter()
-        .map(|family| FontEntry { family })
-        .collect();
-    fonts.insert(
-        0,
-        FontEntry {
-            family: "(default)".to_owned(),
-        },
-    );
-    fonts
+            let mut fonts: Vec<FontEntry> = families
+                .into_iter()
+                .map(|family| FontEntry { family })
+                .collect();
+            fonts.insert(
+                0,
+                FontEntry {
+                    family: "(default)".to_owned(),
+                },
+            );
+            tracing::info!(count = fonts.len(), "system fonts enumerated");
+            fonts
+        })
+        .clone()
 }
 
 // ── PTY spawning ──────────────────────────────────────────────────────────────
@@ -320,7 +330,11 @@ pub(crate) fn build_initial_state(
                 theme::load_themes()
             },
             active_theme_idx: None,
-            available_fonts: enumerate_font_families(),
+            // Fonts are enumerated lazily on first access (in settings.rs) to avoid
+            // a second system font scan during startup. Start with just "(default)".
+            available_fonts: vec![crate::launch::FontEntry {
+                family: "(default)".to_owned(),
+            }],
             active_font_idx: 0,
         },
         update_rx: Some(update_rx),

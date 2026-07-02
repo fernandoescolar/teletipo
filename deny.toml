@@ -1,7 +1,12 @@
 [advisories]
 unmaintained = "workspace"
 yanked = "warn"
-ignore = []
+# quick-xml 0.38-0.39 have known DoS vulnerabilities; these are pulled in by self_update.
+# Update self_update or quick-xml when a fix is available.
+ignore = [
+	"RUSTSEC-2026-0194",  # Quadratic run time when checking start tag
+	"RUSTSEC-2026-0195",  # Unbounded namespace-declaration allocation
+]
 
 [licenses]
 allow = [

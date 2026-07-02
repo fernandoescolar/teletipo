@@ -466,26 +466,29 @@ fn handle_settings_arrow_lr(state: &mut GpuRuntimeState, key_event: &winit::even
         let tf = state.themes_fonts.available_themes[next].clone();
         apply_theme_file(&mut state.user_config, &tf);
         state.settings.dirty = true;
-    } else if field.section == "font"
-        && field.key == "family"
-        && !state.themes_fonts.available_fonts.is_empty()
-    {
-        let n = state.themes_fonts.available_fonts.len();
-        let cur = state.themes_fonts.active_font_idx;
-        let next = if is_right {
-            (cur + 1) % n
-        } else if cur == 0 {
-            n - 1
-        } else {
-            cur - 1
-        };
-        state.themes_fonts.active_font_idx = next;
-        state.user_config.font.family = if next == 0 {
-            None
-        } else {
-            Some(state.themes_fonts.available_fonts[next].family.clone())
-        };
-        state.settings.dirty = true;
+    } else if field.section == "font" && field.key == "family" {
+        // Lazily enumerate fonts on first access to the font selector
+        if state.themes_fonts.available_fonts.len() == 1 {
+            state.themes_fonts.available_fonts = crate::launch::enumerate_font_families();
+        }
+        if !state.themes_fonts.available_fonts.is_empty() {
+            let n = state.themes_fonts.available_fonts.len();
+            let cur = state.themes_fonts.active_font_idx;
+            let next = if is_right {
+                (cur + 1) % n
+            } else if cur == 0 {
+                n - 1
+            } else {
+                cur - 1
+            };
+            state.themes_fonts.active_font_idx = next;
+            state.user_config.font.family = if next == 0 {
+                None
+            } else {
+                Some(state.themes_fonts.available_fonts[next].family.clone())
+            };
+            state.settings.dirty = true;
+        }
     } else if field.section == "terminal" && field.key == "shell" {
         let options = shell_options();
         if !options.is_empty() {

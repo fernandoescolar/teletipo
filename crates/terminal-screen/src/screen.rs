@@ -105,13 +105,13 @@ fn emit_sgr_transition(out: &mut String, cur: &mut CellStyle, new: CellStyle) {
         return;
     }
     out.push_str("\x1b[0");
-    if new.bold {
+    if new.bold() {
         out.push_str(";1");
     }
-    if new.italic {
+    if new.italic() {
         out.push_str(";3");
     }
-    if new.underline {
+    if new.underline() {
         out.push_str(";4");
     }
     match new.fg {
@@ -618,20 +618,20 @@ impl Screen {
         while i < params.len() {
             match params[i] {
                 0 => self.current_style = CellStyle::default(),
-                1 => self.current_style.bold = true,
-                2 => self.current_style.dim = true,
-                3 => self.current_style.italic = true,
-                4 => self.current_style.underline = true,
-                7 => self.current_style.reverse = true,
-                9 => self.current_style.strikethrough = true,
+                1 => self.current_style.set_bold(true),
+                2 => self.current_style.set_dim(true),
+                3 => self.current_style.set_italic(true),
+                4 => self.current_style.set_underline(true),
+                7 => self.current_style.set_reverse(true),
+                9 => self.current_style.set_strikethrough(true),
                 22 => {
-                    self.current_style.bold = false;
-                    self.current_style.dim = false;
+                    self.current_style.set_bold(false);
+                    self.current_style.set_dim(false);
                 }
-                23 => self.current_style.italic = false,
-                24 => self.current_style.underline = false,
-                27 => self.current_style.reverse = false,
-                29 => self.current_style.strikethrough = false,
+                23 => self.current_style.set_italic(false),
+                24 => self.current_style.set_underline(false),
+                27 => self.current_style.set_reverse(false),
+                29 => self.current_style.set_strikethrough(false),
                 30..=37 => self.current_style.fg = AnsiColor::Indexed((params[i] - 30) as u8),
                 38 => match (params.get(i + 1), params.get(i + 2)) {
                     (Some(&5), Some(&n)) => {

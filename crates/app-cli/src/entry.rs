@@ -58,6 +58,7 @@ enum RendererBackend {
     Glow,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn run(
     update_rx: std::sync::mpsc::Receiver<Result<Option<String>, String>>,
 ) -> std::process::ExitCode {
@@ -66,6 +67,7 @@ pub fn run(
         return commands::dispatch(cmd);
     }
     onboarding::show_macos_privacy_onboarding_once();
+    crate::mem_report::report("startup");
     let metrics_handle = metrics::install_metrics(cli.metrics);
     let shell = cli.shell.unwrap_or_else(default_shell);
 
@@ -92,6 +94,7 @@ pub fn run(
             return std::process::ExitCode::FAILURE;
         }
     };
+    crate::mem_report::report("state_initialized");
 
     // Initialize config file watcher
     if let Some(config_dir) = dirs::config_dir() {
@@ -122,8 +125,12 @@ pub fn run(
             let event_ctx_for_frame = event_ctx.clone();
             let event_ctx_for_events = event_ctx.clone();
             let event_ctx_for_window = event_ctx;
+            let first_frame = std::sync::Once::new();
             if let Err(err) = render_glow::run_gpu_window_live_with_events_and_window(
-                move || event_ctx_for_frame.build_snapshot(),
+                move || {
+                    first_frame.call_once(|| crate::mem_report::report("first_frame"));
+                    event_ctx_for_frame.build_snapshot()
+                },
                 move |event| event_ctx_for_events.handle_event(event),
                 move |window, redrawer| event_ctx_for_window.install_window(window, redrawer),
                 RenderConfig {

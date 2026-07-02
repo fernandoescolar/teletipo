@@ -36,7 +36,7 @@ pub fn ansi_cell_tuple_with_palette(
     cell: &Cell,
     palette: Option<&[[f32; 3]; 16]>,
 ) -> (char, Option<[f32; 3]>, Option<[f32; 3]>, u8) {
-    let (fg_color, bg_color) = if cell.style.reverse {
+    let (fg_color, bg_color) = if cell.style.reverse() {
         (cell.style.bg, cell.style.fg)
     } else {
         (cell.style.fg, cell.style.bg)
@@ -44,7 +44,7 @@ pub fn ansi_cell_tuple_with_palette(
     let mut fg = ansi_color_to_rgb_with_palette(fg_color, palette);
     let bg = ansi_color_to_rgb_with_palette(bg_color, palette);
     let mut style_bits: u8 = 0;
-    if cell.style.dim {
+    if cell.style.dim() {
         // If fg is an explicit color, dim it here. If fg is None (default theme
         // color), set STYLE_DIM so the renderer can dim its own default color.
         if fg.is_some() {
@@ -53,13 +53,13 @@ pub fn ansi_cell_tuple_with_palette(
             style_bits |= STYLE_DIM;
         }
     }
-    if cell.style.bold {
+    if cell.style.bold() {
         style_bits |= STYLE_BOLD;
     }
-    if cell.style.italic {
+    if cell.style.italic() {
         style_bits |= STYLE_ITALIC;
     }
-    if cell.style.strikethrough {
+    if cell.style.strikethrough() {
         style_bits |= STYLE_STRIKETHROUGH;
     }
     (cell.ch, fg, bg, style_bits)

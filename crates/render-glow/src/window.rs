@@ -215,11 +215,16 @@ where
         builder = builder.with_transparent(true);
     }
 
+    // Note: On macOS, OpenGL/Metal backend imposes ≥2× MSAA automatically —
+    // there's no way to disable it from user-land without using Metal directly
+    // or wgpu instead. This logging helps diagnose framebuffer allocation issues.
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
     let display_builder = DisplayBuilder::new().with_window_builder(Some(builder));
     let (window_opt, gl_config) = display_builder
         .build(&event_loop, template, |configs| {
-            configs
+            // Select the config with the most reasonable tradeoffs (many drivers
+            // offer multiple options; prefer better AA over e.g. sRGB if needed).
+            let chosen = configs
                 .reduce(|best, config| {
                     if config.num_samples() > best.num_samples() {
                         config
@@ -227,7 +232,14 @@ where
                         best
                     }
                 })
-                .expect("at least one GL config")
+                .expect("at least one GL config");
+            tracing::info!(
+                samples = chosen.num_samples(),
+                depth_bits = chosen.depth_size(),
+                stencil_bits = chosen.stencil_size(),
+                "GL config selected"
+            );
+            chosen
         })
         .map_err(|err| anyhow::anyhow!("create OpenGL display/window: {err}"))?;
 

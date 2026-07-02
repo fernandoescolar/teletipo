@@ -14,6 +14,7 @@ mod input;
 mod keybindings_ui;
 mod launch;
 mod layout;
+mod mem_report;
 mod metrics;
 mod onboarding;
 mod palette;
