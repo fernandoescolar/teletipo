@@ -72,6 +72,7 @@ pub(crate) struct GlPainter {
     // ── Atlas allocators and caches ────────────────────────────────────────
     glyph_atlas: GlyphAtlas,
     emoji_atlas: ColorAtlas,
+    color_atlas_initialized: bool,
 
     // ── Font rendering state ───────────────────────────────────────────────
     rasterizer: CpuFontRasterizer,
@@ -296,17 +297,6 @@ impl GlPainter {
             .map_err(|err| anyhow::anyhow!("create color atlas texture: {err}"))?;
         unsafe {
             gl.bind_texture(glow::TEXTURE_2D, Some(color_atlas_texture));
-            gl.tex_image_2d(
-                glow::TEXTURE_2D,
-                0,
-                glow::RGBA as i32,
-                COLOR_ATLAS_TEX_SIZE as i32,
-                COLOR_ATLAS_TEX_SIZE as i32,
-                0,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                None,
-            );
             gl.tex_parameter_i32(
                 glow::TEXTURE_2D,
                 glow::TEXTURE_MIN_FILTER,
@@ -360,6 +350,7 @@ impl GlPainter {
             batches,
             glyph_atlas,
             emoji_atlas,
+            color_atlas_initialized: false,
             rasterizer: CpuFontRasterizer::new(font_family, font_size_px),
             shaped_terminal_cache: None,
             clip_stack: Vec::new(),
@@ -394,7 +385,7 @@ impl GlPainter {
 
     /// Clear both glyph atlases after a DPI/font-size jump so stale texels do
     /// not bleed into newly packed glyphs when linear filtering is enabled.
-    pub(crate) fn clear_atlas_textures(&self, gl: &glow::Context) {
+    pub(crate) fn clear_atlas_textures(&mut self, gl: &glow::Context) {
         let mono_clear = vec![0_u8; (ATLAS_TEX_SIZE * ATLAS_TEX_SIZE) as usize];
         let color_clear = vec![0_u8; (COLOR_ATLAS_TEX_SIZE * COLOR_ATLAS_TEX_SIZE * 4) as usize];
 
@@ -413,22 +404,46 @@ impl GlPainter {
                 glow::PixelUnpackData::Slice(&mono_clear),
             );
 
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.emoji.texture));
-            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
-            gl.tex_sub_image_2d(
-                glow::TEXTURE_2D,
-                0,
-                0,
-                0,
-                COLOR_ATLAS_TEX_SIZE as i32,
-                COLOR_ATLAS_TEX_SIZE as i32,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(&color_clear),
-            );
+            if self.color_atlas_initialized {
+                gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.emoji.texture));
+                gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+                gl.tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    COLOR_ATLAS_TEX_SIZE as i32,
+                    COLOR_ATLAS_TEX_SIZE as i32,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(&color_clear),
+                );
+            }
 
             gl.bind_texture(glow::TEXTURE_2D, None);
         }
+    }
+
+    fn ensure_color_atlas_allocated(&mut self, gl: &glow::Context) {
+        if self.color_atlas_initialized {
+            return;
+        }
+        unsafe {
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.emoji.texture));
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                COLOR_ATLAS_TEX_SIZE as i32,
+                COLOR_ATLAS_TEX_SIZE as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                None,
+            );
+            gl.bind_texture(glow::TEXTURE_2D, None);
+        }
+        self.color_atlas_initialized = true;
     }
 
     pub(crate) fn cell_metrics(&self) -> (f32, f32) {
@@ -2429,6 +2444,7 @@ impl GlPainter {
 
         // Use ColorAtlas for allocation
         let (dest_x, dest_y) = self.emoji_atlas.allocate(w, h)?;
+        self.ensure_color_atlas_allocated(gl);
 
         unsafe {
             gl.bind_texture(glow::TEXTURE_2D, Some(self.gpu_state.emoji.texture));
