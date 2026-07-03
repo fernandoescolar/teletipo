@@ -1,5 +1,6 @@
 use std::ffi::CString;
 use std::num::NonZeroU32;
+use std::time::Duration;
 
 use crate::{AppWindowEvent, RenderConfig, RenderSnapshot};
 use anyhow::Context;
@@ -11,15 +12,16 @@ use glutin::prelude::*;
 use glutin::surface::{Surface, SurfaceAttributesBuilder, SwapInterval, WindowSurface};
 use glutin_winit::DisplayBuilder;
 use platform_abstraction::{WindowControl, apply_app_icon, apply_titlebar_color};
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::HasWindowHandle;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{Event, Ime, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
-use winit::window::{Icon, Window, WindowBuilder};
+use winit::window::{Icon, Window, WindowAttributes};
 
 use crate::painter::GlPainter;
 
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../docs/teletipo128x128.png");
+const REDRAW_HEARTBEAT_MS: u64 = 33;
 
 type Result<T> = anyhow::Result<T>;
 
@@ -129,7 +131,10 @@ fn build_gl_context(
     window: &'static Window,
     gl_config: &glutin::config::Config,
 ) -> Result<(PossiblyCurrentContext, Surface<WindowSurface>)> {
-    let raw_window_handle = window.raw_window_handle();
+    let raw_window_handle = window
+        .window_handle()
+        .context("acquire raw window handle")?
+        .as_raw();
     let context_attributes = ContextAttributesBuilder::new()
         .with_context_api(ContextApi::OpenGl(None))
         .build(Some(raw_window_handle));
@@ -185,7 +190,7 @@ where
     let proxy = event_loop.create_proxy();
     let title = format_window_title(&initial.title_cwd);
 
-    let mut builder = WindowBuilder::new()
+    let mut builder = WindowAttributes::default()
         .with_title(title)
         .with_window_icon(load_window_icon())
         .with_inner_size(LogicalSize::new(
@@ -194,17 +199,17 @@ where
         ));
     #[cfg(target_os = "linux")]
     {
-        use winit::platform::wayland::WindowBuilderExtWayland;
-        use winit::platform::x11::WindowBuilderExtX11;
-        builder = WindowBuilderExtX11::with_name(builder, "teletipo", "teletipo");
-        builder = WindowBuilderExtWayland::with_name(builder, "teletipo", "teletipo");
+        use winit::platform::wayland::WindowAttributesExtWayland;
+        use winit::platform::x11::WindowAttributesExtX11;
+        builder = WindowAttributesExtX11::with_name(builder, "teletipo", "teletipo");
+        builder = WindowAttributesExtWayland::with_name(builder, "teletipo", "teletipo");
     }
     if let Some((px, py)) = config.initial_position {
         builder = builder.with_position(PhysicalPosition::new(px, py));
     }
     #[cfg(target_os = "macos")]
     {
-        use winit::platform::macos::WindowBuilderExtMacOS;
+        use winit::platform::macos::WindowAttributesExtMacOS;
         builder = builder.with_titlebar_transparent(true);
     }
 
@@ -217,20 +222,22 @@ where
 
     // Note: On macOS, OpenGL/Metal backend imposes ≥2× MSAA automatically —
     // there's no way to disable it from user-land without using Metal directly
-    // or wgpu instead. This logging helps diagnose framebuffer allocation issues.
+    // This logging helps diagnose framebuffer allocation issues.
     let template = ConfigTemplateBuilder::new().with_alpha_size(8);
-    let display_builder = DisplayBuilder::new().with_window_builder(Some(builder));
+    let display_builder = DisplayBuilder::new().with_window_attributes(Some(builder));
     let (window_opt, gl_config) = display_builder
         .build(&event_loop, template, |configs| {
-            // Select the config with the most reasonable tradeoffs (many drivers
-            // offer multiple options; prefer better AA over e.g. sRGB if needed).
+            // Prefer the lowest-memory framebuffer config. Higher MSAA/depth/stencil
+            // settings can increase RAM sharply (especially on high-DPI macOS).
             let chosen = configs
                 .reduce(|best, config| {
-                    if config.num_samples() > best.num_samples() {
-                        config
-                    } else {
-                        best
-                    }
+                    let best_key = (best.num_samples(), best.depth_size(), best.stencil_size());
+                    let config_key = (
+                        config.num_samples(),
+                        config.depth_size(),
+                        config.stencil_size(),
+                    );
+                    if config_key < best_key { config } else { best }
                 })
                 .expect("at least one GL config");
             tracing::info!(
@@ -286,10 +293,15 @@ where
         });
     }
 
+    // Ensure the very first frame is painted even before further input events.
+    window.request_redraw();
+
     #[allow(deprecated)]
     event_loop
         .run(move |event, target| {
-            target.set_control_flow(ControlFlow::Poll);
+            target.set_control_flow(ControlFlow::WaitUntil(
+                std::time::Instant::now() + Duration::from_millis(REDRAW_HEARTBEAT_MS),
+            ));
             match event {
                 Event::WindowEvent { event, window_id } if window_id == window.id() => {
                     match event {
@@ -315,6 +327,7 @@ where
                                 cell_w: cell_w_px,
                                 cell_h: cell_h_px,
                             });
+                            window.request_redraw();
                         }
                         WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                             let size = window.inner_size();
@@ -336,6 +349,7 @@ where
                                 cell_w: cell_w_px,
                                 cell_h: cell_h_px,
                             });
+                            window.request_redraw();
                         }
                         WindowEvent::Focused(focused) => {
                             if focused {
@@ -354,15 +368,18 @@ where
                         }
                         WindowEvent::ModifiersChanged(mods) => {
                             on_event(AppWindowEvent::ModifiersChanged(mods.state()));
+                            window.request_redraw();
                         }
                         WindowEvent::CursorMoved { position, .. } => {
                             on_event(AppWindowEvent::CursorMoved {
                                 x: position.x,
                                 y: position.y,
                             });
+                            window.request_redraw();
                         }
                         WindowEvent::MouseInput { state, button, .. } => {
                             on_event(AppWindowEvent::MouseInput { state, button });
+                            window.request_redraw();
                         }
                         WindowEvent::MouseWheel { delta, .. } => {
                             let dy = match delta {
@@ -371,16 +388,20 @@ where
                             };
                             if dy != 0.0 {
                                 on_event(AppWindowEvent::MouseWheel { delta_lines: dy });
+                                window.request_redraw();
                             }
                         }
                         WindowEvent::KeyboardInput { event, .. } => {
                             on_event(AppWindowEvent::KeyboardInput(event));
+                            window.request_redraw();
                         }
                         WindowEvent::Ime(Ime::Commit(text)) => {
                             on_event(AppWindowEvent::ImeCommit(text));
+                            window.request_redraw();
                         }
                         WindowEvent::DroppedFile(path) => {
                             on_event(AppWindowEvent::DroppedFile(path));
+                            window.request_redraw();
                         }
                         WindowEvent::RedrawRequested => {
                             let snapshot = next_snapshot();
@@ -413,12 +434,6 @@ where
                                 last_title = new_title.clone();
                                 window.set_title(&new_title);
                             }
-                            // IME cursor area setting disabled - snapshot_to_ime_area was removed with render-wgpu
-                            // if snapshot.editor_focused {
-                            //     if let Some((_x, _y, _w, _h)) = snapshot_to_ime_area(&snapshot) {
-                            //         window.set_ime_cursor_area((x, y), (w, h));
-                            //     }
-                            // }
 
                             let sz = window.inner_size();
                             unsafe {
@@ -451,7 +466,11 @@ where
                 Event::UserEvent(()) => {
                     window.request_redraw();
                 }
-                Event::AboutToWait => window.request_redraw(),
+                Event::AboutToWait => {
+                    // Heartbeat redraw keeps PTY-driven prompt updates responsive even
+                    // for sessions created before a PTY waker is installed.
+                    window.request_redraw();
+                }
                 _ => {}
             }
         })

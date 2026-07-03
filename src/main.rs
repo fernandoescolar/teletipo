@@ -7,7 +7,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 /// Use `mimalloc` instead of the system allocator. Long-running GUI processes
 /// on macOS frequently hold inflated RSS because the default allocator caches
-/// freed pages aggressively and fragments under wgpu/winit's mixed allocation
+/// freed pages aggressively and fragments under winit's allocation
 /// patterns. mimalloc typically returns memory to the OS sooner and yields a
 /// 20–40 % RSS reduction here for the same workload.
 #[global_allocator]
@@ -34,7 +34,7 @@ fn log_dir() -> Option<PathBuf> {
 /// warnings and errors are visible without flooding stderr.
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new("warn,app_cli=info,app_orchestrator=info,render_wgpu=info,render_glow=info")
+        EnvFilter::new("warn,app_cli=info,app_orchestrator=info,render_glow=info")
     });
     if let Some(dir) = log_dir() {
         let file_appender = tracing_appender::rolling::daily(dir, "teletipo.log");

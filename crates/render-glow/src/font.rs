@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 use fontdb::{Family, Query, Weight};
@@ -26,11 +26,19 @@ pub(crate) struct CpuFontRasterizer {
     emoji_font_path: Option<FontPathSource>,
     /// Cached loaded emoji font (lazily populated from emoji_font_path).
     emoji_font_cache: RefCell<Option<Option<fontdue::Font>>>,
+    /// File path and face index for color emoji font (lazy-opened).
+    color_emoji_source: Option<(PathBuf, u32)>,
     /// Color emoji rasterizer backed by SBIX/CBDT bitmap strikes.
+    /// Created on-demand the first time a color emoji is actually needed.
     pub(crate) color_rasterizer: Option<ColorEmojiRasterizer>,
     glyph_cache: HashMap<(char, u8), GlyphBitmap>,
+    glyph_cache_order: VecDeque<(char, u8)>,
     shaped_glyph_cache: HashMap<(u16, u8), GlyphBitmap>,
+    shaped_glyph_cache_order: VecDeque<(u16, u8)>,
 }
+
+const GLYPH_CACHE_LIMIT: usize = 4096;
+const SHAPED_GLYPH_CACHE_LIMIT: usize = 4096;
 
 impl CpuFontRasterizer {
     pub(crate) fn new(family: Option<String>, font_size_px: f32) -> Self {
@@ -41,8 +49,6 @@ impl CpuFontRasterizer {
             emoji_font_path,
             emoji_source,
         ) = load_fonts_for_family(family.as_deref());
-        let color_rasterizer =
-            emoji_source.and_then(|(path, fi)| ColorEmojiRasterizer::new(&path, fi));
         let num_fallbacks = unicode_fallback_paths.len();
         Self {
             font_size_px,
@@ -52,9 +58,12 @@ impl CpuFontRasterizer {
             unicode_fallback_fonts_cache: RefCell::new(vec![None; num_fallbacks]),
             emoji_font_path,
             emoji_font_cache: RefCell::new(None),
-            color_rasterizer,
+            color_emoji_source: emoji_source,
+            color_rasterizer: None,
             glyph_cache: HashMap::new(),
+            glyph_cache_order: VecDeque::new(),
             shaped_glyph_cache: HashMap::new(),
+            shaped_glyph_cache_order: VecDeque::new(),
         }
     }
 
@@ -64,7 +73,9 @@ impl CpuFontRasterizer {
         }
         self.font_size_px = font_size_px;
         self.glyph_cache.clear();
+        self.glyph_cache_order.clear();
         self.shaped_glyph_cache.clear();
+        self.shaped_glyph_cache_order.clear();
         if let Some(cr) = self.color_rasterizer.as_mut() {
             cr.clear_cache();
         }
@@ -74,6 +85,11 @@ impl CpuFontRasterizer {
     /// bitmap-strike tables (SBIX / CBDT).  Returns `None` when no strike is
     /// available — the caller should fall back to the grayscale outline path.
     pub(crate) fn color_rasterize(&mut self, ch: char) -> Option<image::RgbaImage> {
+        if self.color_rasterizer.is_none()
+            && let Some((path, face_index)) = self.color_emoji_source.as_ref()
+        {
+            self.color_rasterizer = ColorEmojiRasterizer::new(path, *face_index);
+        }
         self.color_rasterizer
             .as_mut()?
             .rasterize(ch, self.font_size_px)
@@ -115,7 +131,7 @@ impl CpuFontRasterizer {
             advance_width: metrics.advance_width,
             alpha: bitmap,
         };
-        self.glyph_cache.insert((ch, style_key), glyph.clone());
+        self.insert_glyph_cache((ch, style_key), glyph.clone());
         Some(glyph)
     }
 
@@ -126,17 +142,16 @@ impl CpuFontRasterizer {
             return Some(font.rasterize(ch, font_size_px));
         }
 
-        // Check fallback fonts
-        self.ensure_fallback_fonts_loaded();
-        let fallback_cache = self.unicode_fallback_fonts_cache.borrow();
-        for font_opt in fallback_cache.iter() {
-            if let Some(font) = font_opt
+        // Check fallback fonts (loaded lazily one-by-one).
+        for i in 0..self.unicode_fallback_paths.len() {
+            self.ensure_fallback_font_loaded(i);
+            let fallback_cache = self.unicode_fallback_fonts_cache.borrow();
+            if let Some(font) = fallback_cache.get(i).and_then(Option::as_ref)
                 && font.lookup_glyph_index(ch) != 0
             {
                 return Some(font.rasterize(ch, font_size_px));
             }
         }
-        drop(fallback_cache);
 
         // Check emoji font
         self.ensure_emoji_font_loaded();
@@ -150,22 +165,23 @@ impl CpuFontRasterizer {
         None
     }
 
-    fn ensure_fallback_fonts_loaded(&self) {
+    fn ensure_fallback_font_loaded(&self, index: usize) {
         let mut cache = self.unicode_fallback_fonts_cache.borrow_mut();
-        for (i, font_opt) in cache.iter_mut().enumerate() {
-            if font_opt.is_none()
-                && let Some(path_source) = self.unicode_fallback_paths.get(i)
-                && let Ok(data) = std::fs::read(&path_source.path)
-                && let Ok(font) = fontdue::Font::from_bytes(
-                    &data[..],
-                    fontdue::FontSettings {
-                        collection_index: path_source.face_index,
-                        ..fontdue::FontSettings::default()
-                    },
-                )
-            {
-                *font_opt = Some(font);
-            }
+        let Some(font_opt) = cache.get_mut(index) else {
+            return;
+        };
+        if font_opt.is_none()
+            && let Some(path_source) = self.unicode_fallback_paths.get(index)
+            && let Ok(data) = std::fs::read(&path_source.path)
+            && let Ok(font) = fontdue::Font::from_bytes(
+                &data[..],
+                fontdue::FontSettings {
+                    collection_index: path_source.face_index,
+                    ..fontdue::FontSettings::default()
+                },
+            )
+        {
+            *font_opt = Some(font);
         }
     }
 
@@ -214,9 +230,34 @@ impl CpuFontRasterizer {
             advance_width: metrics.advance_width,
             alpha: bitmap,
         };
-        self.shaped_glyph_cache
-            .insert((glyph_id, style_key), glyph.clone());
+        self.insert_shaped_glyph_cache((glyph_id, style_key), glyph.clone());
         Some(glyph)
+    }
+
+    fn insert_glyph_cache(&mut self, key: (char, u8), glyph: GlyphBitmap) {
+        if self.glyph_cache.insert(key, glyph).is_none() {
+            self.glyph_cache_order.push_back(key);
+        }
+        while self.glyph_cache.len() > GLYPH_CACHE_LIMIT {
+            if let Some(oldest_key) = self.glyph_cache_order.pop_front() {
+                self.glyph_cache.remove(&oldest_key);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn insert_shaped_glyph_cache(&mut self, key: (u16, u8), glyph: GlyphBitmap) {
+        if self.shaped_glyph_cache.insert(key, glyph).is_none() {
+            self.shaped_glyph_cache_order.push_back(key);
+        }
+        while self.shaped_glyph_cache.len() > SHAPED_GLYPH_CACHE_LIMIT {
+            if let Some(oldest_key) = self.shaped_glyph_cache_order.pop_front() {
+                self.shaped_glyph_cache.remove(&oldest_key);
+            } else {
+                break;
+            }
+        }
     }
 
     pub(crate) fn shape_terminal_text(&self, text: &str) -> Option<Vec<Vec<ShapedGlyph>>> {

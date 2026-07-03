@@ -1457,8 +1457,6 @@ impl GlPainter {
         if visible == 0 {
             return;
         }
-        // Match wgpu: anchor bottom of panel to the separator (editor_top),
-        // grow upward into the terminal area so the editor stays clean.
         let row_h = layout.cell_h_px * 1.2;
         let panel_w = (layout.cell_w_px * 40.0).min(layout.width * 0.75);
         let panel_h = visible as f32 * row_h;

@@ -39,23 +39,8 @@ struct Cli {
     #[arg(long, help = "Expose Prometheus metrics on 127.0.0.1:9898")]
     metrics: bool,
 
-    #[arg(
-        long,
-        env = "TELETIPO_RENDERER",
-        value_enum,
-        default_value_t = RendererBackend::Glow,
-        help = "Select GPU renderer backend"
-    )]
-    renderer: RendererBackend,
-
     #[command(subcommand)]
     command: Option<commands::Commands>,
-}
-
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-enum RendererBackend {
-    Wgpu,
-    Glow,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -119,57 +104,31 @@ pub fn run(
             s.user_config.terminal.opacity,
         )
     };
-    match cli.renderer {
-        RendererBackend::Wgpu => {
-            let event_ctx = EventCtx::new(Rc::clone(&state));
-            let event_ctx_for_frame = event_ctx.clone();
-            let event_ctx_for_events = event_ctx.clone();
-            let event_ctx_for_window = event_ctx;
-            let first_frame = std::sync::Once::new();
-            if let Err(err) = render_glow::run_gpu_window_live_with_events_and_window(
-                move || {
-                    first_frame.call_once(|| crate::mem_report::report("first_frame"));
-                    event_ctx_for_frame.build_snapshot()
-                },
-                move |event| event_ctx_for_events.handle_event(event),
-                move |window, redrawer| event_ctx_for_window.install_window(window, redrawer),
-                RenderConfig {
-                    initial_size: Some((window_width, window_height)),
-                    initial_position: window_pos,
-                    font: FontConfig {
-                        font_family: initial_font_family.clone(),
-                        font_size: initial_font_size,
-                    },
-                    opacity: initial_opacity,
-                    ..RenderConfig::default()
-                },
-            ) {
-                tracing::error!(error = %err, "failed to start wgpu backend");
-            }
-        }
-        RendererBackend::Glow => {
-            let event_ctx = EventCtx::new(Rc::clone(&state));
-            let event_ctx_for_frame = event_ctx.clone();
-            let event_ctx_for_events = event_ctx.clone();
-            let event_ctx_for_window = event_ctx;
-            if let Err(err) = render_glow::run_gpu_window_live_with_events_and_window(
-                move || event_ctx_for_frame.build_snapshot(),
-                move |event| event_ctx_for_events.handle_event(event),
-                move |window, redrawer| event_ctx_for_window.install_window(window, redrawer),
-                RenderConfig {
-                    initial_size: Some((window_width, window_height)),
-                    initial_position: window_pos,
-                    font: FontConfig {
-                        font_family: initial_font_family,
-                        font_size: initial_font_size,
-                    },
-                    opacity: initial_opacity,
-                    ..RenderConfig::default()
-                },
-            ) {
-                tracing::error!(error = %err, "failed to start glow backend");
-            }
-        }
+
+    let event_ctx = EventCtx::new(Rc::clone(&state));
+    let event_ctx_for_frame = event_ctx.clone();
+    let event_ctx_for_events = event_ctx.clone();
+    let event_ctx_for_window = event_ctx;
+    let first_frame = std::sync::Once::new();
+    if let Err(err) = render_glow::run_gpu_window_live_with_events_and_window(
+        move || {
+            first_frame.call_once(|| crate::mem_report::report("first_frame"));
+            event_ctx_for_frame.build_snapshot()
+        },
+        move |event| event_ctx_for_events.handle_event(event),
+        move |window, redrawer| event_ctx_for_window.install_window(window, redrawer),
+        RenderConfig {
+            initial_size: Some((window_width, window_height)),
+            initial_position: window_pos,
+            font: FontConfig {
+                font_family: initial_font_family.clone(),
+                font_size: initial_font_size,
+            },
+            opacity: initial_opacity,
+            ..RenderConfig::default()
+        },
+    ) {
+        tracing::error!(error = %err, "failed to start glow backend");
     }
 
     drop(metrics_handle);

@@ -13,7 +13,6 @@ mod pipelines;
 mod shaders;
 mod types;
 mod util;
-mod wgpu_compat;
 mod window;
 
 pub use window::{
@@ -21,11 +20,4 @@ pub use window::{
     run_gpu_window_live_with_events_and_window,
 };
 
-// Re-export types from wgpu_compat (types that were previously in render-wgpu)
-pub use wgpu_compat::{
-    AppWindowEvent, ColorTheme, CommandPalette, ContextMenu, DamageRegion, FontConfig,
-    KeybindingRow, KeybindingsOverlay, PaneKind, PaneLayout, PipelineStage, RenderCell,
-    RenderConfig, RenderRow, RenderSnapshot, RenderStats, SCROLLBAR_W_PX, SearchPanel,
-    SettingsItem, SettingsOverlay, SuggestionDropdown, TerminalLink, Toast, ToastKind, VsyncMode,
-    default_ansi_palette, snapshot_to_ime_area,
-};
+pub use render_model::*;
