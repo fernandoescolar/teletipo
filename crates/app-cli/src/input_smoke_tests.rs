@@ -4,6 +4,7 @@
 
 use app_orchestrator::App;
 use render_model::AppWindowEvent;
+use std::sync::Arc;
 
 use crate::config;
 use crate::input;
@@ -41,7 +42,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         selection_end_scroll: 0,
         is_selecting: false,
         is_selecting_editor: false,
-        last_terminal_text: String::new(),
+        last_terminal_text: Arc::new(String::new()),
         term_row_count: 24,
         cwd: String::new(),
         suggestion_prefix: None,

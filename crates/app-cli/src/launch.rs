@@ -10,7 +10,7 @@ use fontdb::Database;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use terminal_pty::PortablePtySession;
 
 pub(crate) const TERMINAL_ROWS_MIN: usize = 1;
@@ -542,7 +542,7 @@ fn build_single_tab(
         selection_end_scroll: 0,
         is_selecting: false,
         is_selecting_editor: false,
-        last_terminal_text: String::new(),
+        last_terminal_text: Arc::new(String::new()),
         term_row_count: rows,
         cwd: initial_cwd,
         suggestion_prefix: None,

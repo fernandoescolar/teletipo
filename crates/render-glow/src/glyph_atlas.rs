@@ -57,6 +57,7 @@ impl GlyphAtlas {
         self.row_h = 0;
         self.char_cache.clear();
         self.glyph_id_cache.clear();
+        self.stats.entries = 0;
         self.stats.resets += 1;
     }
 

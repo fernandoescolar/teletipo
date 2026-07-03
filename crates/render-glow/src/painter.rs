@@ -1,7 +1,9 @@
 #![allow(dead_code, unused_variables)]
 
+use std::collections::HashSet;
 use std::mem::size_of;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::{ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay};
 use font8x8::UnicodeFonts;
@@ -84,8 +86,26 @@ pub(crate) struct GlPainter {
     // ── GPU context recovery ───────────────────────────────────────────────
     /// Last frame render time. Used to detect long idle periods where macOS
     /// may have evicted the glyph atlas texture from GPU memory.
-    last_render_at: Option<std::time::Instant>,
+    last_render_at: Option<Instant>,
+
+    /// Keep expensive ASCII pre-warm bounded: warm once after atlas reset.
+    ascii_warm_done: bool,
+
+    /// Optional stage timing logs for render optimization work.
+    render_profile_enabled: bool,
+    render_profile_frame_counter: u64,
+
+    /// Track VBO upload bytes this frame for profiling.
+    frame_vbo_uploads_flat: usize,
+    frame_vbo_uploads_glyph: usize,
+    frame_vbo_uploads_emoji: usize,
 }
+
+#[cfg(target_os = "macos")]
+const IDLE_ATLAS_INVALIDATE_AFTER: Duration = Duration::from_secs(2);
+#[cfg(not(target_os = "macos"))]
+const IDLE_ATLAS_INVALIDATE_AFTER: Duration = Duration::from_secs(20);
+const RENDER_PROFILE_LOG_EVERY_FRAMES: u64 = 120;
 
 struct GlyphCell {
     x: f32,
@@ -355,6 +375,14 @@ impl GlPainter {
             shaped_terminal_cache: None,
             clip_stack: Vec::new(),
             last_render_at: None,
+            ascii_warm_done: false,
+            render_profile_enabled: std::env::var("TELETIPO_RENDER_PROFILE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            render_profile_frame_counter: 0,
+            frame_vbo_uploads_flat: 0,
+            frame_vbo_uploads_glyph: 0,
+            frame_vbo_uploads_emoji: 0,
         })
     }
 
@@ -371,6 +399,7 @@ impl GlPainter {
     fn reset_text_atlas_state(&mut self) {
         self.glyph_atlas.clear();
         self.emoji_atlas.clear();
+        self.ascii_warm_done = false;
     }
 
     /// Force atlas repack/reupload on next frame.
@@ -482,6 +511,7 @@ impl GlPainter {
         cell_w_px: f32,
         cell_h_px: f32,
     ) {
+        let frame_start = Instant::now();
         let target = RenderTarget::new(size.width as f32, size.height as f32);
         let metrics = CellMetrics::new(cell_w_px, cell_h_px);
         let layout = compute_frame_layout(snapshot, target, metrics);
@@ -489,9 +519,9 @@ impl GlPainter {
         // Detect long idle periods (macOS may evict GPU textures during idle).
         // If more than 2 seconds since last render, invalidate atlas to force
         // full re-upload of glyph bitmaps to GPU.
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         if let Some(last) = self.last_render_at
-            && now.duration_since(last) > std::time::Duration::from_secs(2)
+            && now.duration_since(last) > IDLE_ATLAS_INVALIDATE_AFTER
         {
             self.invalidate_text_atlases(gl);
         }
@@ -502,7 +532,9 @@ impl GlPainter {
         self.batches.glyph.clear();
         self.batches.emoji.clear();
 
+        let warm_start = Instant::now();
         self.warm_atlas(gl, snapshot);
+        let warm_elapsed = warm_start.elapsed();
 
         // Build scene with background, tab bar, terminal background, and editor background
         let mut scene = render_model::build_scene(snapshot, &layout, target, metrics);
@@ -535,11 +567,39 @@ impl GlPainter {
 
         // Flush main-content passes before drawing overlays so that overlay
         // backgrounds (drawn without blending) completely cover terminal text.
+        self.frame_vbo_uploads_flat = 0;
+        self.frame_vbo_uploads_glyph = 0;
+        self.frame_vbo_uploads_emoji = 0;
         self.flush_passes(gl, layout.width, layout.height);
 
         // Toasts, resize overlay, and scroll indicator are now emitted via Scene
 
         self.flush_passes(gl, layout.width, layout.height);
+
+        self.render_profile_frame_counter = self.render_profile_frame_counter.saturating_add(1);
+        if self.render_profile_enabled
+            && self
+                .render_profile_frame_counter
+                .is_multiple_of(RENDER_PROFILE_LOG_EVERY_FRAMES)
+        {
+            let total_uploads = self.frame_vbo_uploads_flat
+                + self.frame_vbo_uploads_glyph
+                + self.frame_vbo_uploads_emoji;
+            tracing::info!(
+                frame = self.render_profile_frame_counter,
+                warm_atlas_ms = warm_elapsed.as_secs_f64() * 1000.0,
+                frame_total_ms = frame_start.elapsed().as_secs_f64() * 1000.0,
+                vbo_uploads_kib = total_uploads / 1024,
+                flat_kib = self.frame_vbo_uploads_flat / 1024,
+                glyph_kib = self.frame_vbo_uploads_glyph / 1024,
+                emoji_kib = self.frame_vbo_uploads_emoji / 1024,
+                glyph_uploads = self.glyph_atlas.stats.uploads_this_frame,
+                emoji_uploads = self.emoji_atlas.stats.uploads_this_frame,
+                glyph_entries = self.glyph_atlas.stats.entries,
+                emoji_entries = self.emoji_atlas.stats.entries,
+                "render profile"
+            );
+        }
     }
 
     /// Push a clipping rectangle (scissor test).
@@ -1022,8 +1082,7 @@ impl GlPainter {
 
                 gl.use_program(Some(self.gpu_state.flat.program));
                 gl.bind_vertex_array(Some(self.gpu_state.flat.vao));
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.gpu_state.flat.vbo));
-                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
+                self.frame_vbo_uploads_flat = self.gpu_state.upload_flat_vbo(gl, bytes);
 
                 if let Some(loc) = self.gpu_state.flat.u_screen.as_ref() {
                     gl.uniform_2_f32(Some(loc), width, height);
@@ -1058,8 +1117,7 @@ impl GlPainter {
 
                 gl.use_program(Some(self.gpu_state.glyph.program));
                 gl.bind_vertex_array(Some(self.gpu_state.glyph.vao));
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.gpu_state.glyph.vbo));
-                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
+                self.frame_vbo_uploads_glyph = self.gpu_state.upload_glyph_vbo(gl, bytes);
 
                 if let Some(loc) = &self.gpu_state.glyph.u_screen {
                     gl.uniform_2_f32(Some(loc), width, height);
@@ -1101,8 +1159,7 @@ impl GlPainter {
 
                 gl.use_program(Some(self.gpu_state.emoji.program));
                 gl.bind_vertex_array(Some(self.gpu_state.emoji.vao));
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.gpu_state.emoji.vbo));
-                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
+                self.frame_vbo_uploads_emoji = self.gpu_state.upload_emoji_vbo(gl, bytes);
 
                 if let Some(loc) = &self.gpu_state.emoji.u_screen {
                     gl.uniform_2_f32(Some(loc), width, height);
@@ -2642,6 +2699,13 @@ impl GlPainter {
     /// Pre-populate the atlas with every glyph that will be drawn this frame
     /// so that [`push_atlas_quad`] needs no GL access at draw time.
     fn warm_atlas(&mut self, gl: &glow::Context, snapshot: &RenderSnapshot) {
+        self.glyph_atlas.stats.uploads_this_frame = 0;
+        self.emoji_atlas.stats.uploads_this_frame = 0;
+
+        let mut char_style_keys: HashSet<(char, u8)> = HashSet::new();
+        let mut glyph_id_style_keys: HashSet<(u16, u8)> = HashSet::new();
+        let mut color_emoji_chars: HashSet<char> = HashSet::new();
+
         // Shaped terminal glyphs
         let terminal_text = snapshot.terminal_text_from_rows();
         let shaped = self.shape_terminal_lines_cached(snapshot, &terminal_text);
@@ -2653,52 +2717,76 @@ impl GlPainter {
                         .get(sg.full_char_idx)
                         .copied()
                         .unwrap_or(0);
+                    let char_style = style & (STYLE_BOLD | STYLE_ITALIC);
                     if sg.glyph_id == 0 && sg.source_char != ' ' && sg.source_char != '\0' {
-                        // Primary font has no glyph — try color emoji first,
-                        // then fall back to the outline/char-based atlas.
-                        self.ensure_color_emoji_in_atlas(gl, sg.source_char);
-                        if self.emoji_atlas.lookup(sg.source_char).is_none() {
-                            self.ensure_char_in_atlas(gl, sg.source_char, style);
-                        }
+                        color_emoji_chars.insert(sg.source_char);
+                        char_style_keys.insert((sg.source_char, char_style));
                     } else {
-                        self.ensure_glyph_id_in_atlas(gl, sg.glyph_id, style);
+                        glyph_id_style_keys.insert((sg.glyph_id, style & STYLE_BOLD));
                         if sg.source_char != ' ' && sg.source_char != '\0' {
-                            self.ensure_char_in_atlas(gl, sg.source_char, style);
+                            char_style_keys.insert((sg.source_char, char_style));
                         }
                     }
                 }
+            }
+        }
+
+        for (glyph_id, style_key) in glyph_id_style_keys {
+            self.ensure_glyph_id_in_atlas(gl, glyph_id, style_key);
+        }
+
+        for ch in color_emoji_chars {
+            self.ensure_color_emoji_in_atlas(gl, ch);
+        }
+
+        for (ch, style_key) in char_style_keys {
+            if self.emoji_atlas.lookup(ch).is_none() {
+                self.ensure_char_in_atlas(gl, ch, style_key);
             }
         }
 
         // Terminal raw chars (used by the Scene-based text rendering path)
         // Always load with style 0 since render_text_simple uses global style.
         {
+            let mut terminal_chars: HashSet<char> = HashSet::new();
             for line in terminal_text.lines() {
                 for ch in line.chars() {
                     if ch != ' ' && ch != '\0' {
-                        self.ensure_color_emoji_in_atlas(gl, ch);
-                        // Load with style 0 (default) - matches what render_text_simple uses.
-                        // Keep monochrome fallback available when a color strike is missing.
-                        self.ensure_char_in_atlas(gl, ch, 0);
+                        terminal_chars.insert(ch);
                     }
                 }
+            }
+
+            for ch in terminal_chars {
+                self.ensure_color_emoji_in_atlas(gl, ch);
+                // Load with style 0 (default) - matches what render_text_simple uses.
+                // Keep monochrome fallback available when a color strike is missing.
+                self.ensure_char_in_atlas(gl, ch, 0);
             }
         }
 
         // Editor text
+        let mut editor_chars: HashSet<char> = HashSet::new();
         for ch in snapshot.editor_text.chars() {
             if ch != '\n' && ch != ' ' && ch != '\0' {
-                self.ensure_color_emoji_in_atlas(gl, ch);
-                self.ensure_char_in_atlas(gl, ch, 0);
+                editor_chars.insert(ch);
             }
         }
+        for ch in editor_chars {
+            self.ensure_color_emoji_in_atlas(gl, ch);
+            self.ensure_char_in_atlas(gl, ch, 0);
+        }
 
-        // Common printable ASCII (covers tab labels, overlays, etc.)
-        for cp in 0x21u32..=0x7eu32 {
-            if let Some(ch) = char::from_u32(cp) {
-                self.ensure_char_in_atlas(gl, ch, 0);
-                self.ensure_char_in_atlas(gl, ch, STYLE_BOLD);
+        // Common printable ASCII (covers tab labels, overlays, etc.).
+        // This does not need to run every frame; keep it tied to atlas resets.
+        if !self.ascii_warm_done {
+            for cp in 0x21u32..=0x7eu32 {
+                if let Some(ch) = char::from_u32(cp) {
+                    self.ensure_char_in_atlas(gl, ch, 0);
+                    self.ensure_char_in_atlas(gl, ch, STYLE_BOLD);
+                }
             }
+            self.ascii_warm_done = true;
         }
     }
 

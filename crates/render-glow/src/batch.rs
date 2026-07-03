@@ -21,6 +21,13 @@ impl FlatBatch {
         }
     }
 
+    /// Create a batch pre-sized for `quad_capacity` quads.
+    pub fn with_capacity(quad_capacity: usize) -> Self {
+        FlatBatch {
+            vertices: Vec::with_capacity(quad_capacity * 36),
+        }
+    }
+
     /// Clear all vertices.
     pub fn clear(&mut self) {
         self.vertices.clear();
@@ -88,6 +95,13 @@ impl GlyphBatch {
     pub fn new() -> Self {
         GlyphBatch {
             vertices: Vec::new(),
+        }
+    }
+
+    /// Create a batch pre-sized for `quad_capacity` quads.
+    pub fn with_capacity(quad_capacity: usize) -> Self {
+        GlyphBatch {
+            vertices: Vec::with_capacity(quad_capacity * 48),
         }
     }
 
@@ -166,6 +180,13 @@ impl EmojiBatch {
     pub fn new() -> Self {
         EmojiBatch {
             vertices: Vec::new(),
+        }
+    }
+
+    /// Create a batch pre-sized for `quad_capacity` quads.
+    pub fn with_capacity(quad_capacity: usize) -> Self {
+        EmojiBatch {
+            vertices: Vec::with_capacity(quad_capacity * 48),
         }
     }
 

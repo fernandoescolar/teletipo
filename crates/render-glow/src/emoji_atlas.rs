@@ -53,6 +53,7 @@ impl ColorAtlas {
         self.alloc_y = 0;
         self.row_h = 0;
         self.char_cache.clear();
+        self.stats.entries = 0;
         self.stats.resets += 1;
     }
 

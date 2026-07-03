@@ -152,6 +152,7 @@ use platform_abstraction::{AccessNode, AccessibilityTree, WindowControl};
 use render_model::{AppWindowEvent, RenderSnapshot};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, warn};
 
@@ -800,7 +801,7 @@ impl GpuRuntimeState {
             selection_end_scroll: 0,
             is_selecting: false,
             is_selecting_editor: false,
-            last_terminal_text: String::new(),
+            last_terminal_text: Arc::new(String::new()),
             term_row_count: rows as usize,
             cwd: std::env::current_dir()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -878,7 +879,7 @@ impl GpuRuntimeState {
             selection_end_scroll: 0,
             is_selecting: false,
             is_selecting_editor: false,
-            last_terminal_text: String::new(),
+            last_terminal_text: Arc::new(String::new()),
             term_row_count: rows as usize,
             cwd: active_cwd,
             suggestion_prefix: None,

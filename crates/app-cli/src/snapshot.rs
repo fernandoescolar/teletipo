@@ -574,7 +574,7 @@ fn build_terminal_content(
             }
         }
     }
-    state.tabs[active].last_terminal_text = terminal_text.clone();
+    state.tabs[active].last_terminal_text = Arc::new(terminal_text.clone());
     state.tabs[active].term_row_count = terminal_rows.len().max(1);
     (
         terminal_rows,

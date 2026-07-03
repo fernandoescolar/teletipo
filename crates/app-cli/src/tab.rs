@@ -1,4 +1,5 @@
 use app_orchestrator::{App, CommandBlock};
+use std::sync::Arc;
 use terminal_pty::PortablePtySession;
 
 use crate::search::SearchState;
@@ -85,7 +86,8 @@ pub(crate) struct TabState {
     pub(crate) is_selecting: bool,
     pub(crate) is_selecting_editor: bool,
     /// Terminal text from the most recent snapshot (used for Cmd+C copy).
-    pub(crate) last_terminal_text: String,
+    /// Arc<String> avoids cloning when reading from multiple locations (input/pointer, input/keyboard).
+    pub(crate) last_terminal_text: Arc<String>,
     /// Number of terminal rows in the most recent snapshot.
     pub(crate) term_row_count: usize,
     /// Cached working directory label shown in the tab bar.
