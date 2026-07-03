@@ -10,17 +10,13 @@ pub fn render_backgrounds(ctx: &RenderContext, scene: &mut Scene) {
     // Terminal rendering window
     let max_x = layout.width - layout.padding_h;
     let max_y = layout.terminal_text_bottom;
-    let terminal_text = snapshot.terminal_text_from_rows();
-    let lines: Vec<&str> = terminal_text.lines().collect();
 
     // Apply window opacity
     let backdrop = frosted_backdrop_alpha(snapshot.opacity);
 
-    let mut line_char_start = 0usize;
-
     // Draw background color cells
     // Process each row of terminal text
-    for (row, line) in lines.iter().copied().enumerate() {
+    for (row, render_row) in snapshot.terminal_rows.iter().enumerate() {
         let y = layout.terminal_text_top + row as f32 * layout.cell_h_px;
 
         // Stop if we've scrolled past the visible area
@@ -29,7 +25,7 @@ pub fn render_backgrounds(ctx: &RenderContext, scene: &mut Scene) {
         }
 
         // Process each column in this row
-        for (col, _) in line.chars().enumerate() {
+        for (col, cell) in render_row.cells.iter().enumerate() {
             let x = layout.padding_h + col as f32 * layout.cell_w_px;
 
             // Stop if we've scrolled past the right edge
@@ -38,8 +34,7 @@ pub fn render_backgrounds(ctx: &RenderContext, scene: &mut Scene) {
             }
 
             // Get background color for this cell (if any)
-            let idx = line_char_start + col;
-            if let Some(bg) = snapshot.terminal_bg_colors.get(idx).and_then(|c| *c) {
+            if let Some(bg) = cell.bg {
                 // Emit a rectangle for this cell's background
                 scene.rect(
                     x,
@@ -50,9 +45,6 @@ pub fn render_backgrounds(ctx: &RenderContext, scene: &mut Scene) {
                 );
             }
         }
-
-        // Advance to next line (including newline character)
-        line_char_start = line_char_start.saturating_add(line.chars().count() + 1);
     }
 }
 
@@ -77,20 +69,26 @@ mod tests {
         opacity: f32,
     ) -> RenderSnapshot {
         let terminal_text = lines.join("\n");
-        // terminal_text_from_rows() will regenerate text from rows, so we need to populate rows properly
         let mut terminal_rows = Vec::new();
-        for line in &lines {
+        let mut color_idx = 0usize;
+        for (line_idx, line) in lines.iter().enumerate() {
             let row = RenderRow {
                 cells: line
                     .chars()
-                    .map(|ch| crate::RenderCell {
+                    .enumerate()
+                    .map(|(col, ch)| crate::RenderCell {
                         ch,
+                        bg: bg_colors.get(color_idx + col).copied().flatten(),
                         ..crate::RenderCell::default()
                     })
                     .collect(),
                 ..RenderRow::default()
             };
             terminal_rows.push(row);
+            color_idx += line.chars().count();
+            if line_idx + 1 < lines.len() {
+                color_idx += 1;
+            }
         }
 
         RenderSnapshot {

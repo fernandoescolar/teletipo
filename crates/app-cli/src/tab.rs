@@ -27,6 +27,32 @@ pub(crate) struct HistoryEntry {
     pub(crate) last_used_secs: u64,
 }
 
+/// Keep retained per-tab command state bounded across long-running sessions.
+pub(crate) const COMMAND_HISTORY_LIMIT: usize = 10_000;
+pub(crate) const HISTORY_ENTRIES_LIMIT: usize = 10_000;
+pub(crate) const COMMAND_BLOCK_LIMIT: usize = 500;
+pub(crate) const RESTORED_TERMINAL_OUTPUT_LINE_LIMIT: usize = 10_000;
+
+pub(crate) fn cap_command_history(history: &mut Vec<String>) {
+    let excess = history.len().saturating_sub(COMMAND_HISTORY_LIMIT);
+    if excess > 0 {
+        history.drain(0..excess);
+    }
+}
+
+pub(crate) fn cap_history_entries(entries: &mut Vec<HistoryEntry>) {
+    if entries.len() <= HISTORY_ENTRIES_LIMIT {
+        return;
+    }
+    entries.sort_by(|a, b| {
+        b.last_used_secs
+            .cmp(&a.last_used_secs)
+            .then_with(|| b.count.cmp(&a.count))
+            .then_with(|| a.cmd.cmp(&b.cmd))
+    });
+    entries.truncate(HISTORY_ENTRIES_LIMIT);
+}
+
 /// All state that belongs to a single terminal+editor tab.
 pub(crate) struct TabState {
     pub(crate) app: App,
@@ -191,5 +217,46 @@ impl Default for PersistentSession {
             history: Vec::new(),
             terminal_output: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_command_history_keeps_newest_commands() {
+        let mut history: Vec<String> = (0..COMMAND_HISTORY_LIMIT + 3)
+            .map(|i| format!("cmd-{i}"))
+            .collect();
+
+        cap_command_history(&mut history);
+
+        assert_eq!(history.len(), COMMAND_HISTORY_LIMIT);
+        assert_eq!(history.first().map(String::as_str), Some("cmd-3"));
+        assert_eq!(
+            history.last().map(String::as_str),
+            Some(format!("cmd-{}", COMMAND_HISTORY_LIMIT + 2).as_str())
+        );
+    }
+
+    #[test]
+    fn cap_history_entries_keeps_recent_entries() {
+        let mut entries: Vec<HistoryEntry> = (0..HISTORY_ENTRIES_LIMIT + 3)
+            .map(|i| HistoryEntry {
+                cmd: format!("cmd-{i}"),
+                count: 1,
+                last_used_secs: i as u64,
+            })
+            .collect();
+
+        cap_history_entries(&mut entries);
+
+        assert_eq!(entries.len(), HISTORY_ENTRIES_LIMIT);
+        assert_eq!(
+            entries.first().map(|entry| entry.cmd.as_str()),
+            Some("cmd-10002")
+        );
+        assert!(entries.iter().all(|entry| entry.cmd != "cmd-0"));
     }
 }

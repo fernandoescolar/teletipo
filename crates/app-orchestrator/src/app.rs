@@ -7,6 +7,9 @@ use editor_core::EditorBuffer;
 use terminal_core::{DamageRegion, StyledChars, TerminalError, TerminalSession};
 use terminal_pty::PtyBackend;
 
+const PTY_READ_BUFFER_INITIAL_CAPACITY: usize = 64 * 1024;
+const PTY_READ_BUFFER_RETAINED_CAPACITY: usize = 256 * 1024;
+
 // ============================================================================
 // History sub-struct
 // ============================================================================
@@ -363,6 +366,7 @@ pub struct App {
     pub terminal: AppTerminal,
     pub editor: AppEditor,
     pub history: AppHistory,
+    pty_read_buffer: Vec<u8>,
 }
 
 impl App {
@@ -371,6 +375,7 @@ impl App {
             terminal: AppTerminal::new(rows, cols)?,
             editor: AppEditor::new(),
             history: AppHistory::new(),
+            pty_read_buffer: Vec::with_capacity(PTY_READ_BUFFER_INITIAL_CAPACITY),
         })
     }
 
@@ -498,10 +503,14 @@ impl App {
     }
 
     pub fn pump_pty_once<B: PtyBackend>(&mut self, pty: &mut B) -> io::Result<usize> {
-        let mut out = Vec::new();
-        let n = pty.try_read_output(&mut out)?;
+        self.pty_read_buffer.clear();
+        let n = pty.try_read_output(&mut self.pty_read_buffer)?;
         if n > 0 {
-            self.feed_terminal(&out);
+            self.terminal.feed(&self.pty_read_buffer);
+        }
+        if self.pty_read_buffer.capacity() > PTY_READ_BUFFER_RETAINED_CAPACITY {
+            self.pty_read_buffer
+                .shrink_to(PTY_READ_BUFFER_RETAINED_CAPACITY);
         }
         Ok(n)
     }
@@ -510,8 +519,13 @@ impl App {
     /// Used during the SIGWINCH suppress window to swallow the shell's
     /// prompt-redraw so it never appears in the terminal view.
     pub fn drain_pty_output<B: PtyBackend>(&mut self, pty: &mut B) -> io::Result<usize> {
-        let mut out = Vec::new();
-        pty.try_read_output(&mut out)
+        self.pty_read_buffer.clear();
+        let n = pty.try_read_output(&mut self.pty_read_buffer)?;
+        if self.pty_read_buffer.capacity() > PTY_READ_BUFFER_RETAINED_CAPACITY {
+            self.pty_read_buffer
+                .shrink_to(PTY_READ_BUFFER_RETAINED_CAPACITY);
+        }
+        Ok(n)
     }
 
     pub fn pump_until_quiet<B: PtyBackend>(

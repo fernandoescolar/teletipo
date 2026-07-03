@@ -1,6 +1,9 @@
 use crate::GpuRuntimeState;
 use crate::config::{UserConfig, load_config_result};
-use crate::tab::{HistoryEntry, PersistentSession, TabSession, TabState};
+use crate::tab::{
+    HistoryEntry, PersistentSession, RESTORED_TERMINAL_OUTPUT_LINE_LIMIT, TabSession, TabState,
+    cap_command_history, cap_history_entries,
+};
 use crate::theme;
 use app_orchestrator::App;
 use fontdb::Database;
@@ -419,6 +422,7 @@ fn process_shared_tab_data(saved_tabs: &[TabSession]) -> (Vec<String>, Vec<Histo
             }
         }
     }
+    cap_command_history(&mut shared_history);
 
     let mut shared_entries: Vec<HistoryEntry> = Vec::new();
     for tab in saved_tabs {
@@ -434,6 +438,7 @@ fn process_shared_tab_data(saved_tabs: &[TabSession]) -> (Vec<String>, Vec<Histo
             }
         }
     }
+    cap_history_entries(&mut shared_entries);
 
     (shared_history, shared_entries)
 }
@@ -451,7 +456,13 @@ fn build_single_tab(
     let mut app = build_app(rows, cols)?;
 
     // Feed terminal output
-    for line in saved.terminal_output.lines() {
+    let restored_lines: Vec<&str> = saved
+        .terminal_output
+        .lines()
+        .rev()
+        .take(RESTORED_TERMINAL_OUTPUT_LINE_LIMIT)
+        .collect();
+    for line in restored_lines.iter().rev() {
         app.feed_terminal(line.as_bytes());
         app.feed_terminal(b"\r\n");
     }
@@ -539,7 +550,7 @@ fn build_single_tab(
         // Backward compat: if no frecency data is stored, seed each history
         // entry with count=1 and an artificial age so older entries rank lower.
         history_entries: if saved.history_entries.is_empty() {
-            saved
+            let mut entries: Vec<HistoryEntry> = saved
                 .history
                 .iter()
                 .enumerate()
@@ -548,7 +559,9 @@ fn build_single_tab(
                     count: 1,
                     last_used_secs: i as u64,
                 })
-                .collect()
+                .collect();
+            cap_history_entries(&mut entries);
+            entries
         } else {
             params.shared_entries.to_vec()
         },

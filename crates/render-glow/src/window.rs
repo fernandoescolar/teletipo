@@ -279,6 +279,8 @@ where
     let (mut cell_w_px, mut cell_h_px) = painter.cell_metrics();
     let mut last_font_size = base_font_size;
     let mut last_title: String = format_window_title(&initial.title_cwd);
+    let mut window_focused = true;
+    let mut command_running = initial.editor_disabled;
     #[cfg(target_os = "macos")]
     let mut last_titlebar_bg = initial.theme.terminal_bg;
 
@@ -299,9 +301,13 @@ where
     #[allow(deprecated)]
     event_loop
         .run(move |event, target| {
-            target.set_control_flow(ControlFlow::WaitUntil(
-                std::time::Instant::now() + Duration::from_millis(REDRAW_HEARTBEAT_MS),
-            ));
+            if window_focused || command_running {
+                target.set_control_flow(ControlFlow::WaitUntil(
+                    std::time::Instant::now() + Duration::from_millis(REDRAW_HEARTBEAT_MS),
+                ));
+            } else {
+                target.set_control_flow(ControlFlow::Wait);
+            }
             match event {
                 Event::WindowEvent { event, window_id } if window_id == window.id() => {
                     match event {
@@ -352,6 +358,7 @@ where
                             window.request_redraw();
                         }
                         WindowEvent::Focused(focused) => {
+                            window_focused = focused;
                             if focused {
                                 let size = window.inner_size();
                                 gl_surface.resize(
@@ -405,6 +412,7 @@ where
                         }
                         WindowEvent::RedrawRequested => {
                             let snapshot = next_snapshot();
+                            command_running = snapshot.editor_disabled;
                             if snapshot.request_exit {
                                 target.exit();
                                 return;
@@ -466,11 +474,10 @@ where
                 Event::UserEvent(()) => {
                     window.request_redraw();
                 }
-                Event::AboutToWait => {
-                    // Heartbeat redraw keeps PTY-driven prompt updates responsive even
-                    // for sessions created before a PTY waker is installed.
+                Event::AboutToWait if window_focused || command_running => {
                     window.request_redraw();
                 }
+
                 _ => {}
             }
         })

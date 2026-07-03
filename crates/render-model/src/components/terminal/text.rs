@@ -7,36 +7,29 @@ pub fn render_text(ctx: &RenderContext, scene: &mut Scene) {
     let layout = ctx.layout;
     let snapshot = ctx.snapshot;
 
-    let terminal_text = snapshot.terminal_text_from_rows();
     let max_y = layout.terminal_text_bottom;
-    let lines: Vec<&str> = terminal_text.lines().collect();
-    let mut char_offset = 0usize;
 
-    for (row, line) in lines.iter().copied().enumerate() {
+    for (row, render_row) in snapshot.terminal_rows.iter().enumerate() {
         let y = layout.terminal_text_top + row as f32 * layout.cell_h_px;
         if y >= max_y {
             break;
         }
 
         let x = layout.padding_h;
-        let text = line.to_string();
-        let char_count = text.chars().count();
+        let mut text = String::with_capacity(render_row.cells.len());
+        let mut colors = Vec::with_capacity(render_row.cells.len());
 
-        // Collect per-character colors from snapshot
-        let colors: Vec<[f32; 4]> = (0..char_count)
-            .map(|i| {
-                let idx = char_offset + i;
-                snapshot
-                    .terminal_fg_colors
-                    .get(idx)
-                    .and_then(|c| *c)
+        for cell in &render_row.cells {
+            text.push(cell.ch);
+            colors.push(
+                cell.fg
                     .map(|c| [c[0], c[1], c[2], 1.0])
-                    .unwrap_or(snapshot.theme.text)
-            })
-            .collect();
+                    .unwrap_or(snapshot.theme.text),
+            );
+        }
 
         // Emit TextCommand with per-character colors
-        if !colors.is_empty() && colors.len() == char_count {
+        if !colors.is_empty() && colors.len() == render_row.cells.len() {
             scene.text_with_colors_to_layer(
                 SceneLayer::Main,
                 x,
@@ -48,7 +41,5 @@ pub fn render_text(ctx: &RenderContext, scene: &mut Scene) {
         } else {
             scene.text_to_layer(SceneLayer::Main, x, y, text, snapshot.theme.text);
         }
-
-        char_offset += char_count + 1;
     }
 }

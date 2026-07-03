@@ -514,15 +514,19 @@ fn build_terminal_content(
     let styled = state.tabs[active]
         .app
         .terminal_styled_snapshot_at_offset_with_palette(scroll_offset, active_palette.as_ref());
-    let terminal_text: String = styled.iter().map(|(ch, _, _, _)| *ch).collect();
-    let terminal_fg_colors: Vec<Option<[f32; 3]>> =
-        styled.iter().map(|(_, fg, _, _)| *fg).collect();
-    let terminal_bg_colors: Vec<Option<[f32; 3]>> =
-        styled.iter().map(|(_, _, bg, _)| *bg).collect();
-    let terminal_styles: Vec<u8> = styled.iter().map(|(_, _, _, s)| *s).collect();
-    let mut terminal_rows: Vec<RenderRow> = Vec::new();
+    let mut terminal_text = String::with_capacity(styled.len());
+    let mut terminal_fg_colors = Vec::with_capacity(styled.len());
+    let mut terminal_bg_colors = Vec::with_capacity(styled.len());
+    let mut terminal_styles = Vec::with_capacity(styled.len());
+    let mut terminal_rows: Vec<RenderRow> =
+        Vec::with_capacity(state.tabs[active].term_row_count.max(1));
     let mut current_row: Vec<RenderCell> = Vec::new();
     for (ch, fg, bg, style) in &styled {
+        terminal_text.push(*ch);
+        terminal_fg_colors.push(*fg);
+        terminal_bg_colors.push(*bg);
+        terminal_styles.push(*style);
+
         if *ch == '\n' {
             terminal_rows.push(RenderRow {
                 cells: std::mem::take(&mut current_row),
@@ -571,7 +575,7 @@ fn build_terminal_content(
         }
     }
     state.tabs[active].last_terminal_text = terminal_text.clone();
-    state.tabs[active].term_row_count = terminal_text.lines().count().max(1);
+    state.tabs[active].term_row_count = terminal_rows.len().max(1);
     (
         terminal_rows,
         Arc::new(damage),

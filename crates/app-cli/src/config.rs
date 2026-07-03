@@ -11,7 +11,7 @@ pub const FONT_SIZE_MAX: f32 = 80.0;
 /// Max horizontal/vertical padding in physical pixels.
 pub const PADDING_MAX: u32 = 200;
 /// Max scrollback lines per session.
-pub const SCROLLBACK_LINES_MAX: u32 = 1_000_000;
+pub const SCROLLBACK_LINES_MAX: u32 = 100_000;
 
 // ── Persisted config structs ────────────────────────────────────────────────
 
@@ -737,7 +737,7 @@ mod tests {
         assert!(!cfg.set_field("font", "size", "80.1"));
         assert!(!cfg.set_field("padding", "horizontal", "201"));
         assert!(!cfg.set_field("padding", "vertical", "201"));
-        assert!(!cfg.set_field("terminal", "scrollback_lines", "1000001"));
+        assert!(!cfg.set_field("terminal", "scrollback_lines", "100001"));
     }
 
     #[test]

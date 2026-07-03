@@ -147,7 +147,7 @@ use crate::snapshot;
 use crate::state::{
     CursorState, DragState, LayoutState, ModalMarker, ModifierState, OverlayState, ThemeFontState,
 };
-use crate::tab::{HistoryEntry, TabState};
+use crate::tab::{HistoryEntry, TabState, cap_command_history, cap_history_entries};
 use platform_abstraction::{AccessNode, AccessibilityTree, WindowControl};
 use render_model::{AppWindowEvent, RenderSnapshot};
 use std::cell::RefCell;
@@ -300,12 +300,16 @@ impl GpuRuntimeState {
         }
     }
 
-    /// Install the PTY waker once the event loop is ready. Existing tabs that
-    /// were spawned before the event loop started don't get the waker (they
-    /// still work because the loop polls), but all future tabs will.
+    /// Install the PTY waker once the event loop is ready. Existing tabs are
+    /// updated too so idle rendering can stay fully event-driven.
     pub(crate) fn install_pty_waker(&mut self, redrawer: render_glow::Redrawer) {
         let waker: terminal_pty::Waker =
             std::sync::Arc::new(std::sync::Mutex::new(move || redrawer.request_redraw()));
+        for tab in &mut self.tabs {
+            if let Some(pty) = tab.pty.as_mut() {
+                pty.set_waker(waker.clone());
+            }
+        }
         self.pty_waker = Some(waker);
     }
 
@@ -446,6 +450,7 @@ impl GpuRuntimeState {
             // Keep every execution in chronological order, including duplicates,
             // matching conventional shell history navigation.
             tab.history.push(text.clone());
+            cap_command_history(&mut tab.history);
             if let Some(entry) = tab
                 .history_entries
                 .iter_mut()
@@ -459,6 +464,7 @@ impl GpuRuntimeState {
                     count: 1,
                     last_used_secs: now_secs,
                 });
+                cap_history_entries(&mut tab.history_entries);
             }
         }
     }
@@ -477,6 +483,13 @@ impl GpuRuntimeState {
         if let Some(mut block) = self.tabs[tab_idx].current_block.take() {
             block.close(exit_code);
             self.tabs[tab_idx].command_blocks.push(block);
+            let excess = self.tabs[tab_idx]
+                .command_blocks
+                .len()
+                .saturating_sub(crate::tab::COMMAND_BLOCK_LIMIT);
+            if excess > 0 {
+                self.tabs[tab_idx].command_blocks.drain(0..excess);
+            }
         }
 
         // Show execution duration overlay for commands that took ≥ 1 second.

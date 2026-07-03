@@ -18,6 +18,8 @@ type Result<T> = std::result::Result<T, PtyError>;
 /// can still be used safely from the PTY reader thread.
 pub type Waker = Arc<Mutex<dyn Fn() + Send>>;
 
+type WakerSlot = Arc<Mutex<Option<Waker>>>;
+
 /// Maximum number of read chunks (each up to [`READ_CHUNK_SIZE`] bytes) that
 /// may sit in the PTY → consumer channel before the reader thread blocks.
 ///
@@ -41,10 +43,9 @@ pub struct PortablePtySession {
     /// Handle to the reader thread, retained so `Drop` can join with a
     /// timeout. `Option` so the join can take ownership in `drop`.
     reader_handle: Option<thread::JoinHandle<()>>,
-    /// Optional waker callback shared with the reader thread; when set, the
-    /// reader calls it after each chunk so the event loop renders promptly.
-    #[allow(dead_code)] // retained to keep the Arc alive for the reader thread
-    waker: Option<Waker>,
+    /// Optional waker callback shared with the reader thread; can be installed
+    /// after spawn once the event loop exists.
+    waker: WakerSlot,
 }
 
 // ── Shell integration ─────────────────────────────────────────────────────────
@@ -274,7 +275,8 @@ impl PortablePtySession {
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
         let queued_chunks = Arc::new(AtomicUsize::new(0));
         let queued_chunks_for_thread = Arc::clone(&queued_chunks);
-        let waker_for_thread = waker.clone();
+        let waker_slot: WakerSlot = Arc::new(Mutex::new(waker));
+        let waker_for_thread = Arc::clone(&waker_slot);
         let reader_handle = thread::spawn(move || {
             let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
@@ -289,7 +291,8 @@ impl PortablePtySession {
                                 queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                             metrics::gauge!("pty_channel_depth").set(depth as f64);
                             metrics::counter!("pty_read_bytes").increment(n as u64);
-                            if let Some(ref wake) = waker_for_thread
+                            if let Ok(slot) = waker_for_thread.lock()
+                                && let Some(ref wake) = *slot
                                 && let Ok(cb) = wake.lock()
                             {
                                 (cb)();
@@ -311,7 +314,7 @@ impl PortablePtySession {
             rx,
             queued_chunks: Arc::clone(&queued_chunks),
             reader_handle: Some(reader_handle),
-            waker,
+            waker: waker_slot,
         };
         Ok((session, integration.is_some()))
     }
@@ -364,7 +367,8 @@ impl PortablePtySession {
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(PTY_CHANNEL_CAPACITY);
         let queued_chunks = Arc::new(AtomicUsize::new(0));
         let queued_chunks_for_thread = Arc::clone(&queued_chunks);
-        let waker_for_thread = waker.clone();
+        let waker_slot: WakerSlot = Arc::new(Mutex::new(waker));
+        let waker_for_thread = Arc::clone(&waker_slot);
         let reader_handle = thread::spawn(move || {
             let mut buf = [0u8; READ_CHUNK_SIZE];
             loop {
@@ -379,7 +383,8 @@ impl PortablePtySession {
                                 queued_chunks_for_thread.fetch_add(1, Ordering::Relaxed) + 1;
                             metrics::gauge!("pty_channel_depth").set(depth as f64);
                             metrics::counter!("pty_read_bytes").increment(n as u64);
-                            if let Some(ref wake) = waker_for_thread
+                            if let Ok(slot) = waker_for_thread.lock()
+                                && let Some(ref wake) = *slot
                                 && let Ok(cb) = wake.lock()
                             {
                                 (cb)();
@@ -401,8 +406,15 @@ impl PortablePtySession {
             rx,
             queued_chunks: Arc::clone(&queued_chunks),
             reader_handle: Some(reader_handle),
-            waker,
+            waker: waker_slot,
         })
+    }
+
+    /// Install or replace the wake callback used by the reader thread.
+    pub fn set_waker(&mut self, waker: Waker) {
+        if let Ok(mut slot) = self.waker.lock() {
+            *slot = Some(waker);
+        }
     }
 
     #[tracing::instrument(skip(self))]
