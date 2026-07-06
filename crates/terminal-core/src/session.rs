@@ -83,6 +83,8 @@ pub trait TerminalDisplay {
         image_cols: u16,
         image_rows: u16,
     );
+    /// Return the images currently placed on the screen.
+    fn images(&self) -> &[terminal_screen::TerminalImage];
 }
 
 impl TerminalDisplay for Screen {
@@ -275,6 +277,10 @@ impl TerminalDisplay for Screen {
         image_rows: u16,
     ) {
         Screen::place_image(self, width_px, height_px, rgba, image_cols, image_rows)
+    }
+
+    fn images(&self) -> &[terminal_screen::TerminalImage] {
+        Screen::images(self)
     }
 }
 
@@ -813,6 +819,11 @@ where
         self.screen.dump_hyperlink_spans(scroll_offset)
     }
 
+    /// Return all images currently placed on the terminal screen.
+    pub fn screen_images(&self) -> &[terminal_screen::TerminalImage] {
+        self.screen.images()
+    }
+
     /// Resolve a hyperlink ID to its URI string. `0` always returns `None`.
     pub fn hyperlink_uri(&self, id: u16) -> Option<&str> {
         self.screen.hyperlink_uri(id)
@@ -1022,6 +1033,10 @@ mod tests {
             _image_cols: u16,
             _image_rows: u16,
         ) {
+        }
+
+        fn images(&self) -> &[terminal_screen::TerminalImage] {
+            &[]
         }
     }
 

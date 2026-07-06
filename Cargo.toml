@@ -4,6 +4,10 @@ version = "9.9.9"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
+[features]
+# Optional rendering backends
+render-gpui = ["app-cli/render-gpui"]
+
 [workspace]
 members = ["crates/*"]
 resolver = "2"

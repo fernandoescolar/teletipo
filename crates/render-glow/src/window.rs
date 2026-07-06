@@ -11,7 +11,7 @@ use glutin::display::GetGlDisplay;
 use glutin::prelude::*;
 use glutin::surface::{Surface, SurfaceAttributesBuilder, SwapInterval, WindowSurface};
 use glutin_winit::DisplayBuilder;
-use platform_abstraction::{WindowControl, apply_app_icon, apply_titlebar_color};
+use platform_abstraction::{WindowControl, apply_app_icon};
 use raw_window_handle::HasWindowHandle;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{Event, Ime, MouseScrollDelta, WindowEvent};
@@ -24,6 +24,68 @@ const APP_ICON_PNG: &[u8] = include_bytes!("../../../docs/teletipo128x128.png");
 const REDRAW_HEARTBEAT_MS: u64 = 33;
 
 type Result<T> = anyhow::Result<T>;
+
+/// On macOS, make the native title bar take the given RGBA colour so it blends
+/// with the rendered content rather than showing the default vibrancy.
+///
+/// This function lives here (in render-glow) rather than platform-abstraction
+/// because it requires a `winit::window::Window` to obtain the raw AppKit handle.
+fn apply_titlebar_color(window: &Window, [r, g, b, a]: [f32; 4]) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::class;
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+
+        let Ok(handle) = window.window_handle() else {
+            return;
+        };
+        let raw_window_handle::RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+            return;
+        };
+        let ns_view = appkit.ns_view.as_ptr() as *mut AnyObject;
+
+        unsafe {
+            let ns_window: *mut AnyObject = msg_send![&*ns_view, window];
+            if ns_window.is_null() {
+                return;
+            }
+            let cls = class!(NSColor);
+            let color: *mut AnyObject = msg_send![
+                cls,
+                colorWithSRGBRed: (r as f64)
+                green: (g as f64)
+                blue: (b as f64)
+                alpha: (a as f64)
+            ];
+            let _: () = msg_send![&*ns_window, setBackgroundColor: &*color];
+
+            let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            let name_bytes: &[u8] = if lum < 0.5 {
+                b"NSAppearanceNameDarkAqua\0"
+            } else {
+                b"NSAppearanceNameAqua\0"
+            };
+            let ns_name: *mut AnyObject = msg_send![
+                class!(NSString),
+                stringWithUTF8String: name_bytes.as_ptr()
+            ];
+            let appearance: *mut AnyObject = msg_send![
+                class!(NSAppearance),
+                appearanceNamed: &*ns_name
+            ];
+            if !appearance.is_null() {
+                let _: () = msg_send![&*ns_window, setAppearance: &*appearance];
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        let _ = (r, g, b, a);
+    }
+}
 
 /// A thread-safe handle that wakes the render loop to schedule a redraw.
 /// Wraps an `EventLoopProxy` so PTY reader threads can trigger rendering
@@ -77,16 +139,19 @@ where
     F: 'static + FnMut() -> RenderSnapshot,
     E: 'static + FnMut(AppWindowEvent),
 {
-    run_gpu_window_live_with_events_and_window(next_snapshot, on_event, |_, _| {}, config)
+    run_gpu_window_live_with_events_and_window(next_snapshot, on_event, |_| {}, config)
 }
 
 struct WinitWindowControl {
     window: &'static Window,
+    proxy: EventLoopProxy<()>,
 }
 
 impl WindowControl for WinitWindowControl {
     fn request_redraw(&self) {
-        self.window.request_redraw();
+        // Use the event loop proxy to immediately wake the loop from any thread,
+        // especially important for PTY waker to avoid waiting for the next frame.
+        let _ = self.proxy.send_event(());
     }
 
     fn set_title(&self, title: &str) {
@@ -183,7 +248,7 @@ pub fn run_gpu_window_live_with_events_and_window<F, E, W>(
 where
     F: 'static + FnMut() -> RenderSnapshot,
     E: 'static + FnMut(AppWindowEvent),
-    W: FnOnce(Box<dyn WindowControl>, Redrawer),
+    W: FnOnce(Box<dyn WindowControl>),
 {
     let initial = next_snapshot();
     let event_loop = EventLoop::new().context("create event loop")?;
@@ -254,7 +319,10 @@ where
     let window: &'static Window = Box::leak(Box::new(window));
     window.set_ime_allowed(true);
 
-    on_window_ready(Box::new(WinitWindowControl { window }), Redrawer { proxy });
+    on_window_ready(Box::new(WinitWindowControl {
+        window,
+        proxy: proxy.clone(),
+    }));
     apply_app_icon(APP_ICON_PNG);
     apply_titlebar_color(window, initial.theme.terminal_bg);
 
@@ -281,6 +349,7 @@ where
     let mut last_title: String = format_window_title(&initial.title_cwd);
     let mut window_focused = true;
     let mut command_running = initial.editor_disabled;
+    let mut current_modifiers = winit::event::Modifiers::default();
     #[cfg(target_os = "macos")]
     let mut last_titlebar_bg = initial.theme.terminal_bg;
 
@@ -374,7 +443,10 @@ where
                             on_event(AppWindowEvent::WindowFocused(focused));
                         }
                         WindowEvent::ModifiersChanged(mods) => {
-                            on_event(AppWindowEvent::ModifiersChanged(mods.state()));
+                            current_modifiers = mods;
+                            on_event(AppWindowEvent::ModifiersChanged(
+                                crate::winit_compat::modifiers_from_winit(&mods),
+                            ));
                             window.request_redraw();
                         }
                         WindowEvent::CursorMoved { position, .. } => {
@@ -385,7 +457,10 @@ where
                             window.request_redraw();
                         }
                         WindowEvent::MouseInput { state, button, .. } => {
-                            on_event(AppWindowEvent::MouseInput { state, button });
+                            on_event(AppWindowEvent::MouseInput {
+                                state: crate::winit_compat::input_state_from_winit(state),
+                                button: crate::winit_compat::pointer_button_from_winit(button),
+                            });
                             window.request_redraw();
                         }
                         WindowEvent::MouseWheel { delta, .. } => {
@@ -399,7 +474,11 @@ where
                             }
                         }
                         WindowEvent::KeyboardInput { event, .. } => {
-                            on_event(AppWindowEvent::KeyboardInput(event));
+                            let keyboard_event = crate::winit_compat::keyboard_event_from_winit(
+                                &event,
+                                &current_modifiers,
+                            );
+                            on_event(AppWindowEvent::KeyboardInput(keyboard_event));
                             window.request_redraw();
                         }
                         WindowEvent::Ime(Ime::Commit(text)) => {

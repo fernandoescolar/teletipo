@@ -1,10 +1,9 @@
 use crate::config::{SETTINGS_FIELDS, save_config};
 use crate::consts::SEARCH_MAX_VISIBLE;
 use crate::runtime::GpuRuntimeState;
-use render_glow::{SettingsItem, SettingsOverlay};
+use platform_abstraction::{InputState, KeyboardEvent, LogicalKey, NamedKey};
+use render_model::{SettingsItem, SettingsOverlay};
 use std::path::PathBuf;
-use winit::event::ElementState;
-use winit::keyboard::{Key, NamedKey};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SettingsUiState {
@@ -325,11 +324,8 @@ pub(crate) fn build_settings_overlay(state: &GpuRuntimeState) -> Option<Settings
 /// Handle a key event while the settings overlay is open.
 /// Returns `true` if the event was consumed (caller should `return`).
 /// Must only be called when `state.settings.open` is true.
-pub(crate) fn handle_settings_key(
-    state: &mut GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
-) -> bool {
-    if key_event.state != ElementState::Pressed {
+pub(crate) fn handle_settings_key(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) -> bool {
+    if key_event.state != InputState::Pressed {
         return true; // consume non-press events too while settings is open
     }
 
@@ -345,19 +341,19 @@ pub(crate) fn handle_settings_key(
 }
 
 /// Handle a key event while the settings search dropdown is active.
-fn handle_settings_search_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+fn handle_settings_search_key(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) {
     match &key_event.logical_key {
-        Key::Named(NamedKey::Escape) => {
+        LogicalKey::Named(NamedKey::Escape) => {
             // Cancel search — restore the original family selection.
             state.settings.search_buf = None;
             state.settings.search_selected = 0;
             state.settings.search_scroll_offset = 0;
         }
-        Key::Named(NamedKey::Enter) => {
+        LogicalKey::Named(NamedKey::Enter) => {
             // Confirm the highlighted match.
             confirm_search_selection(state);
         }
-        Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowLeft) => {
+        LogicalKey::Named(NamedKey::ArrowUp) | LogicalKey::Named(NamedKey::ArrowLeft) => {
             // Compute current matches count inline (cheap, just filtering).
             let n = search_match_count(state);
             if n > 0 && state.settings.search_selected > 0 {
@@ -365,21 +361,21 @@ fn handle_settings_search_key(state: &mut GpuRuntimeState, key_event: &winit::ev
                 clamp_search_scroll(state, n);
             }
         }
-        Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowRight) => {
+        LogicalKey::Named(NamedKey::ArrowDown) | LogicalKey::Named(NamedKey::ArrowRight) => {
             let n = search_match_count(state);
             if n > 0 && state.settings.search_selected + 1 < n {
                 state.settings.search_selected += 1;
                 clamp_search_scroll(state, n);
             }
         }
-        Key::Named(NamedKey::Backspace) => {
+        LogicalKey::Named(NamedKey::Backspace) => {
             if let Some(ref mut buf) = state.settings.search_buf {
                 buf.pop();
                 state.settings.search_selected = 0;
                 state.settings.search_scroll_offset = 0;
             }
         }
-        Key::Character(_) | Key::Named(NamedKey::Space) => {
+        LogicalKey::Character(_) | LogicalKey::Named(NamedKey::Space) => {
             if let Some(text) = key_event.text.as_ref()
                 && let Some(ref mut buf) = state.settings.search_buf
             {
@@ -393,11 +389,11 @@ fn handle_settings_search_key(state: &mut GpuRuntimeState, key_event: &winit::ev
 }
 
 /// Handle a key event in the normal (non-search) settings mode.
-fn handle_settings_normal_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+fn handle_settings_normal_key(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) {
     // +3 for the three action rows at the end
     let n_fields = SETTINGS_FIELDS.len() + 3;
     match &key_event.logical_key {
-        Key::Named(NamedKey::Escape) => {
+        LogicalKey::Named(NamedKey::Escape) => {
             if state.settings.edit_buf.is_some() {
                 state.settings.edit_buf = None;
             } else {
@@ -410,31 +406,31 @@ fn handle_settings_normal_key(state: &mut GpuRuntimeState, key_event: &winit::ev
                 state.close_active_modal();
             }
         }
-        Key::Named(NamedKey::ArrowUp) => {
+        LogicalKey::Named(NamedKey::ArrowUp) => {
             state.settings.cursor = state.settings.cursor.saturating_sub(1);
             state.settings.edit_buf = None;
         }
-        Key::Named(NamedKey::ArrowDown) => {
+        LogicalKey::Named(NamedKey::ArrowDown) => {
             if state.settings.cursor + 1 < n_fields {
                 state.settings.cursor += 1;
             }
             state.settings.edit_buf = None;
         }
-        Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
+        LogicalKey::Named(NamedKey::ArrowLeft) | LogicalKey::Named(NamedKey::ArrowRight) => {
             handle_settings_arrow_lr(state, key_event);
         }
-        Key::Named(NamedKey::Enter) => {
+        LogicalKey::Named(NamedKey::Enter) => {
             handle_settings_enter(state);
         }
-        Key::Named(NamedKey::Backspace) => {
+        LogicalKey::Named(NamedKey::Backspace) => {
             if let Some(ref mut buf) = state.settings.edit_buf {
                 buf.pop();
             }
         }
-        Key::Character(ch) if state.modifiers.super_down && ch.as_str() == "s" => {
+        LogicalKey::Character(ch) if state.modifiers.super_down && ch.as_str() == "s" => {
             handle_settings_save(state);
         }
-        Key::Character(_) | Key::Named(NamedKey::Space) => {
+        LogicalKey::Character(_) | LogicalKey::Named(NamedKey::Space) => {
             if let Some(ref mut buf) = state.settings.edit_buf
                 && let Some(text) = key_event.text.as_ref()
             {
@@ -446,8 +442,11 @@ fn handle_settings_normal_key(state: &mut GpuRuntimeState, key_event: &winit::ev
 }
 
 /// Handle left/right arrow in normal settings mode (cycle field values).
-fn handle_settings_arrow_lr(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
-    let is_right = matches!(&key_event.logical_key, Key::Named(NamedKey::ArrowRight));
+fn handle_settings_arrow_lr(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) {
+    let is_right = matches!(
+        &key_event.logical_key,
+        LogicalKey::Named(NamedKey::ArrowRight)
+    );
     if state.settings.cursor >= SETTINGS_FIELDS.len() {
         return; // action rows don't respond to arrow left/right
     }

@@ -1,5 +1,4 @@
-use winit::event::{ElementState, KeyEvent, MouseButton};
-use winit::keyboard::ModifiersState;
+use crate::input::{InputState, KeyboardEvent, ModifierKeys, PointerButton};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlatformKind {
@@ -13,6 +12,8 @@ pub enum PlatformKind {
 /// application layer.  Defined here (in `platform-abstraction`) so that the
 /// UI logic crate can consume events without taking a direct dependency on the
 /// GPU renderer.
+///
+/// All types are backend-neutral: no `winit`, `gpui`, or other renderer-specific types.
 #[derive(Debug, Clone)]
 pub enum AppWindowEvent {
     CloseRequested,
@@ -35,14 +36,14 @@ pub enum AppWindowEvent {
         y: f64,
     },
     MouseInput {
-        state: ElementState,
-        button: MouseButton,
+        state: InputState,
+        button: PointerButton,
     },
     MouseWheel {
         delta_lines: f32,
     },
-    ModifiersChanged(ModifiersState),
-    KeyboardInput(KeyEvent),
+    ModifiersChanged(ModifierKeys),
+    KeyboardInput(KeyboardEvent),
     ImeCommit(String),
     /// A file was dropped onto the window.
     DroppedFile(std::path::PathBuf),

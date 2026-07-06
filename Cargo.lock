@@ -150,6 +150,7 @@ dependencies = [
  "platform-abstraction",
  "regex",
  "render-glow",
+ "render-gpui",
  "render-model",
  "self_update",
  "serde",
@@ -159,7 +160,6 @@ dependencies = [
  "thiserror 2.0.18",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
- "winit",
 ]
 
 [[package]]
@@ -2701,7 +2701,6 @@ dependencies = [
  "arboard",
  "objc2 0.4.1",
  "tracing",
- "winit",
 ]
 
 [[package]]
@@ -3178,6 +3177,16 @@ dependencies = [
  "skrifa",
  "tracing",
  "winit",
+]
+
+[[package]]
+name = "render-gpui"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "platform-abstraction",
+ "render-model",
+ "tracing",
 ]
 
 [[package]]

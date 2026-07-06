@@ -4,18 +4,15 @@
 //! and select/copy text without using the mouse.
 
 use crate::GpuRuntimeState;
-use winit::keyboard::{Key, NamedKey};
+use platform_abstraction::{KeyboardEvent, LogicalKey, NamedKey};
 
 /// Handle a key event while in copy mode.
 /// Returns true if the key was handled, false otherwise.
-pub(super) fn handle_copy_mode_key(
-    state: &mut GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
-) -> bool {
+pub(super) fn handle_copy_mode_key(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) -> bool {
     let logical_key = &key_event.logical_key;
 
     // Exit copy mode: Escape
-    if matches!(logical_key, Key::Named(NamedKey::Escape)) {
+    if matches!(logical_key, LogicalKey::Named(NamedKey::Escape)) {
         state.tab_mut().copy_mode.active = false;
         state.tab_mut().copy_mode.anchor = None;
         return true;
@@ -31,37 +28,37 @@ pub(super) fn handle_copy_mode_key(
         || try_handle_page_nav(state, key_event)
 }
 
-fn try_handle_movement(state: &mut GpuRuntimeState, logical_key: &Key) -> bool {
+fn try_handle_movement(state: &mut GpuRuntimeState, logical_key: &LogicalKey) -> bool {
     match logical_key {
-        Key::Character(ch) if ch.as_str() == "h" || ch.as_str() == "H" => {
+        LogicalKey::Character(ch) if ch.as_str() == "h" || ch.as_str() == "H" => {
             cursor_move_left(state);
             true
         }
-        Key::Character(ch) if ch.as_str() == "j" || ch.as_str() == "J" => {
+        LogicalKey::Character(ch) if ch.as_str() == "j" || ch.as_str() == "J" => {
             cursor_move_down(state);
             true
         }
-        Key::Character(ch) if ch.as_str() == "k" || ch.as_str() == "K" => {
+        LogicalKey::Character(ch) if ch.as_str() == "k" || ch.as_str() == "K" => {
             cursor_move_up(state);
             true
         }
-        Key::Character(ch) if ch.as_str() == "l" || ch.as_str() == "L" => {
+        LogicalKey::Character(ch) if ch.as_str() == "l" || ch.as_str() == "L" => {
             cursor_move_right(state);
             true
         }
-        Key::Named(NamedKey::ArrowLeft) => {
+        LogicalKey::Named(NamedKey::ArrowLeft) => {
             cursor_move_left(state);
             true
         }
-        Key::Named(NamedKey::ArrowDown) => {
+        LogicalKey::Named(NamedKey::ArrowDown) => {
             cursor_move_down(state);
             true
         }
-        Key::Named(NamedKey::ArrowUp) => {
+        LogicalKey::Named(NamedKey::ArrowUp) => {
             cursor_move_up(state);
             true
         }
-        Key::Named(NamedKey::ArrowRight) => {
+        LogicalKey::Named(NamedKey::ArrowRight) => {
             cursor_move_right(state);
             true
         }
@@ -69,8 +66,8 @@ fn try_handle_movement(state: &mut GpuRuntimeState, logical_key: &Key) -> bool {
     }
 }
 
-fn try_handle_selection(state: &mut GpuRuntimeState, logical_key: &Key) -> bool {
-    if let Key::Character(ch) = logical_key {
+fn try_handle_selection(state: &mut GpuRuntimeState, logical_key: &LogicalKey) -> bool {
+    if let LogicalKey::Character(ch) = logical_key {
         let ch_str = ch.as_str();
         if ch_str == "v" || ch_str == "V" {
             let cursor_row = state.tab().copy_mode.cursor_row;
@@ -86,23 +83,23 @@ fn try_handle_selection(state: &mut GpuRuntimeState, logical_key: &Key) -> bool 
     false
 }
 
-fn try_handle_copy_and_exit(state: &mut GpuRuntimeState, logical_key: &Key) -> bool {
-    if let Key::Character(ch) = logical_key {
+fn try_handle_copy_and_exit(state: &mut GpuRuntimeState, logical_key: &LogicalKey) -> bool {
+    if let LogicalKey::Character(ch) = logical_key {
         let ch_str = ch.as_str();
         if ch_str == "y" || ch_str == "Y" {
             copy_selection_and_exit(state);
             return true;
         }
     }
-    if matches!(logical_key, Key::Named(NamedKey::Enter)) {
+    if matches!(logical_key, LogicalKey::Named(NamedKey::Enter)) {
         copy_selection_and_exit(state);
         return true;
     }
     false
 }
 
-fn try_handle_word_nav(state: &mut GpuRuntimeState, logical_key: &Key) -> bool {
-    if let Key::Character(ch) = logical_key {
+fn try_handle_word_nav(state: &mut GpuRuntimeState, logical_key: &LogicalKey) -> bool {
+    if let LogicalKey::Character(ch) = logical_key {
         match ch.as_str() {
             "w" | "W" => {
                 cursor_jump_word_forward(state);
@@ -118,8 +115,8 @@ fn try_handle_word_nav(state: &mut GpuRuntimeState, logical_key: &Key) -> bool {
     false
 }
 
-fn try_handle_line_nav(state: &mut GpuRuntimeState, logical_key: &Key) -> bool {
-    if let Key::Character(ch) = logical_key {
+fn try_handle_line_nav(state: &mut GpuRuntimeState, logical_key: &LogicalKey) -> bool {
+    if let LogicalKey::Character(ch) = logical_key {
         match ch.as_str() {
             "0" => {
                 state.tab_mut().copy_mode.cursor_col = 0;
@@ -135,8 +132,8 @@ fn try_handle_line_nav(state: &mut GpuRuntimeState, logical_key: &Key) -> bool {
     false
 }
 
-fn try_handle_scrollback_nav(state: &mut GpuRuntimeState, logical_key: &Key) -> bool {
-    if let Key::Character(ch) = logical_key {
+fn try_handle_scrollback_nav(state: &mut GpuRuntimeState, logical_key: &LogicalKey) -> bool {
+    if let LogicalKey::Character(ch) = logical_key {
         match ch.as_str() {
             "g" => {
                 cursor_move_to_scrollback_top(state);
@@ -152,11 +149,11 @@ fn try_handle_scrollback_nav(state: &mut GpuRuntimeState, logical_key: &Key) -> 
     false
 }
 
-fn try_handle_page_nav(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) -> bool {
+fn try_handle_page_nav(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) -> bool {
     if !state.modifiers.ctrl_down {
         return false;
     }
-    if let Key::Character(ch) = &key_event.logical_key {
+    if let LogicalKey::Character(ch) = &key_event.logical_key {
         match ch.as_str() {
             "u" | "U" => {
                 cursor_move_page_up(state);

@@ -3,11 +3,14 @@ use std::rc::Rc;
 
 use clap::Parser;
 use platform_abstraction::default_shell;
-use render_glow::{FontConfig, RenderConfig};
+use render_model::{FontConfig, RenderConfig};
 
 use crate::launch::{build_initial_state, load_session, save_session};
 use crate::runtime::EventCtx;
 use crate::{commands, metrics, onboarding};
+
+#[cfg(feature = "render-gpui")]
+use render_gpui;
 
 #[derive(Debug, Parser)]
 #[command(name = "teletipo", version, about = "Modern terminal/editor prototype")]
@@ -20,6 +23,14 @@ struct Cli {
 
     #[arg(long)]
     shell: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "BACKEND",
+        default_value = "glow",
+        help = "Select rendering backend: glow (default) or gpui"
+    )]
+    renderer: String,
 
     #[arg(
         short = 'e',
@@ -110,25 +121,59 @@ pub fn run(
     let event_ctx_for_events = event_ctx.clone();
     let event_ctx_for_window = event_ctx;
     let first_frame = std::sync::Once::new();
-    if let Err(err) = render_glow::run_gpu_window_live_with_events_and_window(
-        move || {
-            first_frame.call_once(|| crate::mem_report::report("first_frame"));
-            event_ctx_for_frame.build_snapshot()
+
+    let render_config = RenderConfig {
+        initial_size: Some((window_width, window_height)),
+        initial_position: window_pos,
+        font: FontConfig {
+            font_family: initial_font_family.clone(),
+            font_size: initial_font_size,
         },
-        move |event| event_ctx_for_events.handle_event(event),
-        move |window, redrawer| event_ctx_for_window.install_window(window, redrawer),
-        RenderConfig {
-            initial_size: Some((window_width, window_height)),
-            initial_position: window_pos,
-            font: FontConfig {
-                font_family: initial_font_family.clone(),
-                font_size: initial_font_size,
+        opacity: initial_opacity,
+        ..RenderConfig::default()
+    };
+
+    // Backend selection based on CLI flag
+    let backend_result = match cli.renderer.as_str() {
+        "glow" => render_glow::run_gpu_window_live_with_events_and_window(
+            move || {
+                first_frame.call_once(|| crate::mem_report::report("first_frame"));
+                event_ctx_for_frame.build_snapshot()
             },
-            opacity: initial_opacity,
-            ..RenderConfig::default()
-        },
-    ) {
-        tracing::error!(error = %err, "failed to start glow backend");
+            move |event| event_ctx_for_events.handle_event(event),
+            move |window| event_ctx_for_window.install_window(window),
+            render_config,
+        ),
+        #[cfg(feature = "render-gpui")]
+        "gpui" => render_gpui::run_gpu_window_live_with_events_and_window(
+            move || {
+                first_frame.call_once(|| crate::mem_report::report("first_frame"));
+                event_ctx_for_frame.build_snapshot()
+            },
+            move |event| event_ctx_for_events.handle_event(event),
+            move |window| event_ctx_for_window.install_window(window),
+            render_config,
+        ),
+        #[cfg(not(feature = "render-gpui"))]
+        "gpui" => Err(anyhow::anyhow!(
+            "render-gpui backend was not compiled in. Compile with --features render-gpui"
+        )),
+        other => {
+            #[cfg(feature = "render-gpui")]
+            let backends = "glow, gpui";
+            #[cfg(not(feature = "render-gpui"))]
+            let backends = "glow";
+            tracing::error!(backend = %other, "unknown renderer backend (available: {})", backends);
+            Err(anyhow::anyhow!(
+                "unknown renderer: {}. Available: {}",
+                other,
+                backends
+            ))
+        }
+    };
+
+    if let Err(err) = backend_result {
+        tracing::error!(error = %err, "failed to start renderer backend");
     }
 
     drop(metrics_handle);

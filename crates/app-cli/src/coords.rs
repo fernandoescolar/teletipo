@@ -1,5 +1,5 @@
 use platform_abstraction::{ProcessInfo, current_process_info};
-use render_glow::SCROLLBAR_W_PX;
+use render_model::SCROLLBAR_W_PX;
 
 use crate::GpuRuntimeState;
 

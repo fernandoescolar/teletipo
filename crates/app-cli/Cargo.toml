@@ -4,6 +4,10 @@ version = "9.9.9"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
+[features]
+# Optional rendering backends
+render-gpui = ["dep:render-gpui"]
+
 [dependencies]
 app-orchestrator = { path = "../app-orchestrator" }
 platform-abstraction = { path = "../platform-abstraction" }
@@ -13,7 +17,6 @@ render-model = { path = "../render-model" }
 editor-lang = { path = "../editor-lang" }
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = { workspace = true }
-winit = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -35,6 +38,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 regex = "1"
 notify = "7"
+render-gpui = { path = "../render-gpui", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -350,6 +350,11 @@ impl Screen {
         self.mark_full_redraw();
     }
 
+    /// Return the images currently placed on the screen (primary or alternate grid).
+    pub fn images(&self) -> &[TerminalImage] {
+        &self.images
+    }
+
     /// Collect all hyperlink spans visible at the given scroll offset.
     ///
     /// Returns a `Vec` of `(row, col_start, col_end_exclusive, id)` tuples

@@ -5,9 +5,9 @@ use crate::coords::{
 };
 use crate::launch::execute_context_menu_item;
 use crate::search;
-use render_glow::{AppWindowEvent, SCROLLBAR_W_PX};
+use platform_abstraction::{AppWindowEvent, InputState, PointerButton};
+use render_model::SCROLLBAR_W_PX;
 use std::time::Instant;
-use winit::event::{ElementState, MouseButton};
 
 const TERMINAL_MENU_ITEMS: &[&str] = &["Copy", "Paste", "Scroll to Bottom"];
 const EDITOR_MENU_ITEMS: &[&str] = &["Undo", "Redo", "Copy", "Cut", "Paste", "Select All"];
@@ -88,10 +88,10 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: &AppWindowEvent) 
     }
 
     if let AppWindowEvent::ModifiersChanged(mods) = event {
-        state.modifiers.ctrl_down = mods.control_key();
-        state.modifiers.super_down = mods.super_key();
-        state.modifiers.shift_down = mods.shift_key();
-        state.modifiers.alt_down = mods.alt_key();
+        state.modifiers.ctrl_down = mods.ctrl;
+        state.modifiers.super_down = mods.super_key;
+        state.modifiers.shift_down = mods.shift;
+        state.modifiers.alt_down = mods.alt;
         return true;
     }
 
@@ -284,20 +284,20 @@ fn handle_cursor_moved(state: &mut GpuRuntimeState, x: f64, y: f64) -> bool {
 
 fn handle_mouse_input(
     state: &mut GpuRuntimeState,
-    btn_state: ElementState,
-    button: MouseButton,
+    btn_state: InputState,
+    button: PointerButton,
 ) -> bool {
     match button {
-        MouseButton::Left => handle_left_button(state, btn_state),
-        MouseButton::Middle => handle_middle_button(state, btn_state),
-        MouseButton::Right => handle_right_button(state, btn_state),
+        PointerButton::Left => handle_left_button(state, btn_state),
+        PointerButton::Middle => handle_middle_button(state, btn_state),
+        PointerButton::Right => handle_right_button(state, btn_state),
         _ => false,
     }
 }
 
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
-fn handle_left_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> bool {
-    if btn_state == ElementState::Released {
+fn handle_left_button(state: &mut GpuRuntimeState, btn_state: InputState) -> bool {
+    if btn_state == InputState::Released {
         if let Some(drag_from) = state.drag.tab_drag {
             if (state.cursor.cursor_x - state.drag.tab_drag_start_x).abs() > 5.0 {
                 let n = state.tabs.len();
@@ -355,7 +355,7 @@ fn handle_left_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> b
             }
         }
     }
-    if btn_state == ElementState::Pressed {
+    if btn_state == InputState::Pressed {
         if matches!(
             state.overlays.pending_update,
             Some(crate::UpdateBanner::Available(_))
@@ -821,8 +821,8 @@ fn handle_left_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> b
     true
 }
 
-fn handle_middle_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> bool {
-    if btn_state == ElementState::Pressed {
+fn handle_middle_button(state: &mut GpuRuntimeState, btn_state: InputState) -> bool {
+    if btn_state == InputState::Pressed {
         let tab_bar_h = state.tab_bar_h() as f64;
         if state.cursor.cursor_y < tab_bar_h && state.tabs.len() > 1 {
             let n = state.tabs.len();
@@ -840,8 +840,8 @@ fn handle_middle_button(state: &mut GpuRuntimeState, btn_state: ElementState) ->
     }
 }
 
-fn handle_right_button(state: &mut GpuRuntimeState, btn_state: ElementState) -> bool {
-    if btn_state == ElementState::Pressed {
+fn handle_right_button(state: &mut GpuRuntimeState, btn_state: InputState) -> bool {
+    if btn_state == InputState::Pressed {
         state.overlays.context_menu = None;
 
         let tab_bar_h = state.tab_bar_h() as f64;

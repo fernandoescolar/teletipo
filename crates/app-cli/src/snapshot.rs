@@ -729,15 +729,52 @@ fn build_copy_mode_section(state: &GpuRuntimeState, active: usize) -> CopyModeSe
 
 /// Build terminal image list in viewport coordinates.
 fn build_terminal_images(
-    _state: &GpuRuntimeState,
-    _active: usize,
-    _scroll_offset: usize,
+    state: &GpuRuntimeState,
+    active: usize,
+    scroll_offset: usize,
 ) -> Vec<SnapshotImage> {
-    // TODO: Once AppTerminal exposes screen images publicly, project them here.
-    // For now, images are stored on the screen but not displayed via snapshot.
-    // The infrastructure is in place (sixel decoder → screen.place_image → images vec)
-    // but rendering support requires exposing the images through the App/AppTerminal API.
-    Vec::new()
+    // Images live in the primary grid (not scrollback). When the user has
+    // scrolled up (scroll_offset > 0) they are viewing historical text and
+    // images would not be positioned correctly; skip them in that case.
+    if scroll_offset > 0 {
+        return Vec::new();
+    }
+
+    let images = state.tabs[active].app.terminal.screen_images();
+    if images.is_empty() {
+        return Vec::new();
+    }
+
+    // Compute the pixel origin of the terminal pane — mirrors the formula in
+    // `cursor_to_terminal_cell` so images align with the rendered text.
+    let cell_w = state.layout.cell_w as f64;
+    let cell_h = state.layout.cell_h as f64;
+    let tbh = state.tab_bar_h() as f64;
+    let split_ratio = state.tabs[active].split_ratio as f64;
+    let pad_h = state.user_config.padding.horizontal as f64;
+    let pad_v = state.user_config.padding.vertical as f64;
+    let available_h = state.layout.window_height as f64 - tbh;
+    let terminal_h = available_h * split_ratio;
+    let effective_term_h = (terminal_h - 2.0 * pad_v).max(0.0);
+    let term_row_count = state.tabs[active].term_row_count;
+    let content_h = (term_row_count as f64 * cell_h).min(effective_term_h);
+    let term_top_y = tbh + (effective_term_h - content_h).max(0.0) + pad_v;
+
+    images
+        .iter()
+        .map(|img| {
+            let x_px = (pad_h + img.col as f64 * cell_w) as usize;
+            let y_px = (term_top_y + img.row as f64 * cell_h) as usize;
+            SnapshotImage {
+                id: img.id,
+                x_px,
+                y_px,
+                width_px: img.width_px,
+                height_px: img.height_px,
+                rgba: Arc::clone(&img.rgba),
+            }
+        })
+        .collect()
 }
 
 /// Detect terminal links and return only the hovered URL's segments (if any).

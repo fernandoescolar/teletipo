@@ -5,11 +5,12 @@ use std::mem::size_of;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::{ColorTheme, KeybindingsOverlay, RenderSnapshot, SCROLLBAR_W_PX, SettingsOverlay};
 use font8x8::UnicodeFonts;
 use glow::HasContext;
 use render_model::{
-    CellMetrics, FrameLayout, Rect, RenderCommand, RenderTarget, Scene, compute_frame_layout,
+    CellMetrics, ColorTheme, FrameLayout, KeybindingsOverlay, Rect, RenderCommand, RenderSnapshot,
+    RenderTarget, SCROLLBAR_W_PX, Scene, SettingsItem, SettingsOverlay, ToastKind,
+    compute_frame_layout,
 };
 use winit::dpi::PhysicalSize;
 
@@ -1006,6 +1007,11 @@ impl GlPainter {
                         // Terminal/editor text continues through the old paths (draw_terminal_text, etc).
                         self.render_text_simple(gl, cmd, metrics);
                     }
+                    RenderCommand::Emoji(cmd) => {
+                        // Emoji rendering via color atlas (RGBA texture).
+                        // Backends should implement emoji rasterization and atlas management.
+                        self.push_color_emoji(cmd.ch, cmd.x, cmd.y, cmd.w, cmd.h);
+                    }
                     RenderCommand::ClipPush(rect) => {
                         self.push_clip_rect(gl, rect, height);
                     }
@@ -1701,7 +1707,7 @@ impl GlPainter {
     }
 
     fn settings_item_display_val<'a>(
-        item: &'a crate::SettingsItem,
+        item: &'a SettingsItem,
         overlay: &'a SettingsOverlay,
         is_focused: bool,
     ) -> std::borrow::Cow<'a, str> {
@@ -2271,22 +2277,22 @@ impl GlPainter {
             let right = layout.width - margin;
             let left = right - w;
             let (bg, border, text) = match toast.kind {
-                crate::ToastKind::Info => (
+                ToastKind::Info => (
                     [0.12, 0.15, 0.25, 0.93],
                     [0.35, 0.50, 0.90, 1.0],
                     [0.92, 0.94, 0.98, 1.0],
                 ),
-                crate::ToastKind::Success => (
+                ToastKind::Success => (
                     [0.08, 0.20, 0.10, 0.93],
                     [0.25, 0.78, 0.35, 1.0],
                     [0.90, 1.00, 0.90, 1.0],
                 ),
-                crate::ToastKind::Warn => (
+                ToastKind::Warn => (
                     [0.22, 0.18, 0.05, 0.93],
                     [0.90, 0.72, 0.20, 1.0],
                     [1.00, 0.97, 0.85, 1.0],
                 ),
-                crate::ToastKind::Error => (
+                ToastKind::Error => (
                     [0.22, 0.08, 0.08, 0.93],
                     [0.90, 0.30, 0.30, 1.0],
                     [1.00, 0.90, 0.90, 1.0],
@@ -3089,6 +3095,7 @@ mod tests {
                 match command {
                     RenderCommand::Rect(_) => rect_count += 1,
                     RenderCommand::Text(_) => text_count += 1,
+                    RenderCommand::Emoji(_) => {}
                     RenderCommand::ClipPush(_) => clip_push_count += 1,
                     RenderCommand::ClipPop => clip_pop_count += 1,
                 }

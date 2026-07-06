@@ -352,6 +352,7 @@ pub(crate) fn build_initial_state(
         should_exit: false,
         last_editor_disabled: false,
         shell_services: Box::new(crate::shell::SystemShell::new()),
+        window_control: None,
         pty_waker: None,
     };
 

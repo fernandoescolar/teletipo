@@ -6,9 +6,9 @@ use crate::coords::{
 };
 use crate::search;
 use crate::settings;
-use render_model::AppWindowEvent;
-use winit::event::ElementState;
-use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
+use platform_abstraction::{
+    AppWindowEvent, InputState, KeyCode, KeyboardEvent, LogicalKey, NamedKey, PhysicalKey,
+};
 
 pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
     let AppWindowEvent::KeyboardInput(key_event) = &event else {
@@ -35,7 +35,7 @@ pub(super) fn handle_event(state: &mut GpuRuntimeState, event: AppWindowEvent) {
         return;
     };
 
-    if key_event.state != ElementState::Pressed {
+    if key_event.state != InputState::Pressed {
         return;
     }
 
@@ -67,7 +67,7 @@ struct SavedSelection {
     end_scroll: usize,
 }
 
-fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) -> bool {
+fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) -> bool {
     if state.keybindings_panel.open {
         crate::keybindings_ui::handle_keybindings_key(state, key_event);
         return true;
@@ -93,7 +93,7 @@ fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &winit::event::Ke
 
     // Windows often intercepts Win+Shift+P, so keep Ctrl+Shift+P as a
     // reliable cross-platform way to open the command palette.
-    if let Key::Character(ch) = &key_event.logical_key
+    if let LogicalKey::Character(ch) = &key_event.logical_key
         && state.modifiers.ctrl_down
         && state.modifiers.shift_down
         && ch.as_str().eq_ignore_ascii_case("p")
@@ -105,11 +105,8 @@ fn handle_pre_dispatch(state: &mut GpuRuntimeState, key_event: &winit::event::Ke
 }
 
 #[cfg(not(target_os = "macos"))]
-fn handle_non_macos_ctrl_shortcuts(
-    state: &mut GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
-) -> bool {
-    if let Key::Character(ch) = &key_event.logical_key
+fn handle_non_macos_ctrl_shortcuts(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) -> bool {
+    if let LogicalKey::Character(ch) = &key_event.logical_key
         && state.modifiers.ctrl_down
     {
         match ch.as_str() {
@@ -143,12 +140,12 @@ fn handle_non_macos_ctrl_shortcuts(
 
     if state.modifiers.ctrl_down {
         match &key_event.logical_key {
-            Key::Named(NamedKey::PageUp) => {
+            LogicalKey::Named(NamedKey::PageUp) => {
                 state.active_tab = state.active_tab.saturating_sub(1);
                 state.push_accessibility_tree();
                 return true;
             }
-            Key::Named(NamedKey::PageDown) => {
+            LogicalKey::Named(NamedKey::PageDown) => {
                 let last = state.tabs.len() - 1;
                 state.active_tab = (state.active_tab + 1).min(last);
                 state.push_accessibility_tree();
@@ -164,7 +161,7 @@ fn handle_non_macos_ctrl_shortcuts(
 #[cfg(target_os = "macos")]
 fn handle_non_macos_ctrl_shortcuts(
     _state: &mut GpuRuntimeState,
-    _key_event: &winit::event::KeyEvent,
+    _key_event: &KeyboardEvent,
 ) -> bool {
     false
 }
@@ -232,7 +229,7 @@ pub(crate) fn is_pty_mode(state: &GpuRuntimeState) -> bool {
         || (state.tab().command_running && !state.tab().editor_unlocked)
 }
 
-fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) -> bool {
+fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) -> bool {
     let is_alternate = state.tab().app.is_alternate_screen();
     let command_running = state.tab().command_running;
     let editor_unlocked = state.tab().editor_unlocked;
@@ -243,7 +240,7 @@ fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEv
         && !is_alternate
         && state.modifiers.ctrl_down
         && !state.modifiers.super_down
-        && matches!(&key_event.logical_key, Key::Character(ch) if ch.as_str() == "n")
+        && matches!(&key_event.logical_key, LogicalKey::Character(ch) if ch.as_str() == "n")
     {
         let active = state.active_tab;
         state.tabs[active].editor_unlocked = !editor_unlocked;
@@ -268,22 +265,22 @@ fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEv
     }
 
     match &key_event.logical_key {
-        Key::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "," => false,
-        Key::Character(ch)
+        LogicalKey::Character(ch) if state.modifiers.ctrl_down && ch.as_str() == "," => false,
+        LogicalKey::Character(ch)
             if state.modifiers.ctrl_down
                 && state.modifiers.shift_down
                 && ch.as_str().eq_ignore_ascii_case("c") =>
         {
             false
         }
-        Key::Character(ch)
+        LogicalKey::Character(ch)
             if state.modifiers.ctrl_down
                 && state.modifiers.shift_down
                 && ch.as_str().eq_ignore_ascii_case("v") =>
         {
             false
         }
-        Key::Named(named) => {
+        LogicalKey::Named(named) => {
             if matches!(named, NamedKey::Paste) {
                 return false;
             }
@@ -294,29 +291,28 @@ fn try_route_to_pty(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEv
                 false
             }
         }
-        Key::Character(ch) if state.modifiers.ctrl_down => {
+        LogicalKey::Character(ch) if state.modifiers.ctrl_down => {
             send_ctrl_character_to_terminal(state, ch.as_str())
         }
-        Key::Character(ch) => {
+        LogicalKey::Character(ch) => {
             let text = key_event.text.as_deref().unwrap_or(ch.as_str());
             if !text.is_empty() && text != "\n" && text != "\r" && text != "\r\n" {
                 state.send_terminal_input(text.as_bytes());
             }
             true
         }
-        _ => false,
     }
 }
 
 /// Encode a key event in kitty keyboard protocol CSI u format.
 /// Returns `None` when the key cannot be represented (e.g. bare modifier keys).
 fn kitty_encode(
-    key_event: &winit::event::KeyEvent,
+    key_event: &KeyboardEvent,
     mods: &crate::ModifierState,
     kitty_flags: u32,
     _app_cursor: bool,
 ) -> Option<String> {
-    use winit::keyboard::{Key, NamedKey};
+    use platform_abstraction::{LogicalKey, NamedKey};
     // Kitty modifier bitmask: Shift=1, Alt=2, Ctrl=4, Super=8
     let mut mod_bits: u32 = 0;
     if mods.shift_down {
@@ -335,34 +331,34 @@ fn kitty_encode(
 
     // Map named keys to their kitty codepoints.
     let codepoint: u32 = match &key_event.logical_key {
-        Key::Named(NamedKey::Enter) => 13,
-        Key::Named(NamedKey::Escape) => 27,
-        Key::Named(NamedKey::Tab) => 9,
-        Key::Named(NamedKey::Backspace) => 127,
-        Key::Named(NamedKey::Space) => 32,
-        Key::Named(NamedKey::ArrowUp) => 57352,
-        Key::Named(NamedKey::ArrowDown) => 57353,
-        Key::Named(NamedKey::ArrowLeft) => 57354,
-        Key::Named(NamedKey::ArrowRight) => 57355,
-        Key::Named(NamedKey::Home) => 57356,
-        Key::Named(NamedKey::End) => 57357,
-        Key::Named(NamedKey::PageUp) => 57358,
-        Key::Named(NamedKey::PageDown) => 57359,
-        Key::Named(NamedKey::Insert) => 57360,
-        Key::Named(NamedKey::Delete) => 57361,
-        Key::Named(NamedKey::F1) => 57364,
-        Key::Named(NamedKey::F2) => 57365,
-        Key::Named(NamedKey::F3) => 57366,
-        Key::Named(NamedKey::F4) => 57367,
-        Key::Named(NamedKey::F5) => 57368,
-        Key::Named(NamedKey::F6) => 57369,
-        Key::Named(NamedKey::F7) => 57370,
-        Key::Named(NamedKey::F8) => 57371,
-        Key::Named(NamedKey::F9) => 57372,
-        Key::Named(NamedKey::F10) => 57373,
-        Key::Named(NamedKey::F11) => 57374,
-        Key::Named(NamedKey::F12) => 57375,
-        Key::Character(ch) => {
+        LogicalKey::Named(NamedKey::Enter) => 13,
+        LogicalKey::Named(NamedKey::Escape) => 27,
+        LogicalKey::Named(NamedKey::Tab) => 9,
+        LogicalKey::Named(NamedKey::Backspace) => 127,
+        LogicalKey::Named(NamedKey::Space) => 32,
+        LogicalKey::Named(NamedKey::ArrowUp) => 57352,
+        LogicalKey::Named(NamedKey::ArrowDown) => 57353,
+        LogicalKey::Named(NamedKey::ArrowLeft) => 57354,
+        LogicalKey::Named(NamedKey::ArrowRight) => 57355,
+        LogicalKey::Named(NamedKey::Home) => 57356,
+        LogicalKey::Named(NamedKey::End) => 57357,
+        LogicalKey::Named(NamedKey::PageUp) => 57358,
+        LogicalKey::Named(NamedKey::PageDown) => 57359,
+        LogicalKey::Named(NamedKey::Insert) => 57360,
+        LogicalKey::Named(NamedKey::Delete) => 57361,
+        LogicalKey::Named(NamedKey::F1) => 57364,
+        LogicalKey::Named(NamedKey::F2) => 57365,
+        LogicalKey::Named(NamedKey::F3) => 57366,
+        LogicalKey::Named(NamedKey::F4) => 57367,
+        LogicalKey::Named(NamedKey::F5) => 57368,
+        LogicalKey::Named(NamedKey::F6) => 57369,
+        LogicalKey::Named(NamedKey::F7) => 57370,
+        LogicalKey::Named(NamedKey::F8) => 57371,
+        LogicalKey::Named(NamedKey::F9) => 57372,
+        LogicalKey::Named(NamedKey::F10) => 57373,
+        LogicalKey::Named(NamedKey::F11) => 57374,
+        LogicalKey::Named(NamedKey::F12) => 57375,
+        LogicalKey::Character(ch) => {
             // Use the Unicode codepoint of the character
             if let Some(c) = ch.chars().next() {
                 c as u32
@@ -375,7 +371,7 @@ fn kitty_encode(
 
     // Bit 1 (report_event_types): include key-up events
     let report_types = kitty_flags & 2 != 0;
-    let event_type: u32 = if key_event.state == winit::event::ElementState::Released {
+    let event_type: u32 = if key_event.state == InputState::Released {
         if !report_types {
             return None; // don't send key-up unless requested
         }
@@ -399,20 +395,20 @@ fn kitty_encode(
 
 fn reset_suggestion_cycle_if_needed(
     state: &mut GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
+    key_event: &KeyboardEvent,
 ) -> bool {
     // Any key other than Tab/Shift+Tab ends the suggestion-cycling session so
     // that subsequent ghost-text lookups start fresh from the new editor text.
     // Exception: Up/Down and Esc are allowed to handle the dropdown themselves.
-    let is_tab = matches!(&key_event.logical_key, Key::Named(NamedKey::Tab));
+    let is_tab = matches!(&key_event.logical_key, LogicalKey::Named(NamedKey::Tab));
     let is_nav = matches!(
         &key_event.logical_key,
-        Key::Named(NamedKey::ArrowUp)
-            | Key::Named(NamedKey::ArrowDown)
-            | Key::Named(NamedKey::ArrowRight)
+        LogicalKey::Named(NamedKey::ArrowUp)
+            | LogicalKey::Named(NamedKey::ArrowDown)
+            | LogicalKey::Named(NamedKey::ArrowRight)
     );
-    let is_esc = matches!(&key_event.logical_key, Key::Named(NamedKey::Escape));
-    let is_enter = matches!(&key_event.logical_key, Key::Named(NamedKey::Enter));
+    let is_esc = matches!(&key_event.logical_key, LogicalKey::Named(NamedKey::Escape));
+    let is_enter = matches!(&key_event.logical_key, LogicalKey::Named(NamedKey::Enter));
     let cycling = state.tabs[state.active_tab].suggestion_index.is_some();
     if !(is_tab || (is_nav && cycling) || (is_esc && cycling) || (is_enter && cycling)) {
         let active = state.active_tab;
@@ -431,10 +427,10 @@ fn capture_terminal_selection(state: &GpuRuntimeState) -> SavedSelection {
     }
 }
 
-fn clear_selection_if_needed(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+fn clear_selection_if_needed(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) {
     let is_modifier_key = matches!(
         &key_event.logical_key,
-        Key::Named(
+        LogicalKey::Named(
             NamedKey::Super
                 | NamedKey::Control
                 | NamedKey::Shift
@@ -697,11 +693,8 @@ pub(crate) fn execute_zoom(state: &mut GpuRuntimeState, delta: f32) {
 /// Returns `true` and fires the matching command if any user keybinding matches
 /// the current key event + modifier state. Must be called at the top of the
 /// main keyboard dispatch before the built-in shortcut logic.
-pub(crate) fn try_user_keybinding(
-    state: &mut GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
-) -> bool {
-    use winit::keyboard::{Key, NamedKey};
+pub(crate) fn try_user_keybinding(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) -> bool {
+    use platform_abstraction::{LogicalKey, NamedKey};
     if state.user_config.keybindings.is_empty() {
         return false;
     }
@@ -733,26 +726,26 @@ pub(crate) fn try_user_keybinding(
         // Match key
         let key_str = binding.key.trim();
         let matched = match &key_event.logical_key {
-            Key::Character(ch) => ch.as_str().eq_ignore_ascii_case(key_str),
-            Key::Named(NamedKey::Enter) => {
+            LogicalKey::Character(ch) => ch.as_str().eq_ignore_ascii_case(key_str),
+            LogicalKey::Named(NamedKey::Enter) => {
                 key_str.eq_ignore_ascii_case("Return") || key_str.eq_ignore_ascii_case("Enter")
             }
-            Key::Named(NamedKey::Escape) => key_str.eq_ignore_ascii_case("Escape"),
-            Key::Named(NamedKey::Tab) => key_str.eq_ignore_ascii_case("Tab"),
-            Key::Named(NamedKey::Backspace) => key_str.eq_ignore_ascii_case("BackSpace"),
-            Key::Named(NamedKey::Space) => key_str.eq_ignore_ascii_case("Space"),
-            Key::Named(NamedKey::F1) => key_str.eq_ignore_ascii_case("F1"),
-            Key::Named(NamedKey::F2) => key_str.eq_ignore_ascii_case("F2"),
-            Key::Named(NamedKey::F3) => key_str.eq_ignore_ascii_case("F3"),
-            Key::Named(NamedKey::F4) => key_str.eq_ignore_ascii_case("F4"),
-            Key::Named(NamedKey::F5) => key_str.eq_ignore_ascii_case("F5"),
-            Key::Named(NamedKey::F6) => key_str.eq_ignore_ascii_case("F6"),
-            Key::Named(NamedKey::F7) => key_str.eq_ignore_ascii_case("F7"),
-            Key::Named(NamedKey::F8) => key_str.eq_ignore_ascii_case("F8"),
-            Key::Named(NamedKey::F9) => key_str.eq_ignore_ascii_case("F9"),
-            Key::Named(NamedKey::F10) => key_str.eq_ignore_ascii_case("F10"),
-            Key::Named(NamedKey::F11) => key_str.eq_ignore_ascii_case("F11"),
-            Key::Named(NamedKey::F12) => key_str.eq_ignore_ascii_case("F12"),
+            LogicalKey::Named(NamedKey::Escape) => key_str.eq_ignore_ascii_case("Escape"),
+            LogicalKey::Named(NamedKey::Tab) => key_str.eq_ignore_ascii_case("Tab"),
+            LogicalKey::Named(NamedKey::Backspace) => key_str.eq_ignore_ascii_case("BackSpace"),
+            LogicalKey::Named(NamedKey::Space) => key_str.eq_ignore_ascii_case("Space"),
+            LogicalKey::Named(NamedKey::F1) => key_str.eq_ignore_ascii_case("F1"),
+            LogicalKey::Named(NamedKey::F2) => key_str.eq_ignore_ascii_case("F2"),
+            LogicalKey::Named(NamedKey::F3) => key_str.eq_ignore_ascii_case("F3"),
+            LogicalKey::Named(NamedKey::F4) => key_str.eq_ignore_ascii_case("F4"),
+            LogicalKey::Named(NamedKey::F5) => key_str.eq_ignore_ascii_case("F5"),
+            LogicalKey::Named(NamedKey::F6) => key_str.eq_ignore_ascii_case("F6"),
+            LogicalKey::Named(NamedKey::F7) => key_str.eq_ignore_ascii_case("F7"),
+            LogicalKey::Named(NamedKey::F8) => key_str.eq_ignore_ascii_case("F8"),
+            LogicalKey::Named(NamedKey::F9) => key_str.eq_ignore_ascii_case("F9"),
+            LogicalKey::Named(NamedKey::F10) => key_str.eq_ignore_ascii_case("F10"),
+            LogicalKey::Named(NamedKey::F11) => key_str.eq_ignore_ascii_case("F11"),
+            LogicalKey::Named(NamedKey::F12) => key_str.eq_ignore_ascii_case("F12"),
             _ => false,
         };
         if matched && let Some(cmd) = crate::commands::CommandId::from_name(&binding.action) {
@@ -931,7 +924,7 @@ fn handle_ctrl_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
 
 fn handle_character_key(
     state: &mut GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
+    key_event: &KeyboardEvent,
     cycling: bool,
     saved_selection: &SavedSelection,
     ch: &str,
@@ -1159,39 +1152,41 @@ fn handle_named_key_navigation(
 
 fn handle_post_dispatch_key(
     state: &mut GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
+    key_event: &KeyboardEvent,
     cycling: bool,
     saved_selection: &SavedSelection,
 ) {
-    if let Key::Named(named) = &key_event.logical_key
+    if let LogicalKey::Named(named) = &key_event.logical_key
         && handle_named_key(state, named, cycling)
     {
         return;
     }
 
-    if let Key::Character(ch) = &key_event.logical_key {
+    if let LogicalKey::Character(ch) = &key_event.logical_key {
         handle_character_key(state, key_event, cycling, saved_selection, ch.as_str());
     }
 }
 
-fn handle_search_key(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+fn handle_search_key(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) {
     let shift = state.modifiers.shift_down;
     let alt = state.modifiers.alt_down;
     let super_ = state.modifiers.super_down;
 
     match &key_event.logical_key {
-        Key::Named(NamedKey::Escape) => close_search_overlay(state),
-        Key::Named(NamedKey::Enter) => search_enter(state, shift),
-        Key::Named(NamedKey::ArrowLeft) => search_move_left(state, super_, alt, shift),
-        Key::Named(NamedKey::ArrowRight) => search_move_right(state, super_, alt, shift),
-        Key::Named(NamedKey::ArrowUp) => search::prev_match(state.tab_mut()),
-        Key::Named(NamedKey::ArrowDown) => search::next_match(state.tab_mut()),
-        Key::Named(NamedKey::Home) => search::search_move_home(state.tab_mut(), shift),
-        Key::Named(NamedKey::End) => search::search_move_end(state.tab_mut(), shift),
-        Key::Named(NamedKey::Backspace) => search_backspace(state, alt),
-        Key::Named(NamedKey::Delete) => search::search_delete_forward(state.tab_mut()),
-        Key::Character(ch) => search_character_input(state, key_event, ch.as_str(), alt, super_),
-        Key::Named(NamedKey::Space) => search_insert_key_text(state, key_event),
+        LogicalKey::Named(NamedKey::Escape) => close_search_overlay(state),
+        LogicalKey::Named(NamedKey::Enter) => search_enter(state, shift),
+        LogicalKey::Named(NamedKey::ArrowLeft) => search_move_left(state, super_, alt, shift),
+        LogicalKey::Named(NamedKey::ArrowRight) => search_move_right(state, super_, alt, shift),
+        LogicalKey::Named(NamedKey::ArrowUp) => search::prev_match(state.tab_mut()),
+        LogicalKey::Named(NamedKey::ArrowDown) => search::next_match(state.tab_mut()),
+        LogicalKey::Named(NamedKey::Home) => search::search_move_home(state.tab_mut(), shift),
+        LogicalKey::Named(NamedKey::End) => search::search_move_end(state.tab_mut(), shift),
+        LogicalKey::Named(NamedKey::Backspace) => search_backspace(state, alt),
+        LogicalKey::Named(NamedKey::Delete) => search::search_delete_forward(state.tab_mut()),
+        LogicalKey::Character(ch) => {
+            search_character_input(state, key_event, ch.as_str(), alt, super_)
+        }
+        LogicalKey::Named(NamedKey::Space) => search_insert_key_text(state, key_event),
         _ => {}
     }
 }
@@ -1242,7 +1237,7 @@ fn search_backspace(state: &mut GpuRuntimeState, alt: bool) {
 
 fn search_character_input(
     state: &mut GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
+    key_event: &KeyboardEvent,
     ch: &str,
     alt: bool,
     super_: bool,
@@ -1306,7 +1301,7 @@ fn handle_search_super_shortcuts(state: &mut GpuRuntimeState, ch: &str) -> bool 
     }
 }
 
-fn search_insert_key_text(state: &mut GpuRuntimeState, key_event: &winit::event::KeyEvent) {
+fn search_insert_key_text(state: &mut GpuRuntimeState, key_event: &KeyboardEvent) {
     if let Some(text) = key_event.text.as_ref() {
         search::search_insert(state.tab_mut(), text.as_str());
     }

@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use editor_core::EditorBuffer;
-use terminal_core::{DamageRegion, StyledChars, TerminalError, TerminalSession};
+use terminal_core::{DamageRegion, StyledChars, TerminalError, TerminalImage, TerminalSession};
 use terminal_pty::PtyBackend;
 
 const PTY_READ_BUFFER_INITIAL_CAPACITY: usize = 64 * 1024;
@@ -337,6 +337,11 @@ impl AppTerminal {
     /// See [`terminal_core::GenericTerminalSession::hyperlink_spans`].
     pub fn hyperlink_spans(&self, scroll_offset: usize) -> Vec<(usize, usize, usize, u16)> {
         self.session.hyperlink_spans(scroll_offset)
+    }
+
+    /// Returns all images currently placed on the terminal screen.
+    pub fn screen_images(&self) -> &[TerminalImage] {
+        self.session.screen_images()
     }
 
     /// Resolves a hyperlink ID to its URI string. Returns `None` for ID 0.

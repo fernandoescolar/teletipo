@@ -3,6 +3,7 @@
 #![allow(missing_docs)]
 
 mod impls;
+mod input;
 mod macos;
 mod platform;
 mod process;
@@ -12,7 +13,11 @@ mod types;
 pub use impls::{
     BasicFontFallback, FixedDpi, MemoryAccessibility, MemoryClipboard, MemoryIme, SystemClipboard,
 };
-pub use macos::{MacOSAccessibility, apply_app_icon, apply_titlebar_color};
+pub use input::{
+    InputState, KeyCode, KeyboardEvent, LogicalKey, ModifierKeys, NamedKey, PhysicalKey,
+    PointerButton,
+};
+pub use macos::{MacOSAccessibility, apply_app_icon};
 pub use platform::{
     NativePlatformServices, PlatformServices, current_platform, default_shell,
     detect_display_backend, detect_display_backend_from, native_services,

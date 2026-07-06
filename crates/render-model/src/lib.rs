@@ -21,7 +21,8 @@ pub use overlays::{
     StickyCommandOverlay, SuggestionDropdown, Toast, ToastKind,
 };
 pub use scene::{
-    Color, Rect, RectCommand, RenderCommand, Scene, SceneLayer, TextCommand, TextStyle,
+    Color, EmojiCommand, Rect, RectCommand, RenderCommand, Scene, SceneLayer, TextCommand,
+    TextStyle,
 };
 pub use screen::{DamageRegion, RenderCell, RenderRow};
 pub use snapshot::{RenderSnapshot, SearchPanel, SnapshotImage, TerminalLink};

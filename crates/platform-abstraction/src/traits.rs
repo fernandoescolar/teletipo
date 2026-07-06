@@ -53,7 +53,7 @@ pub trait ProcessInfo {
 /// All methods take `&self` so the trait object can be cheaply shared with
 /// callbacks living inside the event loop. Implementations must therefore use
 /// interior mutability where mutation is required.
-pub trait WindowControl {
+pub trait WindowControl: Send + Sync {
     /// Request a redraw of the host window. May coalesce with pending redraws.
     fn request_redraw(&self);
     /// Set the host window's title bar text.

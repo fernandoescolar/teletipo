@@ -10,6 +10,7 @@
 mod path_completion;
 
 use crate::commands::CommandId;
+use platform_abstraction::KeyboardEvent;
 
 /// An action that can be invoked from the command palette.
 #[derive(Clone, Debug)]
@@ -571,8 +572,8 @@ fn build_palette_secondary(state: &crate::GpuRuntimeState) -> Vec<PaletteItem> {
 
 /// Handle keyboard input while the command palette is open.
 #[allow(clippy::too_many_lines)]
-pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::event::KeyEvent) {
-    use winit::keyboard::{Key, NamedKey};
+pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &KeyboardEvent) {
+    use platform_abstraction::{LogicalKey, NamedKey};
 
     // Sub-prompt mode handling for SSH and snippet placeholders
     if state
@@ -589,7 +590,7 @@ pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::
             #[allow(clippy::collapsible_match)]
             if let SubPrompt::SnippetPlaceholders { .. } = sub_prompt {
                 match &key_event.logical_key {
-                    Key::Named(NamedKey::ArrowUp) => {
+                    LogicalKey::Named(NamedKey::ArrowUp) => {
                         if let Some(cp) = state.command_palette.as_mut()
                             && let Some(SubPrompt::SnippetPlaceholders {
                                 current_option_idx,
@@ -612,7 +613,7 @@ pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::
                         }
                         return;
                     }
-                    Key::Named(NamedKey::ArrowDown) => {
+                    LogicalKey::Named(NamedKey::ArrowDown) => {
                         if let Some(cp) = state.command_palette.as_mut()
                             && let Some(SubPrompt::SnippetPlaceholders {
                                 current_option_idx,
@@ -637,14 +638,14 @@ pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::
         }
 
         match &key_event.logical_key {
-            Key::Named(NamedKey::Escape) => {
+            LogicalKey::Named(NamedKey::Escape) => {
                 // Go back to the normal palette instead of closing entirely.
                 open(state);
             }
-            Key::Named(NamedKey::Enter) => {
+            LogicalKey::Named(NamedKey::Enter) => {
                 execute_action(state);
             }
-            Key::Named(NamedKey::Backspace) => {
+            LogicalKey::Named(NamedKey::Backspace) => {
                 if let Some(cp) = state.command_palette.as_mut()
                     && let Some((byte_start, _)) =
                         cp.query[..cp.cursor_byte].char_indices().next_back()
@@ -653,13 +654,15 @@ pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::
                     cp.cursor_byte = byte_start;
                 }
             }
-            Key::Named(NamedKey::Space) => {
+            LogicalKey::Named(NamedKey::Space) => {
                 if let Some(cp) = state.command_palette.as_mut() {
                     cp.query.insert(cp.cursor_byte, ' ');
                     cp.cursor_byte += 1;
                 }
             }
-            Key::Character(ch) if !state.modifiers.super_down && !state.modifiers.ctrl_down => {
+            LogicalKey::Character(ch)
+                if !state.modifiers.super_down && !state.modifiers.ctrl_down =>
+            {
                 let text = ch.as_str();
                 if !text.is_empty()
                     && !text.contains('\r')
@@ -676,23 +679,23 @@ pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::
     }
 
     match &key_event.logical_key {
-        Key::Named(NamedKey::Escape) => {
+        LogicalKey::Named(NamedKey::Escape) => {
             state.close_active_modal();
         }
-        Key::Named(NamedKey::Enter) => {
+        LogicalKey::Named(NamedKey::Enter) => {
             execute_action(state);
         }
-        Key::Named(NamedKey::ArrowUp) => {
+        LogicalKey::Named(NamedKey::ArrowUp) => {
             if let Some(cp) = state.command_palette.as_mut() {
                 cp.move_up();
             }
         }
-        Key::Named(NamedKey::ArrowDown) => {
+        LogicalKey::Named(NamedKey::ArrowDown) => {
             if let Some(cp) = state.command_palette.as_mut() {
                 cp.move_down();
             }
         }
-        Key::Named(NamedKey::Backspace) => {
+        LogicalKey::Named(NamedKey::Backspace) => {
             if let Some(cp) = state.command_palette.as_mut()
                 && let Some((byte_start, _)) = cp.query[..cp.cursor_byte].char_indices().next_back()
             {
@@ -701,14 +704,14 @@ pub(crate) fn handle_key(state: &mut crate::GpuRuntimeState, key_event: &winit::
                 cp.refilter();
             }
         }
-        Key::Named(NamedKey::Space) => {
+        LogicalKey::Named(NamedKey::Space) => {
             if let Some(cp) = state.command_palette.as_mut() {
                 cp.query.insert(cp.cursor_byte, ' ');
                 cp.cursor_byte += 1;
                 cp.refilter();
             }
         }
-        Key::Character(ch) if !state.modifiers.super_down && !state.modifiers.ctrl_down => {
+        LogicalKey::Character(ch) if !state.modifiers.super_down && !state.modifiers.ctrl_down => {
             let text = ch.as_str();
             if !text.is_empty()
                 && !text.contains('\r')

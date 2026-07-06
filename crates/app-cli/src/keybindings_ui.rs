@@ -1,9 +1,8 @@
 use crate::command_registry::{bindable_actions, default_binding};
 use crate::config::{KeyBinding, save_config};
 use crate::runtime::GpuRuntimeState;
-use render_glow::{KeybindingRow, KeybindingsOverlay};
-use winit::event::ElementState;
-use winit::keyboard::{Key, NamedKey};
+use platform_abstraction::{InputState, KeyboardEvent, LogicalKey, NamedKey};
+use render_model::{KeybindingRow, KeybindingsOverlay};
 
 /// Format a `KeyBinding` as a human-readable combo string (e.g. `"Cmd+Shift+T"`).
 fn format_combo(binding: &KeyBinding) -> String {
@@ -117,31 +116,31 @@ fn clamp_scroll(state: &mut GpuRuntimeState) {
 /// Derive modifiers + key name from a key event for saving as a new binding.
 fn binding_from_key_event(
     state: &GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
+    key_event: &KeyboardEvent,
 ) -> Option<KeyBinding> {
     let key_str = match &key_event.logical_key {
-        Key::Character(ch) => ch.to_string().to_uppercase(),
-        Key::Named(NamedKey::Enter) => "Return".to_owned(),
-        Key::Named(NamedKey::Escape) => "Escape".to_owned(),
-        Key::Named(NamedKey::Tab) => "Tab".to_owned(),
-        Key::Named(NamedKey::Backspace) => "BackSpace".to_owned(),
-        Key::Named(NamedKey::Space) => "Space".to_owned(),
-        Key::Named(NamedKey::ArrowUp) => "Up".to_owned(),
-        Key::Named(NamedKey::ArrowDown) => "Down".to_owned(),
-        Key::Named(NamedKey::ArrowLeft) => "Left".to_owned(),
-        Key::Named(NamedKey::ArrowRight) => "Right".to_owned(),
-        Key::Named(NamedKey::F1) => "F1".to_owned(),
-        Key::Named(NamedKey::F2) => "F2".to_owned(),
-        Key::Named(NamedKey::F3) => "F3".to_owned(),
-        Key::Named(NamedKey::F4) => "F4".to_owned(),
-        Key::Named(NamedKey::F5) => "F5".to_owned(),
-        Key::Named(NamedKey::F6) => "F6".to_owned(),
-        Key::Named(NamedKey::F7) => "F7".to_owned(),
-        Key::Named(NamedKey::F8) => "F8".to_owned(),
-        Key::Named(NamedKey::F9) => "F9".to_owned(),
-        Key::Named(NamedKey::F10) => "F10".to_owned(),
-        Key::Named(NamedKey::F11) => "F11".to_owned(),
-        Key::Named(NamedKey::F12) => "F12".to_owned(),
+        LogicalKey::Character(ch) => ch.to_string().to_uppercase(),
+        LogicalKey::Named(NamedKey::Enter) => "Return".to_owned(),
+        LogicalKey::Named(NamedKey::Escape) => "Escape".to_owned(),
+        LogicalKey::Named(NamedKey::Tab) => "Tab".to_owned(),
+        LogicalKey::Named(NamedKey::Backspace) => "BackSpace".to_owned(),
+        LogicalKey::Named(NamedKey::Space) => "Space".to_owned(),
+        LogicalKey::Named(NamedKey::ArrowUp) => "Up".to_owned(),
+        LogicalKey::Named(NamedKey::ArrowDown) => "Down".to_owned(),
+        LogicalKey::Named(NamedKey::ArrowLeft) => "Left".to_owned(),
+        LogicalKey::Named(NamedKey::ArrowRight) => "Right".to_owned(),
+        LogicalKey::Named(NamedKey::F1) => "F1".to_owned(),
+        LogicalKey::Named(NamedKey::F2) => "F2".to_owned(),
+        LogicalKey::Named(NamedKey::F3) => "F3".to_owned(),
+        LogicalKey::Named(NamedKey::F4) => "F4".to_owned(),
+        LogicalKey::Named(NamedKey::F5) => "F5".to_owned(),
+        LogicalKey::Named(NamedKey::F6) => "F6".to_owned(),
+        LogicalKey::Named(NamedKey::F7) => "F7".to_owned(),
+        LogicalKey::Named(NamedKey::F8) => "F8".to_owned(),
+        LogicalKey::Named(NamedKey::F9) => "F9".to_owned(),
+        LogicalKey::Named(NamedKey::F10) => "F10".to_owned(),
+        LogicalKey::Named(NamedKey::F11) => "F11".to_owned(),
+        LogicalKey::Named(NamedKey::F12) => "F12".to_owned(),
         _ => return None,
     };
     let mut modifiers = Vec::new();
@@ -168,16 +167,16 @@ fn binding_from_key_event(
 /// Returns `true` if the event was consumed.
 pub(crate) fn handle_keybindings_key(
     state: &mut GpuRuntimeState,
-    key_event: &winit::event::KeyEvent,
+    key_event: &KeyboardEvent,
 ) -> bool {
-    if key_event.state != ElementState::Pressed {
+    if key_event.state != InputState::Pressed {
         return true;
     }
 
     // ── Recording mode: capture the next key combo ────────────────────────────
     if state.keybindings_panel.recording {
         match &key_event.logical_key {
-            Key::Named(NamedKey::Escape) => {
+            LogicalKey::Named(NamedKey::Escape) => {
                 // Cancel recording without changing anything.
                 state.keybindings_panel.recording = false;
             }
@@ -207,29 +206,29 @@ pub(crate) fn handle_keybindings_key(
     // ── Normal navigation mode ────────────────────────────────────────────────
     let n = bindable_actions().len();
     match &key_event.logical_key {
-        Key::Named(NamedKey::Escape) => {
+        LogicalKey::Named(NamedKey::Escape) => {
             close_keybindings_panel(state);
         }
-        Key::Named(NamedKey::ArrowUp) => {
+        LogicalKey::Named(NamedKey::ArrowUp) => {
             state.keybindings_panel.just_saved = false;
             if state.keybindings_panel.cursor > 0 {
                 state.keybindings_panel.cursor -= 1;
                 clamp_scroll(state);
             }
         }
-        Key::Named(NamedKey::ArrowDown) => {
+        LogicalKey::Named(NamedKey::ArrowDown) => {
             state.keybindings_panel.just_saved = false;
             if state.keybindings_panel.cursor + 1 < n {
                 state.keybindings_panel.cursor += 1;
                 clamp_scroll(state);
             }
         }
-        Key::Named(NamedKey::Enter) => {
+        LogicalKey::Named(NamedKey::Enter) => {
             // Start recording a new binding for the highlighted action.
             state.keybindings_panel.recording = true;
             state.keybindings_panel.just_saved = false;
         }
-        Key::Named(NamedKey::Backspace) | Key::Named(NamedKey::Delete) => {
+        LogicalKey::Named(NamedKey::Backspace) | LogicalKey::Named(NamedKey::Delete) => {
             // Remove the binding for the highlighted action.
             let action_idx = state.keybindings_panel.cursor;
             if let Some(def) = bindable_actions().get(action_idx) {

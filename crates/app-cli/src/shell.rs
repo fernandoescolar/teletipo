@@ -13,6 +13,7 @@
 //! - [`NullShell`] — pure in-memory; intended for unit tests.
 
 use platform_abstraction::{Accessibility, Clipboard, SystemClipboard, WindowControl};
+use std::sync::Arc;
 
 /// Capabilities the app needs from the host OS, abstracted so input handlers
 /// can be exercised without a real window/clipboard.
@@ -29,11 +30,11 @@ pub(crate) trait AppShell {
     /// Send an OS notification with a title and body. Default: no-op.
     fn notify(&mut self, _title: &str, _body: &str) {}
 
-    /// Install a [`WindowControl`] implementation so the shell can forward
-    /// window-level calls to the real window. Called once during startup by
-    /// the GPU backend before the event loop pumps any events.
+    /// Install a [`WindowControl`] handle so the shell can forward
+    /// `open_url` and `notify` calls to the real window. Called once during
+    /// startup after the event loop is ready.
     /// Default: drops the handle (used by [`NullShell`] in tests).
-    fn install_window(&mut self, _window: Box<dyn WindowControl>) {}
+    fn install_window(&mut self, _window: Arc<dyn WindowControl>) {}
 
     /// Push a fresh semantic accessibility tree to the platform's AT layer.
     /// Default: no-op.
@@ -47,7 +48,7 @@ pub(crate) trait AppShell {
 /// [`AppShell::install_window`] at startup.
 pub(crate) struct SystemShell {
     clipboard: SystemClipboard,
-    window: Option<Box<dyn WindowControl>>,
+    window: Option<Arc<dyn WindowControl>>,
     accessibility: platform_abstraction::NativePlatformServices,
 }
 
@@ -82,7 +83,7 @@ impl AppShell for SystemShell {
         }
     }
 
-    fn install_window(&mut self, window: Box<dyn WindowControl>) {
+    fn install_window(&mut self, window: Arc<dyn WindowControl>) {
         self.window = Some(window);
     }
 

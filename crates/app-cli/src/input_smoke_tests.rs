@@ -96,6 +96,7 @@ fn build_test_state(shell_services: Box<dyn shell::AppShell>) -> GpuRuntimeState
         should_exit: false,
         last_editor_disabled: false,
         shell_services,
+        window_control: None,
         pty_waker: None,
     }
 }
@@ -124,9 +125,14 @@ fn window_moved_event_updates_layout() {
 
 #[test]
 fn modifiers_changed_event_updates_modifier_state() {
-    use winit::keyboard::ModifiersState as WinitModifiers;
+    use platform_abstraction::ModifierKeys;
     let mut state = build_test_state(Box::new(shell::NullShell::default()));
-    let mods = WinitModifiers::SUPER | WinitModifiers::SHIFT;
+    let mods = ModifierKeys {
+        ctrl: false,
+        shift: true,
+        alt: false,
+        super_key: true,
+    };
     input::handle_event(&mut state, AppWindowEvent::ModifiersChanged(mods));
     assert!(state.modifiers.super_down);
     assert!(state.modifiers.shift_down);
@@ -248,7 +254,7 @@ fn null_shell_clipboard_roundtrip_via_state() {
 
 #[test]
 fn editor_context_menu_reports_action_availability() {
-    use winit::event::{ElementState, MouseButton};
+    use platform_abstraction::{InputState, PointerButton};
 
     let mut state = build_test_state(Box::new(shell::NullShell::default()));
     state.tab_mut().app.insert_editor_input("hello");
@@ -259,8 +265,8 @@ fn editor_context_menu_reports_action_availability() {
     input::handle_event(
         &mut state,
         AppWindowEvent::MouseInput {
-            state: ElementState::Pressed,
-            button: MouseButton::Right,
+            state: InputState::Pressed,
+            button: PointerButton::Right,
         },
     );
 
@@ -281,8 +287,8 @@ fn editor_context_menu_reports_action_availability() {
     input::handle_event(
         &mut state,
         AppWindowEvent::MouseInput {
-            state: ElementState::Pressed,
-            button: MouseButton::Right,
+            state: InputState::Pressed,
+            button: PointerButton::Right,
         },
     );
 

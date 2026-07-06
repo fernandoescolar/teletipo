@@ -1,0 +1,14 @@
+[package]
+name = "render-gpui"
+version = "0.0.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = { workspace = true }
+render-model = { path = "../render-model" }
+platform-abstraction = { path = "../platform-abstraction" }
+tracing = { workspace = true }
+
+# TODO: Add gpui dependency once it's available
+# gpui = { version = "...", features = [...] }

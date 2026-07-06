@@ -179,14 +179,12 @@ impl EventCtx {
         input::handle_event(&mut state, event);
     }
 
-    pub(crate) fn install_window(
-        &self,
-        window: Box<dyn WindowControl>,
-        redrawer: render_glow::Redrawer,
-    ) {
+    pub(crate) fn install_window(&self, window: Box<dyn WindowControl>) {
+        let window_control: Arc<dyn WindowControl> = Arc::from(window);
         let mut state = self.state.borrow_mut();
-        state.shell_services.install_window(window);
-        state.install_pty_waker(redrawer);
+        state.shell_services.install_window(window_control.clone());
+        state.window_control = Some(window_control.clone());
+        state.install_pty_waker(window_control);
     }
 }
 
@@ -231,6 +229,9 @@ pub(crate) struct GpuRuntimeState {
     /// Abstraction over host-OS capabilities (clipboard today). Boxed so tests
     /// can swap in a [`shell::NullShell`].
     pub(crate) shell_services: Box<dyn shell::AppShell>,
+    /// Window control handle for redraw and window operations, stored separately
+    /// so it can be shared between shell_services and PTY waker.
+    pub(crate) window_control: Option<Arc<dyn WindowControl>>,
     /// Thread-safe waker that PTY reader threads call to wake the render loop.
     /// Installed once the event loop is ready; `None` before that (PTYs spawned
     /// during startup still work — the event loop polls).
@@ -303,9 +304,10 @@ impl GpuRuntimeState {
 
     /// Install the PTY waker once the event loop is ready. Existing tabs are
     /// updated too so idle rendering can stay fully event-driven.
-    pub(crate) fn install_pty_waker(&mut self, redrawer: render_glow::Redrawer) {
-        let waker: terminal_pty::Waker =
-            std::sync::Arc::new(std::sync::Mutex::new(move || redrawer.request_redraw()));
+    pub(crate) fn install_pty_waker(&mut self, window_control: Arc<dyn WindowControl>) {
+        let waker: terminal_pty::Waker = std::sync::Arc::new(std::sync::Mutex::new(move || {
+            window_control.request_redraw()
+        }));
         for tab in &mut self.tabs {
             if let Some(pty) = tab.pty.as_mut() {
                 pty.set_waker(waker.clone());

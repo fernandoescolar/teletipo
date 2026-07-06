@@ -30,6 +30,7 @@ pub struct Scene {
 pub enum RenderCommand {
     Rect(RectCommand),
     Text(TextCommand),
+    Emoji(EmojiCommand),
     ClipPush(Rect),
     ClipPop,
 }
@@ -73,6 +74,27 @@ pub struct TextCommand {
     /// Per-character styles (optional). If provided, overrides `style` for each character.
     /// Length should match character count in `text`.
     pub char_styles: Option<Vec<TextStyle>>,
+}
+
+/// Color emoji rendering command.
+/// Emojis are rendered from a color atlas (RGBA texture).
+/// Backends should implement emoji rasterization and atlas management
+/// (similar to glyph atlases for text).
+#[derive(Debug, Clone)]
+pub struct EmojiCommand {
+    /// The emoji character to render
+    pub ch: char,
+    /// X coordinate (left edge)
+    pub x: f32,
+    /// Y coordinate (top edge)
+    pub y: f32,
+    /// Width of rendering area (typically 1 cell width)
+    pub w: f32,
+    /// Height of rendering area (typically 1 cell height)
+    pub h: f32,
+    /// Optional tint color (for future use; backends may ignore)
+    /// If Some, blends with emoji. If None, uses emoji natural colors.
+    pub tint_color: Option<Color>,
 }
 
 /// Text style flags.
@@ -256,6 +278,56 @@ impl Scene {
         style: TextStyle,
     ) {
         self.text_styled_to_layer(SceneLayer::Main, x, y, text, color, style);
+    }
+
+    /// Emit an emoji command to a specific layer.
+    pub fn emoji_to_layer(&mut self, layer: SceneLayer, ch: char, x: f32, y: f32, w: f32, h: f32) {
+        self.push_to_layer(
+            layer,
+            RenderCommand::Emoji(EmojiCommand {
+                ch,
+                x,
+                y,
+                w,
+                h,
+                tint_color: None,
+            }),
+        );
+    }
+
+    /// Emit an emoji command to the main layer.
+    pub fn emoji(&mut self, ch: char, x: f32, y: f32, w: f32, h: f32) {
+        self.emoji_to_layer(SceneLayer::Main, ch, x, y, w, h);
+    }
+
+    /// Emit an emoji command with tint color to a specific layer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn emoji_tinted_to_layer(
+        &mut self,
+        layer: SceneLayer,
+        ch: char,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        tint_color: Color,
+    ) {
+        self.push_to_layer(
+            layer,
+            RenderCommand::Emoji(EmojiCommand {
+                ch,
+                x,
+                y,
+                w,
+                h,
+                tint_color: Some(tint_color),
+            }),
+        );
+    }
+
+    /// Emit an emoji command with tint color to the main layer.
+    pub fn emoji_tinted(&mut self, ch: char, x: f32, y: f32, w: f32, h: f32, tint_color: Color) {
+        self.emoji_tinted_to_layer(SceneLayer::Main, ch, x, y, w, h, tint_color);
     }
 
     /// Push a clipping rectangle to a specific layer.
