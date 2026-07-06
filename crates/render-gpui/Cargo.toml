@@ -9,6 +9,4 @@ anyhow = { workspace = true }
 render-model = { path = "../render-model" }
 platform-abstraction = { path = "../platform-abstraction" }
 tracing = { workspace = true }
-
-# TODO: Add gpui dependency once it's available
-# gpui = { version = "...", features = [...] }
+gpui = "0.2.2"
