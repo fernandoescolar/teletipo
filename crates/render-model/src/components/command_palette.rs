@@ -19,6 +19,13 @@ fn with_alpha(mut c: [f32; 4], alpha: f32) -> [f32; 4] {
     c
 }
 
+fn clamp_color(mut c: [f32; 4], d: f32) -> [f32; 4] {
+    c[0] = (c[0] + d).clamp(0.0, 1.0);
+    c[1] = (c[1] + d).clamp(0.0, 1.0);
+    c[2] = (c[2] + d).clamp(0.0, 1.0);
+    c
+}
+
 fn mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     [
         a[0] + (b[0] - a[0]) * t,
@@ -36,11 +43,20 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
     let layout = ctx.layout;
     let theme = &ctx.snapshot.theme;
     let border = with_alpha(theme.separator_focused, 0.96);
-    let bg = with_alpha(theme.terminal_bg, 0.97);
-    let divider = with_alpha(mix(theme.separator, theme.separator_focused, 0.35), 0.95);
+    let bg = with_alpha(clamp_color(theme.terminal_bg, 0.01), 0.92);
+    let header_bg = with_alpha(clamp_color(theme.terminal_bg, -0.01), 0.94);
+    let divider = with_alpha(theme.separator_focused, 0.30);
     let label_color = with_alpha(mix(theme.text, theme.cursor, 0.2), 0.95);
-    let selected = with_alpha(mix(theme.cursor, theme.separator_focused, 0.35), 0.88);
+    let selected = with_alpha(
+        mix(
+            clamp_color(theme.terminal_bg, 0.08),
+            theme.separator_focused,
+            0.20,
+        ),
+        0.93,
+    );
     let text = with_alpha(theme.text, 1.0);
+    let dim_text = with_alpha(theme.text, 0.85);
     let visible = cp
         .items
         .len()
@@ -72,6 +88,8 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             border,
         );
         scene.rect_to_layer(SceneLayer::Overlay, x0, y0, x1 - x0, y1 - y0, bg);
+        // Header background (darker, like settings title bar)
+        scene.rect_to_layer(SceneLayer::Overlay, x0, y0, x1 - x0, label_h, header_bg);
         scene.rect_to_layer(
             SceneLayer::Overlay,
             x0,
@@ -115,6 +133,8 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
         border,
     );
     scene.rect_to_layer(SceneLayer::Overlay, x0, y0, x1 - x0, y1 - y0, bg);
+    // Header background (darker, like settings title bar)
+    scene.rect_to_layer(SceneLayer::Overlay, x0, y0, x1 - x0, header_h, header_bg);
     scene.rect_to_layer(
         SceneLayer::Overlay,
         x0,
@@ -145,7 +165,7 @@ pub fn render(ctx: &RenderContext, scene: &mut Scene) {
             x0 + layout.cell_w_px * 0.8,
             row_y + (item_h - layout.cell_h_px) * 0.5,
             truncate_chars(&cp.items[idx], PALETTE_MAX_CHARS),
-            text,
+            if idx == cp.selected { text } else { dim_text },
         );
     }
 }
