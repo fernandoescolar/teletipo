@@ -359,12 +359,8 @@ fn kitty_encode(
         LogicalKey::Named(NamedKey::F11) => 57374,
         LogicalKey::Named(NamedKey::F12) => 57375,
         LogicalKey::Character(ch) => {
-            // Use the Unicode codepoint of the character
-            if let Some(c) = ch.chars().next() {
-                c as u32
-            } else {
-                return None;
-            }
+            let c = ch.chars().next()?;
+            c as u32
         }
         _ => return None,
     };
