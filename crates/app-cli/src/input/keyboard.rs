@@ -882,18 +882,22 @@ fn handle_ctrl_shortcut(state: &mut GpuRuntimeState, ch: &str) -> bool {
         return true;
     }
 
+    // Ctrl+C always goes to the PTY directly so the shell can cancel pending
+    // input (e.g. a PS2 continuation prompt from an incomplete command).
+    // Also clear the editor line so the overlay stays in sync.
+    if ch.eq_ignore_ascii_case("c") {
+        state.tab_mut().app.editor_clear();
+        send_ctrl_character_to_terminal(state, ch);
+        return true;
+    }
+
     // While the inline editor is active (no command running, not in alternate
-    // screen), Ctrl+C/D/U/W should not leak to the PTY — the shell would print
-    // "^C", move the cursor, and redraw the prompt, causing the editor overlay
-    // to render at the wrong column on the next keystroke.  Handle them locally
-    // instead, mirroring standard readline behaviour.
+    // screen), Ctrl+D/U/W should not leak to the PTY — the shell would move
+    // the cursor and redraw the prompt, causing the editor overlay to render
+    // at the wrong column on the next keystroke.  Handle them locally instead,
+    // mirroring standard readline behaviour.
     let in_editor = !state.tab().command_running && !state.tab().app.is_alternate_screen();
     if in_editor {
-        if ch.eq_ignore_ascii_case("c") {
-            // Ctrl+C: discard the current editor line (same as readline).
-            state.tab_mut().app.editor_clear();
-            return true;
-        }
         if ch.eq_ignore_ascii_case("u") {
             // Ctrl+U: delete from cursor to start of line.
             state.tab_mut().app.editor_delete_to_line_start();
