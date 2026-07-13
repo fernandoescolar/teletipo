@@ -1,14 +1,22 @@
 //! Window management and GPUI view implementation.
 
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
-use gpui::{Context, MouseButton, Render, Window, WindowBounds, WindowOptions, canvas, div, fill, point, px, size, prelude::*};
+use gpui::{
+    Context, MouseButton, Render, Window, WindowBounds, WindowOptions, canvas, div, fill, point,
+    prelude::*, px, size,
+};
 use platform_abstraction::WindowControl;
-use render_model::{AppWindowEvent, CellMetrics, RenderConfig, RenderSnapshot, RenderTarget, compute_frame_layout};
+use render_model::{
+    AppWindowEvent, CellMetrics, RenderConfig, RenderSnapshot, RenderTarget, compute_frame_layout,
+};
 
+use crate::color::background_color;
 use crate::input;
 use crate::scene::compose_scene;
-use crate::color::background_color;
 
 /// Window control handle for requesting redraws and title updates.
 pub struct GpuiWindowControl {

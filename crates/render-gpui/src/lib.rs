@@ -2,21 +2,21 @@
 #![warn(missing_docs)]
 #![allow(missing_docs)]
 
-mod input;
-mod window;
-mod scene;
-mod text;
 mod color;
 mod geom;
+mod input;
+mod scene;
+mod text;
+mod window;
 
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 use anyhow::Result;
-use gpui::{App, Application, AppContext};
+use gpui::{App, AppContext, Application};
 use platform_abstraction::WindowControl;
 use render_model::{AppWindowEvent, RenderConfig, RenderSnapshot};
 
-pub use window::{GpuiWindowControl, GpuiView, window_options};
+pub use window::{GpuiView, GpuiWindowControl, window_options};
 
 /// Run a GPUI-based GPU rendering window with event handling and custom window setup.
 ///
@@ -92,4 +92,3 @@ where
 pub fn run_gpu_window(snapshot: RenderSnapshot, config: RenderConfig) -> Result<()> {
     run_gpu_window_live(move || snapshot.clone(), config)
 }
-

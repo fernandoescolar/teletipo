@@ -6,6 +6,7 @@ yanked = "warn"
 ignore = [
 	"RUSTSEC-2026-0194",  # Quadratic run time when checking start tag
 	"RUSTSEC-2026-0195",  # Unbounded namespace-declaration allocation
+	"RUSTSEC-2026-0206",  # rustybuzz is unmaintained; tracked until migration to harfrust or equivalent
 ]
 
 [licenses]

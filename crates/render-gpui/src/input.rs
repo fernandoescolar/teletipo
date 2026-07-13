@@ -2,7 +2,7 @@
 
 use platform_abstraction::{
     AppWindowEvent, InputState, KeyCode, KeyboardEvent, LogicalKey, ModifierKeys, NamedKey,
-    PointerButton, PhysicalKey,
+    PhysicalKey, PointerButton,
 };
 
 /// Convert GPUI Modifiers to neutral ModifierKeys.
@@ -148,9 +148,7 @@ fn convert_physical_key(key: &str) -> PhysicalKey {
 }
 
 /// Convert GPUI KeyDownEvent to neutral KeyboardEvent.
-pub fn convert_key_down(
-    event: &gpui::KeyDownEvent,
-) -> KeyboardEvent {
+pub fn convert_key_down(event: &gpui::KeyDownEvent) -> KeyboardEvent {
     let (logical_key, physical_key) = convert_keys(&event.keystroke);
     let modifiers = convert_modifiers(&event.keystroke.modifiers);
 
@@ -225,7 +223,5 @@ pub fn convert_scroll_wheel(event: &gpui::ScrollWheelEvent) -> Option<AppWindowE
             f32::from(point.y) / 3.0
         }
     };
-    Some(AppWindowEvent::MouseWheel {
-        delta_lines,
-    })
+    Some(AppWindowEvent::MouseWheel { delta_lines })
 }

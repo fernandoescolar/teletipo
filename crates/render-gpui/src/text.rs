@@ -6,12 +6,7 @@ use render_model::TextCommand;
 use crate::color::text_color;
 
 /// Paint a text command with per-character styling.
-pub fn paint_text(
-    command: &TextCommand,
-    window: &mut Window,
-    cx: &mut App,
-    font_size: Pixels,
-) {
+pub fn paint_text(command: &TextCommand, window: &mut Window, cx: &mut App, font_size: Pixels) {
     if command.text.is_empty() {
         return;
     }
@@ -32,9 +27,12 @@ pub fn paint_text(
         return;
     }
 
-    let line = window
-        .text_system()
-        .shape_line(SharedString::from(text_str.clone()), font_size, &runs, None);
+    let line = window.text_system().shape_line(
+        SharedString::from(text_str.clone()),
+        font_size,
+        &runs,
+        None,
+    );
     let _ = line.paint(
         point(px(command.x), px(command.y)),
         window.line_height(),

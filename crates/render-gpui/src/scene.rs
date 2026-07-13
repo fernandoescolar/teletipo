@@ -4,8 +4,8 @@ use gpui::{App, ContentMask, Pixels, Window, fill};
 use render_model::{CellMetrics, RenderCommand, RenderContext, RenderSnapshot, RenderTarget};
 
 use crate::color::background_color;
-use crate::text::paint_text;
 use crate::geom::rect;
+use crate::text::paint_text;
 
 /// Compose a complete render scene from snapshot and layout.
 pub fn compose_scene(
@@ -92,14 +92,7 @@ fn paint_commands_recursive(
 
                 // Apply mask and recursively render commands within the clip region
                 window.with_content_mask(Some(mask), |w| {
-                    paint_commands_recursive(
-                        commands,
-                        i + 1,
-                        clip_end,
-                        w,
-                        cx,
-                        font_size,
-                    );
+                    paint_commands_recursive(commands, i + 1, clip_end, w, cx, font_size);
                 });
 
                 i = clip_end + 1;
@@ -109,7 +102,10 @@ fn paint_commands_recursive(
                 i += 1;
             }
             RenderCommand::Rect(command) => {
-                window.paint_quad(fill(rect(command.rect), background_color(command.color, 1.0)));
+                window.paint_quad(fill(
+                    rect(command.rect),
+                    background_color(command.color, 1.0),
+                ));
                 i += 1;
             }
             RenderCommand::Text(command) => {
